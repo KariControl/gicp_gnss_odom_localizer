@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>pure_autoware_localization_adapter</name>
+  <version>0.3.0</version>
+  <description>Standard-message adapter from fused odometry to Autoware localization topics and map-to-base TF.</description>
+  <maintainer email="maintainers@users.noreply.github.com">gicp_gnss_odom_localizer maintainers</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>diagnostic_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

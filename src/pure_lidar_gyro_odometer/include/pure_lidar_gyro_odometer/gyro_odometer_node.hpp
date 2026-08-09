@@ -2,9 +2,11 @@
 
 #include <cstdint>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
@@ -14,7 +16,6 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
-#include <std_msgs/msg/u_int8.hpp>
 
 #include <rclcpp/rclcpp.hpp>
 
@@ -27,6 +28,10 @@
 
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+
+#include "pure_lidar_gyro_odometer/se2_fixed_lag_smoother.hpp"
+#include "pure_lidar_gyro_odometer/tracking_mode.hpp"
+#include "pure_lidar_gyro_odometer/yaw_rate_integrator.hpp"
 
 namespace pure_gyro_odometer
 {
@@ -41,6 +46,7 @@ private:
   {
     rclcpp::Time stamp;
     double gyro_z{0.0};
+    double yaw_rate_corrected{0.0};
     Eigen::Vector3d acc{0.0, 0.0, 0.0};
   };
 
@@ -50,56 +56,36 @@ private:
     double v_raw{0.0};
   };
 
-  struct DegeneracyInfo
+  struct ObservabilityInfo
   {
-    bool detection_enabled{false};
+    bool enabled{false};
     bool has_hessian{false};
-    bool weak_observation{false};
-    bool assist_candidate{false};
-    bool assist_latched{false};
-    bool degenerate{false};
-    uint8_t pose_mode{0};
+    bool has_directional_information{false};
     bool wheel_prior_available{false};
     bool wheel_assisted{false};
-    bool wheel_assisted_weak{false};
-    bool wheel_assisted_strong{false};
-    bool prior_conflict{false};
     bool stationary_now{false};
-    bool stationary_drift{false};
-    bool bad_fit{false};
-    bool scan_rejected{false};
-    bool speed_mismatch{false};
-    bool force_full_guess_next{false};
-    int weak_direction_count{0};
-    int weak_observation_streak{0};
-    int bad_evidence_streak{0};
-    int assist_off_streak{0};
-    double score{0.0};
-    double assist_blend{0.0};
-    double risk_ema{0.0};
-    double low_obs_hold_remaining_sec{0.0};
-    double eig_min{0.0};
-    double eig_mid{0.0};
-    double eig_max{0.0};
+    double information_ratio_min{1.0};
+    double information_ratio_mid{1.0};
+    double information_ratio_max{1.0};
+    double information_deficit{0.0};
+    double wheel_assist_blend{0.0};
+    double wheel_assist_correction_metric{0.0};
     double wheel_distance{0.0};
     double prior_dx{0.0};
     double prior_dy{0.0};
     double prior_dyaw{0.0};
-    double prior_conflict_metric{0.0};
-    double prior_conflict_trans{0.0};
-    double prior_conflict_yaw{0.0};
-    double stationary_drift_metric{0.0};
+    double prior_difference_metric{0.0};
+    double prior_difference_translation{0.0};
+    double prior_difference_yaw{0.0};
+    double stationary_projected_motion_metric{0.0};
     double scan_speed_mps{0.0};
     double wheel_speed_mps{0.0};
-    double speed_diff_mps{0.0};
-    int speed_mismatch_streak{0};
-    double critical_hold_remaining_sec{0.0};
-    int critical_clear_streak{0};
+    double speed_difference_mps{0.0};
   };
 
   struct LidarOdomSample
   {
-    rclcpp::Time stamp;
+    rclcpp::Time stamp{0};
     double dt{0.0};
     bool valid{false};
     bool converged{false};
@@ -117,22 +103,51 @@ private:
     double raw_vx{0.0};
     double raw_vy{0.0};
     double raw_yaw_rate{0.0};
-    DegeneracyInfo degeneracy;
+    double inlier_ratio{0.0};
+    std::string registration_source{"none"};
+    bool used_submap{false};
+    bool used_scan_to_scan_fallback{false};
+    std::string rejection_reason{"not_evaluated"};
+    ObservabilityInfo observability;
   };
 
-  struct ScanFactor
+  struct LocalMapKeyframe
   {
-    rclcpp::Time stamp_prev;
-    rclcpp::Time stamp_curr;
-    double dx{0.0};
-    double dy{0.0};
-    double dyaw_scan{0.0};
-    double dyaw_imu{0.0};
-    double fitness{0.0};
-    bool converged{false};
-    bool stationary{false};
-    bool wheel_assisted{false};
+    rclcpp::Time stamp;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud;
+    // Pose of base_link in the active submap anchor frame. The submap is never
+    // baked in odom coordinates, so a smoother correction moves the anchor as a
+    // whole instead of distorting already inserted keyframes.
+    se2::Pose anchor_base_pose;
+    std::uint64_t pose_sequence{0};
   };
+
+  struct LocalMapObservation
+  {
+    bool ready{false};
+    bool attempted{false};
+    bool accepted{false};
+    se2::Pose anchor_base_pose;
+    se2::Pose odom_base_pose;
+    Eigen::Matrix4f T_prev_curr_scan{Eigen::Matrix4f::Identity()};
+    Eigen::Matrix<double, 6, 6> hessian_scan{
+      Eigen::Matrix<double, 6, 6>::Zero()};
+    bool has_hessian{false};
+    double fitness{std::numeric_limits<double>::infinity()};
+    double inlier_ratio{0.0};
+    double correction_translation_m{0.0};
+    double correction_yaw_rad{0.0};
+    double correction_z_m{0.0};
+    double correction_roll_rad{0.0};
+    double correction_pitch_rad{0.0};
+    double scan_disagreement_translation_m{0.0};
+    double scan_disagreement_yaw_rad{0.0};
+    double factor_weight_xy{0.0};
+    double factor_weight_yaw{0.0};
+    std::string reason{"not_attempted"};
+  };
+
+  using ScanFactor = se2::RelativeFactor;
 
   static double normalizeYaw(double a);
   static double yawFromRot(const Eigen::Matrix3d & R);
@@ -146,15 +161,38 @@ private:
   void onPublishTimer();
   void updateStopState(const rclcpp::Time & nowt);
   void publishDiagnostics(const rclcpp::Time & stamp, const std::string & level, const std::string & msg);
-  void publishDegeneracyDebug(
+  void publishObservabilityDebug(
     const rclcpp::Time & stamp, const LidarOdomSample & sample, const std::string & guess_mode_used,
     const std::string & next_guess_mode);
 
   bool computeAccVariance(const rclcpp::Time & nowt, double window_sec, double & out_var) const;
   bool computeImuDeltaYaw(const rclcpp::Time & t0, const rclcpp::Time & t1, double & out_dyaw) const;
   bool computeWheelDistance(const rclcpp::Time & t0, const rclcpp::Time & t1, double & out_dist) const;
-  double scanYawWeight(double fitness, bool converged) const;
   bool updateMiniSmootherLocked(const ScanFactor & factor);
+  void resetLidarTrackingLocked();
+  void validateParameters() const;
+  LocalMapObservation matchAgainstLocalMap(
+    const pcl::PointCloud<pcl::PointXYZ>::ConstPtr & cloud,
+    const Eigen::Matrix4f & T_base_scan, const Eigen::Matrix4f & T_scan_base,
+    const se2::Pose & predicted_odom_base_pose, int frame_sequence,
+    bool primary_tracking_attempt);
+  void initializeLocalMapLocked(
+    const pcl::PointCloud<pcl::PointXYZ>::ConstPtr & cloud,
+    const rclcpp::Time & stamp, const se2::Pose & odom_base_pose,
+    std::uint64_t pose_sequence);
+  void maybeAddLocalMapKeyframeLocked(
+    const pcl::PointCloud<pcl::PointXYZ>::ConstPtr & cloud,
+    const rclcpp::Time & stamp, const se2::Pose & anchor_base_pose,
+    std::uint64_t pose_sequence);
+  void repairLocalMapFromSmootherLocked(std::uint64_t newest_pose_sequence);
+  void rebuildLocalMapLocked();
+  void reanchorLocalMapLocked();
+  bool localMapRequired() const;
+  bool localMapReadyLocked() const;
+  se2::Pose odomPoseToLocalMapAnchorLocked(const se2::Pose & odom_base_pose) const;
+  void alignLocalMapAnchorToPoseLocked(
+    const se2::Pose & odom_base_pose, const se2::Pose & anchor_base_pose);
+  void resetLocalMapLocked(const std::string & reason);
 
   // -------- Parameters --------
   std::string base_frame_;
@@ -174,9 +212,12 @@ private:
   bool imu_corrected_enable_{true};
   bool imu_corrected_apply_tf_{true};
   bool imu_corrected_transform_orientation_{false};
+  double imu_max_abs_yaw_rate_radps_{8.0};
+  double imu_max_sample_gap_sec_{0.10};
+  double imu_max_boundary_gap_sec_{0.03};
 
   double publish_rate_hz_{50.0};
-  bool out_filtered_odom_enable_{true};
+  bool out_filtered_odom_enable_{false};
   bool filtered_odom_zero_when_stopped_{true};
   double filtered_odom_lowpass_alpha_{0.85};
   double filtered_odom_linear_rate_limit_mps2_{4.0};
@@ -201,7 +242,7 @@ private:
   double wheel_speed_scale_{1.0};
   double wheel_speed_timeout_sec_{0.2};
 
-  bool wheel_low_speed_enable_{true};
+  bool wheel_low_speed_enable_{false};
   double wheel_low_speed_deadband_mps_{0.12};
   double wheel_low_speed_acc_thr_mps2_{0.2};
   double wheel_low_speed_blend_{0.5};
@@ -215,42 +256,17 @@ private:
   double wheel_scale_min_{0.5};
   double wheel_scale_max_{2.0};
 
-  // Degeneracy-aware wheel-speed assist (small_gicp Hessian based)
-  bool wheel_degeneracy_enable_{true};
-  double wheel_degeneracy_yaw_metric_m_{2.0};
-  double wheel_degeneracy_rel_eigenvalue_thr_{0.10};
-  double wheel_degeneracy_abs_eigenvalue_thr_{0.0};
-  double wheel_degeneracy_min_wheel_dist_m_{0.05};
-  double wheel_degeneracy_prior_blend_{1.0};
-  // Deprecated compatibility parameters kept as no-op so older YAML files still load.
-  double wheel_degeneracy_prior_blend_weak_{0.0};
-  double wheel_degeneracy_assist_score_thr_{0.25};
-  bool wheel_degeneracy_assist_only_when_degenerate_{true};
-  bool wheel_degeneracy_speed_override_only_when_degenerate_{true};
-  bool wheel_degeneracy_force_full_guess_on_assist_candidate_{false};
-  bool wheel_degeneracy_full_guess_use_current_prior_{true};
-  double wheel_degeneracy_latch_hold_sec_{0.5};
-  int wheel_degeneracy_latch_off_streak_thr_{6};
-  double wheel_degeneracy_score_thr_{0.25};
-  int wheel_degeneracy_bad_streak_thr_{2};
-  double wheel_degeneracy_risk_ema_alpha_{0.7};
-  double wheel_degeneracy_risk_on_thr_{0.55};
-  double wheel_degeneracy_risk_off_thr_{0.35};
-  double wheel_degeneracy_prior_conflict_trans_thr_m_{0.05};
-  double wheel_degeneracy_prior_conflict_yaw_thr_rad_{0.01};
-  double wheel_degeneracy_prior_conflict_metric_thr_m_{0.08};
-  double wheel_degeneracy_bad_fit_fitness_thr_{1.5};
-  double wheel_degeneracy_scan_wheel_speed_diff_thr_mps_{1.0};
-  double wheel_degeneracy_stationary_trans_thr_m_{0.03};
-  double wheel_degeneracy_stationary_yaw_thr_rad_{0.01};
-  bool wheel_degeneracy_debug_pub_enable_{false};
-  std::string wheel_degeneracy_debug_topic_{"/localization/lidar_degeneracy_debug"};
+  // Optional wheel-speed correction along continuously weak Hessian directions.
+  // No discrete observability state or threshold-triggered source switch is used.
+  bool wheel_observability_assist_enable_{false};
+  double wheel_observability_assist_min_wheel_dist_m_{0.1};
+  double wheel_observability_assist_max_blend_{0.5};
+  double wheel_observability_assist_power_{2.0};
+  bool wheel_registration_recovery_use_current_prior_{true};
 
-  // Optional boolean output for controller/fusion health gating.
-  bool out_degeneracy_enable_{true};
-  std::string out_degeneracy_topic_{"/localization/lidar_degenerate"};
-  bool out_pose_mode_enable_{true};
-  std::string out_pose_mode_topic_{"/localization/lidar_pose_mode"};
+  // Continuous Hessian/observability diagnostics.
+  bool lidar_observability_debug_pub_enable_{false};
+  std::string lidar_observability_debug_topic_{"/localization/lidar_observability_debug"};
 
   // Cumulative local odometry covariance (published in out_odom_topic).
   double odom_cov_base_xy_step_{1.0e-4};
@@ -259,10 +275,11 @@ private:
   double odom_cov_yaw_per_rad_{5.0e-3};
   double odom_cov_fitness_xy_scale_{5.0e-4};
   double odom_cov_fitness_yaw_scale_{5.0e-4};
-  double odom_cov_degenerate_scale_{4.0};
+  double odom_cov_observability_max_scale_{2.0};
   double odom_cov_wheel_assist_scale_{1.5};
   double odom_cov_invalid_xy_step_{2.5e-2};
   double odom_cov_invalid_yaw_step_{1.0e-2};
+  // Deprecated no-op compatibility parameters. Timer-based pose integration was removed.
   double odom_cov_deadreckon_xy_per_sec_{2.0e-2};
   double odom_cov_deadreckon_yaw_per_sec_{5.0e-3};
 
@@ -285,10 +302,18 @@ private:
   bool lidar_pose_se2_enable_{true};
   double lidar_yaw_blend_imu_{0.0};
   bool lidar_guess_use_imu_yaw_only_{true};
+  std::string lidar_tracking_mode_name_{"scan_to_scan"};
+  tracking::Mode lidar_tracking_mode_{tracking::Mode::ScanToScan};
+  bool lidar_scan_to_submap_fallback_enable_{true};
+  int lidar_scan_to_submap_match_interval_frames_{1};
+  int lidar_scan_to_submap_max_consecutive_failures_{5};
+  double lidar_scan_to_submap_max_scan_disagreement_translation_m_{1.0};
+  double lidar_scan_to_submap_max_scan_disagreement_yaw_rad_{0.35};
 
   // Lightweight fixed-lag smoothing for local odometry
   bool lidar_smoother_enable_{true};
   int lidar_smoother_window_size_{20};
+  int lidar_smoother_max_iter_{5};
   double lidar_smoother_w_imu_{2.0};
   double lidar_smoother_w_scan_{1.0};
   double lidar_smoother_lambda_{0.5};
@@ -301,30 +326,62 @@ private:
   bool lidar_smoother_nhc_enable_{false};
   double lidar_smoother_nhc_w_lateral_{2.0};
   double lidar_smoother_nhc_huber_delta_m_{0.1};
+  double lidar_smoother_local_huber_delta_xy_m_{0.35};
+  double lidar_smoother_local_huber_delta_yaw_rad_{0.12};
+  double lidar_smoother_max_position_correction_m_{2.0};
+  double lidar_smoother_max_yaw_correction_rad_{0.35};
+  bool lidar_smoother_hessian_enable_{true};
+  double lidar_smoother_hessian_yaw_metric_m_{2.0};
+  double lidar_smoother_hessian_min_direction_ratio_{1.0e-4};
+
+  // Active local submap. In scan_to_submap mode it is the primary registration
+  // target. In scan_to_scan mode, lidar_odom.local_map.enable retains the
+  // optional periodic consistency factor from 0.2.0-rc1.
+  bool lidar_local_map_enable_{false};
+  int lidar_local_map_match_interval_frames_{5};
+  int lidar_local_map_min_keyframes_{3};
+  int lidar_local_map_max_keyframes_{15};
+  int lidar_local_map_min_points_{200};
+  int lidar_local_map_keyframe_min_interval_frames_{3};
+  int lidar_local_map_keyframe_max_interval_frames_{20};
+  double lidar_local_map_keyframe_min_translation_m_{0.75};
+  double lidar_local_map_keyframe_min_yaw_rad_{0.15};
+  double lidar_local_map_voxel_leaf_m_{0.35};
+  int lidar_local_map_max_points_{200000};
+  double lidar_local_map_max_corr_dist_m_{1.0};
+  int lidar_local_map_max_iterations_{30};
+  double lidar_local_map_max_fitness_{1.0};
+  double lidar_local_map_min_inlier_ratio_{0.25};
+  double lidar_local_map_max_correction_translation_m_{0.50};
+  double lidar_local_map_max_correction_yaw_rad_{0.12};
+  double lidar_local_map_max_correction_z_m_{0.25};
+  double lidar_local_map_max_correction_roll_pitch_rad_{0.15};
+  double lidar_local_map_factor_weight_xy_{6.0};
+  double lidar_local_map_factor_weight_yaw_{10.0};
+  double lidar_local_map_fitness_sigma_{0.50};
 
   // -------- ROS I/F --------
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
   rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr sub_wheel_twist_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr sub_ref_pose_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_points_;
+  rclcpp::CallbackGroup::SharedPtr sensor_callback_group_;
 
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_odom_raw_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_odom_filtered_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_stopped_;
-  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_degenerate_;
-  rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr pub_pose_mode_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr pub_imu_corrected_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr pub_diag_;
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_degeneracy_debug_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_observability_debug_;
 
 
   rclcpp::TimerBase::SharedPtr timer_;
-  // 追加: gyro_odometer_node.hpp
   rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr pub_deskew_twist_;
   std::string out_deskew_twist_topic_;
 
   // -------- State --------
   mutable std::mutex mtx_;
+  std::mutex lidar_callback_mtx_;
 
   std::deque<ImuSample> imu_buf_;
   double bg_est_{0.0};
@@ -369,6 +426,7 @@ private:
   // LiDAR odometry
   LidarOdomSample last_lidar_;
   pcl::PointCloud<pcl::PointXYZ>::Ptr prev_cloud_;
+  rclcpp::Time prev_cloud_stamp_;
   Eigen::Matrix4f last_gicp_guess_{Eigen::Matrix4f::Identity()};
   bool has_prev_cloud_{false};
   bool lidar_active_{false};
@@ -382,35 +440,42 @@ private:
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
-  // Integrated odom pose (for debug output)
-  rclcpp::Time last_integrate_stamp_;
-  bool has_last_integrate_{false};
+  // Integrated odom pose. It is updated only by accepted LiDAR/factor-graph steps.
   double odom_x_{0.0};
   double odom_y_{0.0};
   double odom_yaw_{0.0};
   bool has_odom_pose_{false};
-  double last_lidar_yaw_imu_{0.0};
-  bool has_last_lidar_yaw_imu_{false};
-  bool next_icp_force_full_guess_{false};
+  std::uint64_t lidar_pose_sequence_{0};
+  bool next_icp_use_full_guess_{false};
   std::string last_icp_guess_mode_{"identity"};
   std::string next_icp_guess_mode_{"yaw_only"};
-  bool degeneracy_state_{false};
-  bool has_critical_latch_until_{false};
-  rclcpp::Time critical_latch_until_;
-  int weak_observation_streak_{0};
-  int speed_mismatch_streak_{0};
-  int critical_clear_streak_{0};
   double odom_cov_total_xy_{0.0};
   double odom_cov_total_yaw_{0.0};
 
-  // Fixed-lag smoothing state for local odometry
-  std::deque<ScanFactor> scan_factor_buf_;
-  double smoother_base_x_{0.0};
-  double smoother_base_y_{0.0};
-  double smoother_base_yaw_{0.0};
-  bool has_smoother_base_{false};
-  Eigen::VectorXd last_smoother_solution_;
-  bool has_last_smoother_solution_{false};
+  // Fixed-lag SE(2) factor graph (ROS/PCL independent and unit-tested).
+  se2::FixedLagSmoother lidar_smoother_;
+  bool lidar_smoother_initialized_{false};
+
+  // Active submap in its own anchor frame. The odom<-anchor transform is
+  // adjusted after smoothing; keyframe geometry stays in anchor coordinates.
+  std::deque<LocalMapKeyframe> local_map_keyframes_;
+  pcl::PointCloud<pcl::PointXYZ>::Ptr local_map_cloud_;
+  bool local_map_initialized_{false};
+  se2::Pose local_map_odom_anchor_pose_{};
+  se2::Pose local_map_last_tracking_anchor_pose_{};
+  bool has_local_map_last_tracking_pose_{false};
+  int local_map_frame_sequence_{0};
+  int local_map_frames_since_keyframe_{0};
+  int local_map_consecutive_failures_{0};
+  std::uint64_t local_map_match_accepted_count_{0};
+  std::uint64_t local_map_match_rejected_count_{0};
+  std::uint64_t scan_to_submap_primary_count_{0};
+  std::uint64_t scan_to_scan_interim_count_{0};
+  std::uint64_t scan_to_scan_fallback_count_{0};
+  std::uint64_t scan_to_scan_warmup_count_{0};
+  LocalMapObservation last_local_map_observation_;
+  std::string last_registration_source_{"none"};
+  std::string local_map_reset_reason_{"startup"};
 
   // Stop state
   bool is_stopped_{false};

@@ -1,0 +1,119 @@
+/**:
+  ros__parameters:
+    projector_type: TransverseMercator
+    vertical_datum: WGS84
+    map_origin.latitude: 35.681236
+    map_origin.longitude: 139.767125
+    map_origin.altitude: 0.0
+    scale_factor: 0.9996
+    use_legacy_projection_params: false
+    min_x: 0.0
+    min_y: 0.0
+    subtract_min_offset: false
+    p0:
+    - 0.0
+    - 0.0
+    - 0.0
+    gnss0:
+    - 35.681236
+    - 139.767125
+    - 0.0
+    a: 6378137.0
+    F: 298.257223563
+    m0: 0.9996
+    frame_id: map
+    child_frame_id: base_link
+    use_secondary_gga: false
+    use_doppler_heading: false
+    use_tf_for_antenna_geometry: true
+    primary_antenna_frame_id: gnss/0
+    secondary_antenna_frame_id: gnss_secondary_antenna
+    yaw_variance_without_heading: 1000000.0
+    use_trajectory_heading: true
+    trajectory_heading_min_baseline_m: 1.5
+    # Preserve the longer reference window needed by low-speed vehicles. The
+    # quality epoch and corrected-IMU turn gate below prevent a chord from
+    # spanning an outage or an active turn.
+    trajectory_heading_max_age_sec: 5.0
+    trajectory_heading_max_reference_age_sec: 5.0
+    # Short receiver-mode flicker is tolerated. A sustained explicit
+    # unusable/no-fix interval starts a new trusted trajectory epoch.
+    trajectory_heading_epoch_max_gap_sec: 0.5
+    # Input silence is separate from unusable-fix duration so an ordinary
+    # 1 Hz GGA stream does not reset the epoch on every sample.
+    trajectory_heading_input_max_gap_sec: 2.0
+    # Reject trajectory chords formed during more than 45 deg of accumulated
+    # corrected-IMU turn activity; bounded IMU propagation may still be used
+    # from a seed valid in the current epoch.
+    trajectory_heading_max_turn_activity_rad: 0.7853981633974483
+    # When corrected-IMU heading is enabled, compare every trajectory candidate
+    # with the last trusted heading propagated to the same stamp.
+    # A mismatch starts a fresh chord segment and keeps IMU propagation active;
+    # 0.07 rad also keeps downstream target changes below the 0.08 rad limit.
+    trajectory_heading_max_seed_innovation_rad: 0.07
+    trajectory_heading_sigma_floor_deg: 3.0
+    trajectory_heading_min_confidence: 0.3
+    # Both chord endpoints must have a finite sigma no greater than this.
+    # This keeps high-confidence fixes with intentionally inflated covariance
+    # out of the absolute-heading seed.
+    trajectory_heading_max_position_sigma_m: 5.0
+    # Never advertise or store a trajectory heading that the downstream fusion
+    # gate (10 rad^2 by default) would reject.
+    trajectory_heading_max_yaw_variance_rad2: 10.0
+    doppler_min_speed_mps: 1.33
+    doppler_speed_sigma_th: 10.0
+    doppler_heading_sigma_deg_th: 10.0
+    use_imu_yaw_rate_heading: true
+    imu_yaw_rate_deadband_radps: 0.002
+    imu_yaw_rate_max_integration_sec: 15.0
+    imu_yaw_rate_sigma_per_sqrt_sec: 0.05
+    imu_yaw_rate_max_abs_radps: 3.0
+    imu_yaw_rate_max_sample_gap_sec: 0.1
+    imu_yaw_rate_max_boundary_gap_sec: 0.05
+    fix_confidence_table:
+    - 0.0
+    - 0.35
+    - 0.55
+    - 0.65
+    - 1.0
+    - 0.8
+    - 0.25
+    - 0.1
+    - 0.05
+    fix_sigma_xy_table_m:
+    - 1000.0
+    - 1000.0
+    - 1000.0
+    - 1000.0
+    - 0.05
+    - 1000.0
+    - 1000.0
+    - 1000.0
+    - 1000.0
+    hdop_good_threshold: 1.2
+    hdop_confidence_exponent: 2.0
+    min_hdop_for_sigma: 0.5
+    max_hdop_for_sigma: 20.0
+    vertical_sigma_scale: 2.0
+    dual_antenna_min_baseline_m: 0.3
+    dual_antenna_baseline_tolerance_m: 2.0
+    dual_antenna_heading_sigma_floor_deg: 0.5
+    dual_antenna_heading_sigma_baseline_inflate_scale: 2.0
+    sync_tolerance_sec: 0.03
+    buffer_retention_sec: 1.0
+    max_buffer_size: 100
+    publish_global_pose: true
+    publish_pose_with_covariance: true
+    publish_gnss_odometry: true
+    publish_gnss_fusion_input: true
+    publish_confidence: true
+    publish_diagnostics: true
+    heartbeat_hz: 2.0
+    flush_timer_hz: 50.0
+    input_stale_timeout_sec: 2.0
+    enable_checksum_validation: true
+    use_ellipsoid_height_from_geoid_separation: true
+    differential_age_warn_sec: 1.0
+    differential_age_invalid_sec: 2.0
+    gnss_usable_confidence_threshold: 0.3
+    allow_parameter_antenna_fallback: false

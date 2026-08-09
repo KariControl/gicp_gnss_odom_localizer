@@ -11,11 +11,15 @@ diagnostic_aggregator:
         type: diagnostic_aggregator/GenericAnalyzer
         path: gyro_odometer
         startswith: ["localization/gyro_odometer"]
-      gnss_conversion:
+      nmea_gga_conversion:
         type: diagnostic_aggregator/GenericAnalyzer
-        path: gnss_conversion
-        startswith: ["localization/gnss_conversion"]
+        path: nmea_gga_conversion
+        startswith: ["localization/nmea_gga_conversion"]
       gnss_map_odom_fusion:
         type: diagnostic_aggregator/GenericAnalyzer
         path: gnss_map_odom_fusion
         startswith: ["localization/gnss_map_odom_fusion", "localization/map_odom_fusion"]
+      autoware_localization_adapter:
+        type: diagnostic_aggregator/GenericAnalyzer
+        path: autoware_localization_adapter
+        startswith: ["localization/gicp_gnss_autoware_adapter"]

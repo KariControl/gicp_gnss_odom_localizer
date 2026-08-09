@@ -1,9 +1,6 @@
-source /opt/ros/jazzy/setup.bash
-rm -r install/ build/
-#colcon build --packages-up-to gnss_interface
-#colcon build --packages-up-to motion_judge
+#!/usr/bin/env bash
+# set -euo pipefail
 
-#colcon build --packages-up-to yaw_estimator
-#colcon build --packages-up-to velocity_estimator
+source /opt/ros/jazzy/setup.bash
+rm -rf build install log
 colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
-#colcon build --symlink-install

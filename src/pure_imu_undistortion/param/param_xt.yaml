@@ -1,33 +1,40 @@
 imu_undistorter:
   ros__parameters:
-    base_frame: "base_link"
-    imu_frame: "imu"     
-    scan_frame: "lidar/0"    # 空ならPointCloud2.header.frame_id
-
-    points_in_topic: "/converted_points"
-    points_out_topic: "/localization/points_undistorted"
-    imu_topic: "/imu"
-    twist_topic: "/vehicle/twist"   # 車載用: deskew に車速を使用
-
-    # 点時間フィールド混在対策
-    time_fields: ["time","t","timestamp","offset_time","time_stamp"]
+    base_frame: base_link
+    imu_frame: imu
+    scan_frame: lidar/0
+    points_in_topic: /points_raw
+    points_out_topic: /localization/points_undistorted
+    imu_topic: /imu
+    twist_topic: ""
+    time_fields:
+    - time
+    - t
+    - timestamp
+    - offset_time
+    - time_stamp
     prefer_relative_time: true
-    time_scale: 0.0                  # 0 => 自動推定（ns/us/ms/s）
-    fallback_scan_period: 0.05       # time無い場合のスキャン周期（Hesai XTM 想定）
-    cloud_stamp_is_start: true       # stamp が scan start なら true（end なら false）
-    reference_time: "start"          # "start" or "end"
-
-    # バッファ
+    time_scale: 0.0
+    fallback_scan_period: 0.05
+    cloud_stamp_is_start: true
+    reference_time: start
     imu_buffer_sec: 2.0
     twist_buffer_sec: 2.0
     max_imu_gap_sec: 0.02
     max_time_offset_sec: 0.2
-
-    # 並進補正（オプション）
-    use_translation: true
-    use_twist_speed: true
+    # Vehicle speed is not part of the default estimator input. Apply yaw-only
+    # IMU deskew unless a deployment explicitly opts into translation deskew.
+    use_translation: false
+    use_twist_speed: false
     default_speed_mps: 0.0
-    max_speed_mps: 40.0
-
+    max_speed_mps: 60.0
     publish_diagnostics: true
     diag_throttle_ms: 1000
+    # Briefly hold clouds whose scan-end IMU sample is still in flight.
+    max_pending_clouds: 4
+    allow_linear_time_fallback: false
+    point_time_tolerance_sec: 0.002
+    max_imu_boundary_gap_sec: 0.02
+    max_twist_gap_sec: 0.1
+    max_abs_gyro_radps: 20.0
+    allow_default_speed_fallback: false

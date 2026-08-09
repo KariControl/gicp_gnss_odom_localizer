@@ -6,6 +6,7 @@ if(NOT CMAKE_CXX_STANDARD)
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(eigen3_cmake_module REQUIRED)
 
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
@@ -34,7 +35,6 @@ ament_target_dependencies(${PROJECT_NAME}
   tf2
   tf2_ros
   tf2_geometry_msgs
-  Eigen3
 )
 
 
@@ -64,6 +64,7 @@ ament_export_include_directories(include)
 ament_export_dependencies(
   rclcpp rclcpp_components sensor_msgs geometry_msgs diagnostic_msgs
   tf2 tf2_ros tf2_geometry_msgs
+  eigen3_cmake_module
   Eigen3
 )
 

@@ -1,9 +1,14 @@
 #include "pure_imu_undistortion/imu_undistorter.hpp"
 
+#include <functional>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <limits>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 
 #include <tf2/exceptions.h>
@@ -59,21 +64,42 @@ ImuUndistorter::ImuUndistorter(const rclcpp::NodeOptions & options)
   prefer_relative_time_ = declare_parameter<bool>("prefer_relative_time", true);
   time_scale_ = declare_parameter<double>("time_scale", 0.0); // 0 => auto
   fallback_scan_period_ = declare_parameter<double>("fallback_scan_period", 0.1);
+  allow_linear_time_fallback_ = declare_parameter<bool>("allow_linear_time_fallback", false);
   cloud_stamp_is_start_ = declare_parameter<bool>("cloud_stamp_is_start", true);
   reference_time_ = declare_parameter<std::string>("reference_time", "start"); // start|end
+  point_time_tolerance_sec_ = declare_parameter<double>("point_time_tolerance_sec", 0.002);
 
   imu_buffer_sec_ = declare_parameter<double>("imu_buffer_sec", 2.0);
   twist_buffer_sec_ = declare_parameter<double>("twist_buffer_sec", 2.0);
   max_imu_gap_sec_ = declare_parameter<double>("max_imu_gap_sec", 0.02);
+  max_imu_boundary_gap_sec_ = declare_parameter<double>("max_imu_boundary_gap_sec", 0.02);
+  max_twist_gap_sec_ = declare_parameter<double>("max_twist_gap_sec", 0.1);
   max_time_offset_sec_ = declare_parameter<double>("max_time_offset_sec", 0.2);
+  max_abs_gyro_radps_ = declare_parameter<double>("max_abs_gyro_radps", 20.0);
 
   use_translation_ = declare_parameter<bool>("use_translation", false);
-  use_twist_speed_ = declare_parameter<bool>("use_twist_speed", true);
+  use_twist_speed_ = declare_parameter<bool>("use_twist_speed", false);
   default_speed_mps_ = declare_parameter<double>("default_speed_mps", 0.0);
   max_speed_mps_ = declare_parameter<double>("max_speed_mps", 40.0);
+  allow_default_speed_fallback_ = declare_parameter<bool>("allow_default_speed_fallback", false);
 
   publish_diagnostics_ = declare_parameter<bool>("publish_diagnostics", true);
   diag_throttle_ms_ = declare_parameter<int>("diag_throttle_ms", 1000);
+  max_pending_clouds_ = declare_parameter<int>("max_pending_clouds", 4);
+  const bool input_qos_best_effort = declare_parameter<bool>("input_qos_best_effort", false);
+
+  if (reference_time_ != "start" && reference_time_ != "end") {
+    throw std::invalid_argument("reference_time must be 'start' or 'end'");
+  }
+  if (!(fallback_scan_period_ > 0.0) || !(max_time_offset_sec_ > 0.0) ||
+      !(imu_buffer_sec_ > 0.0) || !(twist_buffer_sec_ > 0.0) ||
+      !(max_imu_gap_sec_ > 0.0) || !(max_imu_boundary_gap_sec_ >= 0.0) ||
+      max_imu_boundary_gap_sec_ > max_imu_gap_sec_ ||
+      !(max_twist_gap_sec_ > 0.0) || !(max_abs_gyro_radps_ > 0.0) ||
+      !(max_speed_mps_ > 0.0) || !(point_time_tolerance_sec_ >= 0.0) ||
+      max_pending_clouds_ <= 0 || (time_scale_ < 0.0)) {
+    throw std::invalid_argument("invalid timing, gyro, speed, or time-scale parameter");
+  }
 
   tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -81,24 +107,35 @@ ImuUndistorter::ImuUndistorter(const rclcpp::NodeOptions & options)
   pub_points_ = create_publisher<sensor_msgs::msg::PointCloud2>(points_out_topic_, rclcpp::SensorDataQoS());
   pub_diag_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>("diagnostics", 10);
 
+  const rclcpp::QoS input_qos = input_qos_best_effort
+    ? rclcpp::SensorDataQoS()
+    : rclcpp::QoS(rclcpp::KeepLast(20)).reliable();
+  sensor_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+  rclcpp::SubscriptionOptions sensor_subscription_options;
+  sensor_subscription_options.callback_group = sensor_callback_group_;
+
   sub_imu_ = create_subscription<sensor_msgs::msg::Imu>(
-    imu_topic_, rclcpp::SensorDataQoS(),
-    std::bind(&ImuUndistorter::onImu, this, std::placeholders::_1));
+    imu_topic_, input_qos,
+    std::bind(&ImuUndistorter::onImu, this, std::placeholders::_1),
+    sensor_subscription_options);
 
   if (!twist_topic_.empty()) {
     sub_twist_ = create_subscription<geometry_msgs::msg::TwistStamped>(
-      twist_topic_, rclcpp::SensorDataQoS(),
-      std::bind(&ImuUndistorter::onTwist, this, std::placeholders::_1));
+      twist_topic_, input_qos,
+      std::bind(&ImuUndistorter::onTwist, this, std::placeholders::_1),
+      sensor_subscription_options);
   }
 
   sub_points_ = create_subscription<sensor_msgs::msg::PointCloud2>(
-    points_in_topic_, rclcpp::SensorDataQoS(),
-    std::bind(&ImuUndistorter::onPoints, this, std::placeholders::_1));
+    points_in_topic_, input_qos,
+    std::bind(&ImuUndistorter::onPoints, this, std::placeholders::_1),
+    sensor_subscription_options);
 
   RCLCPP_INFO(get_logger(),
-    "pure_imu_undistortion started. translation=%s twist=%s",
+    "pure_imu_undistortion started. translation=%s twist=%s linear_time_fallback=%s",
     use_translation_ ? "on" : "off",
-    (!twist_topic_.empty()) ? "on" : "off");
+    (!twist_topic_.empty()) ? "on" : "off",
+    allow_linear_time_fallback_ ? "on" : "off");
 }
 
 void ImuUndistorter::pruneBuffers(const rclcpp::Time & nowt)
@@ -119,41 +156,141 @@ void ImuUndistorter::pruneBuffers(const rclcpp::Time & nowt)
 
 void ImuUndistorter::onImu(const sensor_msgs::msg::Imu::SharedPtr msg)
 {
-  ImuSample s;
-  s.stamp = msg->header.stamp;
-  s.gyro = Eigen::Vector3d(msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z);
+  const rclcpp::Time stamp(msg->header.stamp, get_clock()->get_clock_type());
+  if (stamp.nanoseconds() <= 0) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "Rejected IMU with zero timestamp");
+    return;
+  }
 
-  std::lock_guard<std::mutex> lk(mtx_);
-  imu_buf_.push_back(s);
-  pruneBuffers(msg->header.stamp);
+  const std::string frame = imu_frame_.empty() ? msg->header.frame_id : imu_frame_;
+  if (frame.empty()) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "Rejected IMU with empty frame_id");
+    return;
+  }
+  if (!imu_frame_.empty() && msg->header.frame_id != imu_frame_) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "Rejected IMU frame mismatch: expected '%s', got '%s'",
+      imu_frame_.c_str(), msg->header.frame_id.c_str());
+    return;
+  }
+
+  ImuSample s;
+  s.stamp = stamp;
+  s.gyro = Eigen::Vector3d(msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z);
+  if (!s.gyro.allFinite() || s.gyro.norm() > max_abs_gyro_radps_) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "Rejected invalid IMU angular velocity (norm=%.3f rad/s)", s.gyro.norm());
+    return;
+  }
+
+  {
+    std::lock_guard<std::mutex> lk(mtx_);
+    if (!observed_imu_frame_.empty() && observed_imu_frame_ != frame) {
+      RCLCPP_WARN(
+        get_logger(), "IMU frame changed from '%s' to '%s'; clearing deskew IMU history",
+        observed_imu_frame_.c_str(), frame.c_str());
+      imu_buf_.clear();
+    }
+    observed_imu_frame_ = frame;
+
+    if (!imu_buf_.empty()) {
+      if (s.stamp < imu_buf_.back().stamp) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "Rejected out-of-order IMU sample");
+        return;
+      }
+      if (s.stamp == imu_buf_.back().stamp) {
+        imu_buf_.back() = s;
+        pruneBuffers(s.stamp);
+      } else {
+        imu_buf_.push_back(s);
+        pruneBuffers(s.stamp);
+      }
+    } else {
+      imu_buf_.push_back(s);
+      pruneBuffers(s.stamp);
+    }
+  }
+  retryPendingClouds();
 }
 
 void ImuUndistorter::onTwist(const geometry_msgs::msg::TwistStamped::SharedPtr msg)
 {
+  const rclcpp::Time stamp(msg->header.stamp, get_clock()->get_clock_type());
+  if (stamp.nanoseconds() <= 0) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "Rejected twist with zero timestamp");
+    return;
+  }
   double v = msg->twist.linear.x;
-  if (!std::isfinite(v)) v = 0.0;
+  if (!std::isfinite(v)) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "Rejected non-finite twist speed");
+    return;
+  }
   v = std::max(-max_speed_mps_, std::min(max_speed_mps_, v));
 
   TwistSample s;
-  s.stamp = msg->header.stamp;
+  s.stamp = stamp;
   s.speed_mps = v;
 
-  std::lock_guard<std::mutex> lk(mtx_);
-  twist_buf_.push_back(s);
-  pruneBuffers(msg->header.stamp);
+  {
+    std::lock_guard<std::mutex> lk(mtx_);
+    if (!twist_buf_.empty()) {
+      if (s.stamp < twist_buf_.back().stamp) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "Rejected out-of-order twist sample");
+        return;
+      }
+      if (s.stamp == twist_buf_.back().stamp) {
+        twist_buf_.back() = s;
+        pruneBuffers(s.stamp);
+      } else {
+        twist_buf_.push_back(s);
+        pruneBuffers(s.stamp);
+      }
+    } else {
+      twist_buf_.push_back(s);
+      pruneBuffers(s.stamp);
+    }
+  }
+  retryPendingClouds();
 }
 
 bool ImuUndistorter::ensureStaticTf(const std::string & scan_frame, const std::string & imu_frame)
 {
+  if (scan_frame.empty() || imu_frame.empty() || base_frame_.empty()) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "Cannot deskew with empty base/scan/IMU frame (base='%s', scan='%s', imu='%s')",
+      base_frame_.c_str(), scan_frame.c_str(), imu_frame.c_str());
+    return false;
+  }
+
+  if (cached_scan_frame_ != scan_frame) {
+    has_T_base_scan_ = false;
+    cached_scan_frame_ = scan_frame;
+  }
+  if (cached_imu_frame_ != imu_frame) {
+    has_T_base_imu_ = false;
+    cached_imu_frame_ = imu_frame;
+  }
+
   // base <- scan
   if (!has_T_base_scan_) {
+    if (scan_frame == base_frame_) {
+      T_base_scan_ = Eigen::Isometry3d::Identity();
+      has_T_base_scan_ = true;
+    } else {
     try {
       const auto tf = tf_buffer_->lookupTransform(
         base_frame_, scan_frame, tf2::TimePointZero, tf2::durationFromSec(0.2));
 
       Eigen::Quaterniond q(tf.transform.rotation.w, tf.transform.rotation.x,
                            tf.transform.rotation.y, tf.transform.rotation.z);
-      if (q.norm() > 1e-12) q.normalize();
+      if (!q.coeffs().allFinite() || q.norm() <= 1e-12) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "Invalid base<-scan TF quaternion");
+        return false;
+      }
+      q.normalize();
 
       T_base_scan_ = Eigen::Isometry3d::Identity();
       T_base_scan_.translation() = Eigen::Vector3d(tf.transform.translation.x,
@@ -167,17 +304,26 @@ bool ImuUndistorter::ensureStaticTf(const std::string & scan_frame, const std::s
         "TF lookup failed (base<-scan): %s", ex.what());
       return false;
     }
+    }
   }
 
-  // base <- imu (optional but recommended)
+  // base <- imu is required unless the IMU already publishes in base_frame.
   if (!has_T_base_imu_) {
+    if (imu_frame == base_frame_) {
+      T_base_imu_ = Eigen::Isometry3d::Identity();
+      has_T_base_imu_ = true;
+    } else {
     try {
       const auto tf = tf_buffer_->lookupTransform(
         base_frame_, imu_frame, tf2::TimePointZero, tf2::durationFromSec(0.2));
 
       Eigen::Quaterniond q(tf.transform.rotation.w, tf.transform.rotation.x,
                            tf.transform.rotation.y, tf.transform.rotation.z);
-      if (q.norm() > 1e-12) q.normalize();
+      if (!q.coeffs().allFinite() || q.norm() <= 1e-12) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "Invalid base<-imu TF quaternion");
+        return false;
+      }
+      q.normalize();
 
       T_base_imu_ = Eigen::Isometry3d::Identity();
       T_base_imu_.translation() = Eigen::Vector3d(tf.transform.translation.x,
@@ -187,14 +333,99 @@ bool ImuUndistorter::ensureStaticTf(const std::string & scan_frame, const std::s
 
       has_T_base_imu_ = true;
     } catch (const tf2::TransformException & ex) {
-      // IMU frame変換が無い場合は「IMUがbase_frameで出ている」想定で進める
-      // ただし frame_id が base と違う場合は回転がズレるので WARN
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
-        "TF lookup failed (base<-imu). Will assume IMU in base frame. err=%s", ex.what());
-      has_T_base_imu_ = false;
+        "TF lookup failed (base<-imu); deskew is rejected rather than assuming identity: %s", ex.what());
+      return false;
+    }
     }
   }
 
+  return true;
+}
+
+std::size_t ImuUndistorter::datatypeSize(uint8_t datatype)
+{
+  switch (datatype) {
+    case sensor_msgs::msg::PointField::INT8:
+    case sensor_msgs::msg::PointField::UINT8:
+      return 1U;
+    case sensor_msgs::msg::PointField::INT16:
+    case sensor_msgs::msg::PointField::UINT16:
+      return 2U;
+    case sensor_msgs::msg::PointField::INT32:
+    case sensor_msgs::msg::PointField::UINT32:
+    case sensor_msgs::msg::PointField::FLOAT32:
+      return 4U;
+    case sensor_msgs::msg::PointField::FLOAT64:
+      return 8U;
+    default:
+      return 0U;
+  }
+}
+
+bool ImuUndistorter::validateCloudLayout(
+  const sensor_msgs::msg::PointCloud2 & msg, std::string & out_reason) const
+{
+  out_reason.clear();
+  if (msg.header.frame_id.empty()) {
+    out_reason = "empty PointCloud2 frame_id";
+    return false;
+  }
+  const rclcpp::Time stamp(msg.header.stamp, get_clock()->get_clock_type());
+  if (stamp.nanoseconds() <= 0) {
+    out_reason = "zero PointCloud2 timestamp";
+    return false;
+  }
+  if (msg.is_bigendian) {
+    out_reason = "big-endian PointCloud2 is not supported";
+    return false;
+  }
+  if (msg.width == 0U || msg.height == 0U || msg.point_step == 0U) {
+    out_reason = "invalid PointCloud2 dimensions or point_step";
+    return false;
+  }
+  const std::size_t min_row_step =
+    static_cast<std::size_t>(msg.width) * static_cast<std::size_t>(msg.point_step);
+  if (static_cast<std::size_t>(msg.row_step) < min_row_step) {
+    out_reason = "row_step is smaller than width * point_step";
+    return false;
+  }
+  const std::size_t required =
+    static_cast<std::size_t>(msg.row_step) * static_cast<std::size_t>(msg.height);
+  if (msg.data.size() < required) {
+    out_reason = "PointCloud2 data is smaller than row_step * height";
+    return false;
+  }
+  const std::size_t point_count =
+    static_cast<std::size_t>(msg.width) * static_cast<std::size_t>(msg.height);
+  if (point_count > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    out_reason = "PointCloud2 contains too many points for this implementation";
+    return false;
+  }
+  for (const auto & field : msg.fields) {
+    const std::size_t field_size = datatypeSize(field.datatype);
+    if (field.count == 0U || field_size == 0U) {
+      continue;
+    }
+    if (static_cast<std::size_t>(field.count) >
+      std::numeric_limits<std::size_t>::max() / field_size)
+    {
+      out_reason = "PointCloud2 field count overflows size calculation: " + field.name;
+      return false;
+    }
+    const std::size_t bytes = static_cast<std::size_t>(field.count) * field_size;
+    if (static_cast<std::size_t>(field.offset) >
+      std::numeric_limits<std::size_t>::max() - bytes)
+    {
+      out_reason = "PointCloud2 field offset overflows size calculation: " + field.name;
+      return false;
+    }
+    const std::size_t end = static_cast<std::size_t>(field.offset) + bytes;
+    if (end > static_cast<std::size_t>(msg.point_step)) {
+      out_reason = "PointCloud2 field exceeds point_step: " + field.name;
+      return false;
+    }
+  }
   return true;
 }
 
@@ -203,16 +434,20 @@ bool ImuUndistorter::findTimeField(const sensor_msgs::msg::PointCloud2 & msg,
                                    uint8_t & out_datatype,
                                    uint32_t & out_offset) const
 {
-  for (size_t i = 0; i < time_fields_.size(); ++i) {
-    const std::string & name = time_fields_[i];
-    for (size_t j = 0; j < msg.fields.size(); ++j) {
-      const auto & f = msg.fields[j];
-      if (f.name == name) {
-        out_name = f.name;
-        out_datatype = f.datatype;
-        out_offset = f.offset;
-        return true;
+  for (const auto & name : time_fields_) {
+    for (const auto & field : msg.fields) {
+      if (field.name != name) {
+        continue;
       }
+      const std::size_t size = datatypeSize(field.datatype);
+      if (field.count == 0U || size == 0U ||
+          static_cast<std::size_t>(field.offset) + size > msg.point_step) {
+        return false;
+      }
+      out_name = field.name;
+      out_datatype = field.datatype;
+      out_offset = field.offset;
+      return true;
     }
   }
   return false;
@@ -220,138 +455,165 @@ bool ImuUndistorter::findTimeField(const sensor_msgs::msg::PointCloud2 & msg,
 
 bool ImuUndistorter::readFieldAsDouble(const uint8_t * ptr, uint8_t datatype, double & v) const
 {
-  // sensor_msgs::msg::PointField datatype
   switch (datatype) {
-    case sensor_msgs::msg::PointField::INT8:   { int8_t  t; std::memcpy(&t, ptr, 1); v = static_cast<double>(t); return true; }
-    case sensor_msgs::msg::PointField::UINT8:  { uint8_t t; std::memcpy(&t, ptr, 1); v = static_cast<double>(t); return true; }
-    case sensor_msgs::msg::PointField::INT16:  { int16_t t; std::memcpy(&t, ptr, 2); v = static_cast<double>(t); return true; }
-    case sensor_msgs::msg::PointField::UINT16: { uint16_t t; std::memcpy(&t, ptr, 2); v = static_cast<double>(t); return true; }
-    case sensor_msgs::msg::PointField::INT32:  { int32_t t; std::memcpy(&t, ptr, 4); v = static_cast<double>(t); return true; }
-    case sensor_msgs::msg::PointField::UINT32: { uint32_t t; std::memcpy(&t, ptr, 4); v = static_cast<double>(t); return true; }
-    case sensor_msgs::msg::PointField::FLOAT32:{ float   t; std::memcpy(&t, ptr, 4); v = static_cast<double>(t); return true; }
-    case sensor_msgs::msg::PointField::FLOAT64:{ double  t; std::memcpy(&t, ptr, 8); v = t; return true; }
-    default: return false;
+    case sensor_msgs::msg::PointField::INT8: {
+      int8_t t; std::memcpy(&t, ptr, sizeof(t)); v = static_cast<double>(t); return true;
+    }
+    case sensor_msgs::msg::PointField::UINT8: {
+      uint8_t t; std::memcpy(&t, ptr, sizeof(t)); v = static_cast<double>(t); return true;
+    }
+    case sensor_msgs::msg::PointField::INT16: {
+      int16_t t; std::memcpy(&t, ptr, sizeof(t)); v = static_cast<double>(t); return true;
+    }
+    case sensor_msgs::msg::PointField::UINT16: {
+      uint16_t t; std::memcpy(&t, ptr, sizeof(t)); v = static_cast<double>(t); return true;
+    }
+    case sensor_msgs::msg::PointField::INT32: {
+      int32_t t; std::memcpy(&t, ptr, sizeof(t)); v = static_cast<double>(t); return true;
+    }
+    case sensor_msgs::msg::PointField::UINT32: {
+      uint32_t t; std::memcpy(&t, ptr, sizeof(t)); v = static_cast<double>(t); return true;
+    }
+    case sensor_msgs::msg::PointField::FLOAT32: {
+      float t; std::memcpy(&t, ptr, sizeof(t)); v = static_cast<double>(t); return true;
+    }
+    case sensor_msgs::msg::PointField::FLOAT64: {
+      double t; std::memcpy(&t, ptr, sizeof(t)); v = t; return true;
+    }
+    default:
+      return false;
   }
 }
 
 double ImuUndistorter::estimateTimeScale(double raw_range, double scan_period) const
 {
-  // raw_range * scale ~= scan_period となる候補を探す（ns/us/ms/s を吸収）
   const double candidates[] = {1.0, 1e-3, 1e-6, 1e-9};
+  double best = std::numeric_limits<double>::quiet_NaN();
+  double best_score = std::numeric_limits<double>::infinity();
 
-  double best = 1.0;
-  double best_score = 1e100;
-
-  for (size_t i = 0; i < 4; ++i) {
-    const double s = candidates[i];
-    const double r = raw_range * s;
-
-    if (!std::isfinite(r)) continue;
-    if (r <= 1e-6) continue;
-    if (r > max_time_offset_sec_) continue;
-
-    const double score = std::fabs(r - scan_period);
+  for (const double scale : candidates) {
+    const double range_sec = raw_range * scale;
+    if (!std::isfinite(range_sec) || range_sec <= 1e-7 ||
+        range_sec > max_time_offset_sec_ + point_time_tolerance_sec_) {
+      continue;
+    }
+    const double score = std::fabs(range_sec - scan_period);
     if (score < best_score) {
       best_score = score;
-      best = s;
+      best = scale;
     }
   }
   return best;
 }
 
-ImuUndistorter::PointTimeInfo ImuUndistorter::preparePointTimeInfo(const sensor_msgs::msg::PointCloud2 & msg) const
+bool ImuUndistorter::preparePointTimeInfo(
+  const sensor_msgs::msg::PointCloud2 & msg,
+  PointTimeInfo & out,
+  std::string & out_reason) const
 {
-  PointTimeInfo ti;
+  out = PointTimeInfo{};
+  out_reason.clear();
 
-  // scan period
-  double scan_period = fallback_scan_period_;
-  if (scan_period <= 1e-4) scan_period = 0.1;
-  ti.scan_period = scan_period;
+  if (!validateCloudLayout(msg, out_reason)) {
+    return false;
+  }
 
-  // scan start time t0
-  const rclcpp::Time stamp = msg.header.stamp;
+  const rclcpp::Time stamp(msg.header.stamp, get_clock()->get_clock_type());
   const double stamp_sec = toSec(stamp);
-  const double t0 = cloud_stamp_is_start_ ? stamp_sec : (stamp_sec - scan_period);
-  ti.t0_sec = t0;
+  const double configured_period = fallback_scan_period_;
 
-  // reference time
-  if (reference_time_ == "end") ti.t_ref_sec = t0 + scan_period;
-  else ti.t_ref_sec = t0;
-
-  // time field detection
   std::string name;
-  uint8_t datatype = 0;
-  uint32_t offset = 0;
-  const bool has = findTimeField(msg, name, datatype, offset);
+  uint8_t datatype = 0U;
+  uint32_t offset = 0U;
+  out.has_time_field = findTimeField(msg, name, datatype, offset);
 
-  ti.has_time_field = has;
-  if (!has) {
-    ti.used_linear_fallback = true;
-    ti.interpreted_as_relative = true;
-    ti.time_scale = 1.0;
-    return ti;
+  if (!out.has_time_field) {
+    if (!allow_linear_time_fallback_) {
+      out_reason = "no supported per-point time field; linear point-order fallback is disabled";
+      return false;
+    }
+    out.used_linear_fallback = true;
+    out.interpreted_as_relative = true;
+    out.time_scale = 1.0;
+    out.raw_origin = 0.0;
+    out.scan_period = configured_period;
+    out.t0_sec = cloud_stamp_is_start_ ? stamp_sec : stamp_sec - configured_period;
+    out.t_ref_sec = reference_time_ == "end" ? out.t0_sec + configured_period : out.t0_sec;
+    return true;
   }
 
-  ti.field_name = name;
-  ti.datatype = datatype;
-  ti.offset = offset;
+  out.field_name = name;
+  out.datatype = datatype;
+  out.offset = offset;
 
-  // decide scale + relative/absolute by sampling a few points
-  // sample raw values to estimate range
-  const int point_count = static_cast<int>(msg.width * msg.height);
-  if (point_count <= 1) {
-    ti.used_linear_fallback = true;
-    return ti;
-  }
+  const std::size_t point_count =
+    static_cast<std::size_t>(msg.width) * static_cast<std::size_t>(msg.height);
+  double raw_min = std::numeric_limits<double>::infinity();
+  double raw_max = -std::numeric_limits<double>::infinity();
 
-  const int stride = static_cast<int>(msg.point_step);
-  const uint8_t * data = msg.data.data();
-
-  const int sample_n = std::min(40, point_count);
-  double vmin = std::numeric_limits<double>::infinity();
-  double vmax = -std::numeric_limits<double>::infinity();
-
-  for (int k = 0; k < sample_n; ++k) {
-    const int idx = (k * point_count) / sample_n;
-    const uint8_t * p = data + idx * stride + offset;
-
+  for (std::size_t index = 0; index < point_count; ++index) {
+    const std::size_t row = index / static_cast<std::size_t>(msg.width);
+    const std::size_t col = index % static_cast<std::size_t>(msg.width);
+    const uint8_t * point = msg.data.data() + row * msg.row_step + col * msg.point_step;
     double raw = 0.0;
-    if (!readFieldAsDouble(p, datatype, raw)) continue;
-    if (!std::isfinite(raw)) continue;
-    vmin = std::min(vmin, raw);
-    vmax = std::max(vmax, raw);
+    if (!readFieldAsDouble(point + offset, datatype, raw) || !std::isfinite(raw)) {
+      out_reason = "invalid per-point time value at point " + std::to_string(index);
+      return false;
+    }
+    raw_min = std::min(raw_min, raw);
+    raw_max = std::max(raw_max, raw);
   }
 
-  if (!std::isfinite(vmin) || !std::isfinite(vmax) || vmax <= vmin) {
-    // fallback
-    ti.used_linear_fallback = true;
-    return ti;
+  const double raw_range = raw_max - raw_min;
+  if (!std::isfinite(raw_range) || (point_count > 1U && raw_range <= 0.0)) {
+    out_reason = "per-point time field has no finite positive span";
+    return false;
   }
 
-  const double raw_range = vmax - vmin;
-
-  // choose scale
-  double scale = (time_scale_ > 0.0) ? time_scale_ : estimateTimeScale(raw_range, scan_period);
-  ti.time_scale = scale;
-
-  // decide relative vs absolute
-  // relative: values mostly within [0, scan_period] after scale
-  const double range_sec = raw_range * scale;
-  bool relative_like = (range_sec > 1e-6) && (range_sec <= max_time_offset_sec_);
-
-  // absolute: values are large epoch-like (e.g. ns since epoch), after scale it's huge
-  // If scale=1e-9 and raw is epoch_ns, raw_range may still be small but vmin itself is huge.
-  // We also check magnitude.
-  const double mag_sec = std::fabs(vmin * scale);
-  bool absolute_like = (mag_sec > 1e6);  // ~11 days in seconds, rough heuristic
-
-  if (prefer_relative_time_) {
-    ti.interpreted_as_relative = relative_like && !absolute_like;
+  // A one-point cloud has no observable time span. It needs no intra-scan
+  // correction, so retain the configured scan interval for buffer validation
+  // without trying to infer units from a zero range.
+  if (point_count == 1U) {
+    out.time_scale = time_scale_ > 0.0 ? time_scale_ : 1.0;
   } else {
-    ti.interpreted_as_relative = relative_like && !absolute_like;
+    out.time_scale = time_scale_ > 0.0 ? time_scale_ :
+      estimateTimeScale(raw_range, configured_period);
+  }
+  if (!std::isfinite(out.time_scale) || out.time_scale <= 0.0) {
+    out_reason = "could not infer a safe per-point time scale; configure time_scale explicitly";
+    return false;
   }
 
-  return ti;
+  const double duration = point_count > 1U ? raw_range * out.time_scale : configured_period;
+  if (!std::isfinite(duration) || duration <= 0.0 ||
+      duration > max_time_offset_sec_ + point_time_tolerance_sec_) {
+    out_reason = "per-point time span is outside the configured safe interval";
+    return false;
+  }
+  out.scan_period = duration;
+
+  const double min_sec = raw_min * out.time_scale;
+  const double max_sec = raw_max * out.time_scale;
+  const bool epoch_like = std::fabs(min_sec) > 1e6 || std::fabs(max_sec) > 1e6;
+  const bool relative_like =
+    std::fabs(min_sec) <= max_time_offset_sec_ + point_time_tolerance_sec_ ||
+    std::fabs(max_sec) <= max_time_offset_sec_ + point_time_tolerance_sec_;
+
+  out.interpreted_as_relative = epoch_like ? false : (prefer_relative_time_ || relative_like);
+  if (out.interpreted_as_relative) {
+    out.raw_origin = raw_min;
+    out.t0_sec = cloud_stamp_is_start_ ? stamp_sec : stamp_sec - duration;
+  } else {
+    out.raw_origin = 0.0;
+    out.t0_sec = min_sec;
+    const double expected_stamp = cloud_stamp_is_start_ ? min_sec : max_sec;
+    if (std::fabs(stamp_sec - expected_stamp) > max_time_offset_sec_) {
+      out_reason = "absolute point times are inconsistent with the cloud timestamp";
+      return false;
+    }
+  }
+  out.t_ref_sec = reference_time_ == "end" ? out.t0_sec + duration : out.t0_sec;
+  return true;
 }
 
 bool ImuUndistorter::computePointDtSec(const sensor_msgs::msg::PointCloud2 & msg,
@@ -361,43 +623,35 @@ bool ImuUndistorter::computePointDtSec(const sensor_msgs::msg::PointCloud2 & msg
                                        const uint8_t * point_ptr,
                                        double & out_dt) const
 {
+  (void)msg;
   if (point_count <= 1) {
     out_dt = 0.0;
     return true;
   }
 
   if (!ti.has_time_field) {
-    // linear fallback
-    const double s = ti.scan_period;
-    const double alpha = static_cast<double>(point_index) / static_cast<double>(point_count - 1);
-    out_dt = std::max(0.0, std::min(s, alpha * s));
-    return true;
+    if (!ti.used_linear_fallback || !allow_linear_time_fallback_) {
+      return false;
+    }
+    const double alpha = static_cast<double>(point_index) /
+      static_cast<double>(point_count - 1);
+    out_dt = alpha * ti.scan_period;
+    return std::isfinite(out_dt);
   }
 
-  // read raw
   double raw = 0.0;
-  if (!readFieldAsDouble(point_ptr + ti.offset, ti.datatype, raw)) {
+  if (!readFieldAsDouble(point_ptr + ti.offset, ti.datatype, raw) || !std::isfinite(raw)) {
     return false;
   }
-  if (!std::isfinite(raw)) return false;
 
-  const double t_raw_sec = raw * ti.time_scale;
-
-  double dt = 0.0;
-  if (ti.interpreted_as_relative) {
-    dt = t_raw_sec;
-  } else {
-    // absolute time in sec
-    const double t_abs = t_raw_sec;
-    dt = t_abs - ti.t0_sec;
+  double dt = ti.interpreted_as_relative ?
+    (raw - ti.raw_origin) * ti.time_scale : raw * ti.time_scale - ti.t0_sec;
+  if (!std::isfinite(dt) ||
+      dt < -point_time_tolerance_sec_ ||
+      dt > ti.scan_period + point_time_tolerance_sec_) {
+    return false;
   }
-
-  // clamp
-  if (!std::isfinite(dt)) return false;
-  dt = std::max(-max_time_offset_sec_, std::min(max_time_offset_sec_, dt));
-  // keep within [0, scan_period] as much as possible
-  dt = std::max(0.0, std::min(ti.scan_period, dt));
-  out_dt = dt;
+  out_dt = std::max(0.0, std::min(ti.scan_period, dt));
   return true;
 }
 
@@ -420,8 +674,15 @@ bool ImuUndistorter::buildBaseTrajectory(double t0_sec, double t1_sec,
 {
   out_traj.clear();
   out_reason.clear();
+  if (!std::isfinite(t0_sec) || !std::isfinite(t1_sec) || t1_sec <= t0_sec) {
+    out_reason = "invalid trajectory interval";
+    return false;
+  }
+  if (!has_T_base_imu_) {
+    out_reason = "base<-imu transform is not available";
+    return false;
+  }
 
-  // copy imu buffer snapshot
   std::deque<ImuSample> imu;
   std::deque<TwistSample> twist;
   {
@@ -429,108 +690,247 @@ bool ImuUndistorter::buildBaseTrajectory(double t0_sec, double t1_sec,
     imu = imu_buf_;
     twist = twist_buf_;
   }
-
-  if (imu.size() < 2) {
-    out_reason = "imu buffer too small";
+  if (imu.size() < 2U) {
+    out_reason = "IMU buffer contains fewer than two samples";
     return false;
   }
 
-  // collect samples within [t0, t1]
-  std::vector<ImuSample> sel;
-  sel.reserve(imu.size());
-
-  for (const auto & s : imu) {
-    const double ts = toSec(s.stamp);
-    if (ts < t0_sec - 0.2) continue;
-    if (ts > t1_sec + 0.2) break;
-    sel.push_back(s);
-  }
-
-  if (sel.size() < 2) {
-    out_reason = "no imu in time window";
+  auto imu_time = [](const ImuSample & sample) {return toSec(sample.stamp);};
+  const double imu_first = imu_time(imu.front());
+  const double imu_last = imu_time(imu.back());
+  if (imu_first > t0_sec || imu_last < t1_sec) {
+    out_reason = "IMU does not cover the full scan interval";
     return false;
   }
 
-  // Sort by stamp (just in case)
-  std::sort(sel.begin(), sel.end(),
-            [](const ImuSample & a, const ImuSample & b) { return a.stamp < b.stamp; });
+  auto imu_hi_at = [&](double t) {
+      return std::lower_bound(
+        imu.begin(), imu.end(), t,
+        [&](const ImuSample & sample, double value) {return imu_time(sample) < value;});
+    };
 
-  // Build trajectory timestamps: include endpoints + each IMU stamp in window
-  std::vector<double> ts;
-  ts.reserve(sel.size() + 2);
-  ts.push_back(t0_sec);
-  for (size_t i = 0; i < sel.size(); ++i) {
-    const double t = toSec(sel[i].stamp);
-    if (t > t0_sec && t < t1_sec) ts.push_back(t);
+  auto validate_imu_boundary = [&](double t, const char * label) {
+      const auto hi = imu_hi_at(t);
+      double nearest = std::numeric_limits<double>::infinity();
+      if (hi != imu.end()) {
+        nearest = std::min(nearest, std::fabs(imu_time(*hi) - t));
+      }
+      if (hi != imu.begin()) {
+        nearest = std::min(nearest, std::fabs(t - imu_time(*std::prev(hi))));
+      }
+      if (nearest > max_imu_boundary_gap_sec_) {
+        out_reason = std::string("IMU boundary gap is too large at scan ") + label;
+        return false;
+      }
+      return true;
+    };
+  if (!validate_imu_boundary(t0_sec, "start") || !validate_imu_boundary(t1_sec, "end")) {
+    return false;
   }
-  ts.push_back(t1_sec);
-  std::sort(ts.begin(), ts.end());
-  ts.erase(std::unique(ts.begin(), ts.end(),
-                       [](double a, double b){ return std::fabs(a-b) < 1e-9; }),
-           ts.end());
 
-  // Integrate gyro in base frame.
-  // If we have base<-imu TF, convert imu gyro to base by rotation.
-  const Eigen::Matrix3d R_BI =
-    has_T_base_imu_ ? Eigen::Matrix3d(T_base_imu_.linear()) : Eigen::Matrix3d::Identity();
+  auto first_in_window = imu_hi_at(t0_sec);
+  if (first_in_window != imu.begin()) {
+    --first_in_window;
+  }
+  for (auto it = first_in_window; std::next(it) != imu.end(); ++it) {
+    const auto next = std::next(it);
+    const double a = imu_time(*it);
+    const double b = imu_time(*next);
+    if (b < t0_sec) {
+      continue;
+    }
+    if (a > t1_sec) {
+      break;
+    }
+    const double gap = b - a;
+    if (!(gap > 0.0) || gap > max_imu_gap_sec_) {
+      std::ostringstream oss;
+      oss << "IMU gap " << gap << " s exceeds max_imu_gap_sec";
+      out_reason = oss.str();
+      return false;
+    }
+    if (b >= t1_sec) {
+      break;
+    }
+  }
 
-  Eigen::Quaterniond q_WB(1,0,0,0); // W defined as base at t0
-  Eigen::Vector3d p_WB(0,0,0);
+  const Eigen::Matrix3d R_BI = T_base_imu_.linear();
+  auto gyro_at = [&](double t, Eigen::Vector3d & gyro_base) {
+      const auto hi = imu_hi_at(t);
+      if (hi == imu.end()) {
+        return false;
+      }
+      if (std::fabs(imu_time(*hi) - t) <= 1e-12) {
+        gyro_base = R_BI * hi->gyro;
+        return gyro_base.allFinite();
+      }
+      if (hi == imu.begin()) {
+        return false;
+      }
+      const auto lo = std::prev(hi);
+      const double ta = imu_time(*lo);
+      const double tb = imu_time(*hi);
+      const double gap = tb - ta;
+      if (!(gap > 0.0) || gap > max_imu_gap_sec_) {
+        return false;
+      }
+      const double alpha = (t - ta) / gap;
+      const Eigen::Vector3d gyro_imu = (1.0 - alpha) * lo->gyro + alpha * hi->gyro;
+      gyro_base = R_BI * gyro_imu;
+      return gyro_base.allFinite();
+    };
 
-  out_traj.reserve(ts.size());
-  out_traj.push_back(PoseSample{ts.front(), q_WB, p_WB});
+  bool use_default_speed = use_translation_ && !use_twist_speed_;
+  if (use_translation_ && use_twist_speed_) {
+    if (twist.size() < 2U) {
+      if (!allow_default_speed_fallback_) {
+        out_reason = "twist buffer contains fewer than two samples";
+        return false;
+      }
+      use_default_speed = true;
+    } else {
+      const auto twist_time = [](const TwistSample & sample) {return toSec(sample.stamp);};
+      if (twist_time(twist.front()) > t0_sec || twist_time(twist.back()) < t1_sec) {
+        if (!allow_default_speed_fallback_) {
+          out_reason = "twist does not cover the full scan interval";
+          return false;
+        }
+        use_default_speed = true;
+      }
+      if (!use_default_speed) {
+        auto first = std::lower_bound(
+          twist.begin(), twist.end(), t0_sec,
+          [&](const TwistSample & sample, double value) {return twist_time(sample) < value;});
+        if (first != twist.begin()) {
+          --first;
+        }
+        for (auto it = first; std::next(it) != twist.end(); ++it) {
+          const auto next = std::next(it);
+          const double a = twist_time(*it);
+          const double b = twist_time(*next);
+          if (b < t0_sec) {
+            continue;
+          }
+          if (a > t1_sec) {
+            break;
+          }
+          const double gap = b - a;
+          if (!(gap > 0.0) || gap > max_twist_gap_sec_) {
+            if (!allow_default_speed_fallback_) {
+              std::ostringstream oss;
+              oss << "twist gap " << gap << " s exceeds max_twist_gap_sec";
+              out_reason = oss.str();
+              return false;
+            }
+            use_default_speed = true;
+            break;
+          }
+          if (b >= t1_sec) {
+            break;
+          }
+        }
+      }
+    }
+  }
 
-  // helper: get gyro at time t by nearest previous sample (zero-order hold)
-  size_t imu_idx = 0;
+  auto speed_at = [&](double t, double & speed) {
+      if (!use_translation_) {
+        speed = 0.0;
+        return true;
+      }
+      if (use_default_speed) {
+        speed = std::max(-max_speed_mps_, std::min(max_speed_mps_, default_speed_mps_));
+        return std::isfinite(speed);
+      }
+      const auto twist_time = [](const TwistSample & sample) {return toSec(sample.stamp);};
+      const auto hi = std::lower_bound(
+        twist.begin(), twist.end(), t,
+        [&](const TwistSample & sample, double value) {return twist_time(sample) < value;});
+      if (hi == twist.end()) {
+        return false;
+      }
+      if (std::fabs(twist_time(*hi) - t) <= 1e-12) {
+        speed = hi->speed_mps;
+      } else {
+        if (hi == twist.begin()) {
+          return false;
+        }
+        const auto lo = std::prev(hi);
+        const double ta = twist_time(*lo);
+        const double tb = twist_time(*hi);
+        const double gap = tb - ta;
+        if (!(gap > 0.0) || gap > max_twist_gap_sec_) {
+          return false;
+        }
+        const double alpha = (t - ta) / gap;
+        speed = (1.0 - alpha) * lo->speed_mps + alpha * hi->speed_mps;
+      }
+      speed = std::max(-max_speed_mps_, std::min(max_speed_mps_, speed));
+      return std::isfinite(speed);
+    };
 
-  auto gyroAt = [&](double t_sec)->Eigen::Vector3d {
-    while (imu_idx + 1 < sel.size() && toSec(sel[imu_idx + 1].stamp) <= t_sec) imu_idx++;
-    Eigen::Vector3d w_I = sel[imu_idx].gyro;
-    Eigen::Vector3d w_B = R_BI * w_I;
-    return w_B;
-  };
+  std::vector<double> times;
+  times.reserve(imu.size() + 2U);
+  times.push_back(t0_sec);
+  for (const auto & sample : imu) {
+    const double t = imu_time(sample);
+    if (t > t0_sec && t < t1_sec) {
+      times.push_back(t);
+    }
+  }
+  times.push_back(t1_sec);
 
-  // helper: get speed at time t (zero-order hold)
-  size_t tw_idx = 0;
-  auto speedAt = [&](double t_sec)->double {
-    if (!use_translation_) return 0.0;
-    if (!use_twist_speed_) return std::max(-max_speed_mps_, std::min(max_speed_mps_, default_speed_mps_));
-    if (twist.empty()) return std::max(-max_speed_mps_, std::min(max_speed_mps_, default_speed_mps_));
+  Eigen::Quaterniond q_world_base = Eigen::Quaterniond::Identity();
+  Eigen::Vector3d p_world_base = Eigen::Vector3d::Zero();
+  out_traj.reserve(times.size());
+  out_traj.push_back(PoseSample{times.front(), q_world_base, p_world_base});
 
-    while (tw_idx + 1 < twist.size() && toSec(twist[tw_idx + 1].stamp) <= t_sec) tw_idx++;
-    double v = twist[tw_idx].speed_mps;
-    if (!std::isfinite(v)) v = 0.0;
-    v = std::max(-max_speed_mps_, std::min(max_speed_mps_, v));
-    return v;
-  };
-
-  for (size_t k = 1; k < ts.size(); ++k) {
-    const double t_prev = ts[k-1];
-    const double t_now  = ts[k];
-    const double dt = t_now - t_prev;
-
-    if (dt <= 0.0) continue;
-    if (dt > max_imu_gap_sec_ * 10.0) {
-      // too sparse; still allow but warn by reason
-      // (trajectory will be less accurate)
+  for (std::size_t index = 1U; index < times.size(); ++index) {
+    const double ta = times[index - 1U];
+    const double tb = times[index];
+    const double dt = tb - ta;
+    if (!(dt > 0.0) || dt > max_imu_gap_sec_) {
+      out_reason = "invalid integration interval in IMU trajectory";
+      out_traj.clear();
+      return false;
     }
 
-    const Eigen::Vector3d w_B = gyroAt(0.5*(t_prev + t_now));
-    const Eigen::Quaterniond dq = deltaQFromGyro(w_B, dt);
-    q_WB = (q_WB * dq).normalized();
+    Eigen::Vector3d gyro_a;
+    Eigen::Vector3d gyro_b;
+    if (!gyro_at(ta, gyro_a) || !gyro_at(tb, gyro_b)) {
+      out_reason = "failed to interpolate IMU at an integration boundary";
+      out_traj.clear();
+      return false;
+    }
+    const Eigen::Vector3d gyro_mid = 0.5 * (gyro_a + gyro_b);
+    const Eigen::Quaterniond q_before = q_world_base;
+    const Eigen::Quaterniond dq = deltaQFromGyro(gyro_mid, dt);
+    q_world_base = (q_world_base * dq).normalized();
+    if (!q_world_base.coeffs().allFinite()) {
+      out_reason = "non-finite integrated IMU orientation";
+      out_traj.clear();
+      return false;
+    }
 
     if (use_translation_) {
-      const double v = speedAt(0.5*(t_prev + t_now));
-      // move along base x axis in world: p += R * (v*dt,0,0)
-      const Eigen::Vector3d vB(v * dt, 0.0, 0.0);
-      const Eigen::Vector3d vW = q_WB.toRotationMatrix() * vB;
-      p_WB += vW;
+      double speed = 0.0;
+      if (!speed_at(0.5 * (ta + tb), speed)) {
+        out_reason = "failed to interpolate twist speed";
+        out_traj.clear();
+        return false;
+      }
+      const Eigen::Quaterniond q_mid = q_before.slerp(0.5, q_world_base).normalized();
+      p_world_base += q_mid.toRotationMatrix() * Eigen::Vector3d(speed * dt, 0.0, 0.0);
+      if (!p_world_base.allFinite()) {
+        out_reason = "non-finite integrated translation";
+        out_traj.clear();
+        return false;
+      }
     }
-
-    out_traj.push_back(PoseSample{t_now, q_WB, p_WB});
+    out_traj.push_back(PoseSample{tb, q_world_base, p_world_base});
   }
 
-  return true;
+  return out_traj.size() >= 2U;
 }
 
 bool ImuUndistorter::orientationAt(const std::vector<PoseSample> & traj, double t_sec, Eigen::Quaterniond & q_WB) const
@@ -578,13 +978,24 @@ bool ImuUndistorter::findXYZOffsets(const sensor_msgs::msg::PointCloud2 & msg,
                                     uint8_t & dt_x, uint8_t & dt_y, uint8_t & dt_z) const
 {
   bool fx=false, fy=false, fz=false;
-  for (size_t i = 0; i < msg.fields.size(); ++i) {
-    const auto & f = msg.fields[i];
-    if (f.name == "x") { off_x = f.offset; dt_x = f.datatype; fx = true; }
-    if (f.name == "y") { off_y = f.offset; dt_y = f.datatype; fy = true; }
-    if (f.name == "z") { off_z = f.offset; dt_z = f.datatype; fz = true; }
+  for (const auto & field : msg.fields) {
+    if (field.count < 1U) {
+      continue;
+    }
+    if (field.name == "x") {
+      off_x = field.offset;
+      dt_x = field.datatype;
+      fx = true;
+    } else if (field.name == "y") {
+      off_y = field.offset;
+      dt_y = field.datatype;
+      fy = true;
+    } else if (field.name == "z") {
+      off_z = field.offset;
+      dt_z = field.datatype;
+      fz = true;
+    }
   }
-  // xyz must be float32 ideally
   return fx && fy && fz;
 }
 
@@ -601,121 +1012,118 @@ static void writeFloat32(uint8_t * p, float v)
 
 bool ImuUndistorter::deskewPointCloud(const sensor_msgs::msg::PointCloud2 & in,
                                       sensor_msgs::msg::PointCloud2 & out,
+                                      PointTimeInfo & out_time_info,
                                       std::string & out_reason)
 {
   out_reason.clear();
+  out_time_info = PointTimeInfo{};
 
-  if (in.data.empty()) {
-    out_reason = "empty cloud";
+  PointTimeInfo & ti = out_time_info;
+  if (!preparePointTimeInfo(in, ti, out_reason)) {
     return false;
   }
 
-  // xyz offsets
-  uint32_t off_x=0, off_y=0, off_z=0;
-  uint8_t dt_x=0, dt_y=0, dt_z=0;
+  uint32_t off_x = 0U;
+  uint32_t off_y = 0U;
+  uint32_t off_z = 0U;
+  uint8_t dt_x = 0U;
+  uint8_t dt_y = 0U;
+  uint8_t dt_z = 0U;
   if (!findXYZOffsets(in, off_x, off_y, off_z, dt_x, dt_y, dt_z)) {
-    out_reason = "xyz fields not found";
+    out_reason = "x/y/z fields were not found";
     return false;
   }
   if (dt_x != sensor_msgs::msg::PointField::FLOAT32 ||
       dt_y != sensor_msgs::msg::PointField::FLOAT32 ||
       dt_z != sensor_msgs::msg::PointField::FLOAT32) {
-    out_reason = "xyz datatype not float32 (not supported in this minimal implementation)";
+    out_reason = "x/y/z fields must all use FLOAT32";
+    return false;
+  }
+  if (static_cast<std::size_t>(off_x) + sizeof(float) > in.point_step ||
+      static_cast<std::size_t>(off_y) + sizeof(float) > in.point_step ||
+      static_cast<std::size_t>(off_z) + sizeof(float) > in.point_step) {
+    out_reason = "x/y/z field offset exceeds point_step";
     return false;
   }
 
-  // time info
-  const PointTimeInfo ti = preparePointTimeInfo(in);
+  const std::size_t point_count_size =
+    static_cast<std::size_t>(in.width) * static_cast<std::size_t>(in.height);
+  const int point_count = static_cast<int>(point_count_size);
 
-  const int point_count = static_cast<int>(in.width * in.height);
-  if (point_count <= 0) {
-    out_reason = "invalid point count";
-    return false;
-  }
-
-  // Build base trajectory [t0, t1]
   const double t0 = ti.t0_sec;
   const double t1 = ti.t0_sec + ti.scan_period;
-
-  std::vector<PoseSample> traj;
-  std::string reason_traj;
-  if (!buildBaseTrajectory(t0, t1, traj, reason_traj)) {
-    out_reason = "trajectory build failed: " + reason_traj;
+  std::vector<PoseSample> trajectory;
+  std::string trajectory_reason;
+  if (!buildBaseTrajectory(t0, t1, trajectory, trajectory_reason)) {
+    out_reason = "trajectory build failed: " + trajectory_reason;
     return false;
   }
 
-  // Reference pose
   Eigen::Quaterniond q_ref;
   Eigen::Vector3d p_ref;
-  if (!orientationAt(traj, ti.t_ref_sec, q_ref)) {
-    out_reason = "no orientation at ref";
-    return false;
-  }
-  if (!positionAt(traj, ti.t_ref_sec, p_ref)) {
-    out_reason = "no position at ref";
+  if (!orientationAt(trajectory, ti.t_ref_sec, q_ref) ||
+      !positionAt(trajectory, ti.t_ref_sec, p_ref)) {
+    out_reason = "reference pose is outside the validated trajectory";
     return false;
   }
 
-  // output copy
   out = in;
-  out.header.frame_id = in.header.frame_id; // keep same
-  out.data = in.data;                       // will modify xyz
+  out.header.stamp = fromSec(*get_clock(), ti.t_ref_sec);
+  const Eigen::Isometry3d T_scan_base = T_base_scan_.inverse();
+  const Eigen::Matrix3d rotation_ref_transpose = q_ref.toRotationMatrix().transpose();
 
-  const int step = static_cast<int>(in.point_step);
-  const uint8_t * in_data = in.data.data();
-  uint8_t * out_data = out.data.data();
+  for (std::size_t index = 0U; index < point_count_size; ++index) {
+    const std::size_t row = index / static_cast<std::size_t>(in.width);
+    const std::size_t col = index % static_cast<std::size_t>(in.width);
+    const std::size_t byte_offset = row * in.row_step + col * in.point_step;
+    const uint8_t * point_in = in.data.data() + byte_offset;
+    uint8_t * point_out = out.data.data() + byte_offset;
 
-  // Precompute extrinsic
-  const Eigen::Isometry3d T_SB = T_base_scan_.inverse(); // scan <- base
-
-  // W frame defined as base at t0. So T_WB(t0)=I.
-  for (int i = 0; i < point_count; ++i) {
-    const uint8_t * p_in = in_data + i * step;
-    uint8_t * p_out = out_data + i * step;
-
-    float x=0, y=0, z=0;
-    if (!readFloat32(p_in + off_x, x) ||
-        !readFloat32(p_in + off_y, y) ||
-        !readFloat32(p_in + off_z, z)) {
+    float x = 0.0F;
+    float y = 0.0F;
+    float z = 0.0F;
+    if (!readFloat32(point_in + off_x, x) ||
+        !readFloat32(point_in + off_y, y) ||
+        !readFloat32(point_in + off_z, z)) {
+      // Preserve invalid points; the layout and their time fields were already validated.
       continue;
     }
 
-    // compute dt
     double dt = 0.0;
-    if (!computePointDtSec(in, ti, i, point_count, p_in, dt)) {
-      // fallback to linear
-      const double alpha = static_cast<double>(i) / static_cast<double>(std::max(1, point_count-1));
-      dt = std::max(0.0, std::min(ti.scan_period, alpha * ti.scan_period));
+    if (!computePointDtSec(in, ti, static_cast<int>(index), point_count, point_in, dt)) {
+      out_reason = "invalid per-point time at point " + std::to_string(index);
+      return false;
+    }
+    const double point_time = ti.t0_sec + dt;
+
+    Eigen::Quaterniond q_point;
+    Eigen::Vector3d p_point;
+    if (!orientationAt(trajectory, point_time, q_point) ||
+        !positionAt(trajectory, point_time, p_point)) {
+      out_reason = "point time is outside the validated trajectory";
+      return false;
     }
 
-    const double t_i = ti.t0_sec + dt;
+    const Eigen::Matrix3d rotation_relative =
+      rotation_ref_transpose * q_point.toRotationMatrix();
+    const Eigen::Vector3d translation_relative =
+      rotation_ref_transpose * (p_point - p_ref);
 
-    Eigen::Quaterniond q_i;
-    Eigen::Vector3d p_i;
-    if (!orientationAt(traj, t_i, q_i)) continue;
-    if (!positionAt(traj, t_i, p_i)) continue;
+    const Eigen::Vector3d point_scan(x, y, z);
+    const Eigen::Vector3d point_base =
+      (T_base_scan_ * point_scan.homogeneous()).head<3>();
+    const Eigen::Vector3d point_base_ref =
+      rotation_relative * point_base + translation_relative;
+    const Eigen::Vector3d point_scan_ref =
+      (T_scan_base * point_base_ref.homogeneous()).head<3>();
+    if (!point_scan_ref.allFinite()) {
+      out_reason = "deskew produced a non-finite point";
+      return false;
+    }
 
-    // Relative transform from base_i to base_ref:
-    // p_base_ref = (T_WB(ref))^-1 * T_WB(i) * p_base_i
-    const Eigen::Matrix3d R_ref = q_ref.toRotationMatrix();
-    const Eigen::Matrix3d R_i   = q_i.toRotationMatrix();
-
-    const Eigen::Matrix3d R_rel = R_ref.transpose() * R_i;
-    const Eigen::Vector3d t_rel = R_ref.transpose() * (p_i - p_ref);
-
-    // point in scan_i -> base_i
-    Eigen::Vector3d pS(x, y, z);
-    Eigen::Vector3d pB = (T_base_scan_ * pS.homogeneous()).head<3>();
-
-    // transform to base_ref
-    Eigen::Vector3d pB_ref = R_rel * pB + t_rel;
-
-    // base_ref -> scan_ref (extrinsic static)
-    Eigen::Vector3d pS_ref = (T_SB * pB_ref.homogeneous()).head<3>();
-
-    writeFloat32(p_out + off_x, static_cast<float>(pS_ref.x()));
-    writeFloat32(p_out + off_y, static_cast<float>(pS_ref.y()));
-    writeFloat32(p_out + off_z, static_cast<float>(pS_ref.z()));
+    writeFloat32(point_out + off_x, static_cast<float>(point_scan_ref.x()));
+    writeFloat32(point_out + off_y, static_cast<float>(point_scan_ref.y()));
+    writeFloat32(point_out + off_z, static_cast<float>(point_scan_ref.z()));
   }
 
   return true;
@@ -746,54 +1154,156 @@ void ImuUndistorter::publishDiag(const rclcpp::Time & stamp,
   addKV("has_time_field", ti.has_time_field ? "true" : "false");
   addKV("time_field_name", ti.has_time_field ? ti.field_name : "");
   addKV("used_linear_fallback", ti.used_linear_fallback ? "true" : "false");
+  addKV("allow_linear_time_fallback", allow_linear_time_fallback_ ? "true" : "false");
   addKV("scan_period", std::to_string(ti.scan_period));
   addKV("time_scale", std::to_string(ti.time_scale));
   addKV("interpreted_as_relative", ti.interpreted_as_relative ? "true" : "false");
   addKV("reference_time", reference_time_);
   addKV("use_translation", use_translation_ ? "true" : "false");
   addKV("use_twist_speed", use_twist_speed_ ? "true" : "false");
+  addKV("allow_default_speed_fallback", allow_default_speed_fallback_ ? "true" : "false");
 
   da.status.push_back(st);
   pub_diag_->publish(da);
 }
 
-void ImuUndistorter::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+bool ImuUndistorter::shouldWaitForFutureSensorData(
+  const PointTimeInfo & time_info,
+  const std::string & reason) const
 {
-  const std::string scan_frame = scan_frame_.empty() ? msg->header.frame_id : scan_frame_;
-  const std::string imu_frame  = imu_frame_.empty()  ? "" : imu_frame_;
-
-  std::string imu_frame_used = imu_frame;
-  if (imu_frame_used.empty()) {
-    // IMU frame is taken from incoming IMU messages; TF will be tried on first call anyway.
-    // Here we just keep empty; ensureStaticTf will handle base<-imu lookup lazily.
-    imu_frame_used = base_frame_;
+  if (!(time_info.scan_period > 0.0) || !std::isfinite(time_info.t0_sec)) {
+    return false;
   }
 
-  // Ensure TF (base<-scan). base<-imu is optional.
+  const double t0_sec = time_info.t0_sec;
+  const double t1_sec = t0_sec + time_info.scan_period;
+  const bool imu_may_arrive =
+    reason == "trajectory build failed: IMU buffer contains fewer than two samples" ||
+    reason == "trajectory build failed: IMU does not cover the full scan interval";
+  const bool twist_may_arrive =
+    reason == "trajectory build failed: twist buffer contains fewer than two samples" ||
+    reason == "trajectory build failed: twist does not cover the full scan interval";
+
+  std::lock_guard<std::mutex> lock(mtx_);
+  if (imu_may_arrive && !imu_buf_.empty()) {
+    const double first_sec = toSec(imu_buf_.front().stamp);
+    const double last_sec = toSec(imu_buf_.back().stamp);
+    // Only a missing future boundary can be repaired by waiting. Missing data
+    // at the scan start is permanent and remains an immediate rejection.
+    return first_sec <= t0_sec && last_sec < t1_sec;
+  }
+  if (twist_may_arrive && use_translation_ && use_twist_speed_ &&
+      !allow_default_speed_fallback_ && !twist_topic_.empty()) {
+    if (twist_buf_.empty()) {
+      return true;
+    }
+    const double first_sec = toSec(twist_buf_.front().stamp);
+    const double last_sec = toSec(twist_buf_.back().stamp);
+    return first_sec <= t0_sec && last_sec < t1_sec;
+  }
+  return false;
+}
+
+ImuUndistorter::CloudProcessResult ImuUndistorter::processPointCloud(
+  const sensor_msgs::msg::PointCloud2::SharedPtr & msg)
+{
+
+  PointTimeInfo time_info;
+  std::string layout_reason;
+  if (!validateCloudLayout(*msg, layout_reason)) {
+    publishDiag(msg->header.stamp, "WARN", "deskew rejected: " + layout_reason, time_info);
+    return CloudProcessResult::Complete;
+  }
+
+  const std::string message_scan_frame = msg->header.frame_id;
+  if (!scan_frame_.empty() && scan_frame_ != message_scan_frame) {
+    publishDiag(
+      msg->header.stamp, "ERROR",
+      "configured scan_frame does not match PointCloud2.header.frame_id", time_info);
+    RCLCPP_ERROR_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "Rejected cloud frame mismatch: expected '%s', got '%s'",
+      scan_frame_.c_str(), message_scan_frame.c_str());
+    return CloudProcessResult::Complete;
+  }
+  const std::string scan_frame = message_scan_frame;
+
+  std::string imu_frame_used;
+  {
+    std::lock_guard<std::mutex> lock(mtx_);
+    imu_frame_used = imu_frame_.empty() ? observed_imu_frame_ : imu_frame_;
+  }
+  if (imu_frame_used.empty()) {
+    publishDiag(msg->header.stamp, "STALE", "deskew rejected: no IMU frame observed yet", time_info);
+    return CloudProcessResult::Complete;
+  }
+
   if (!ensureStaticTf(scan_frame, imu_frame_used)) {
-    PointTimeInfo ti = preparePointTimeInfo(*msg);
-    publishDiag(msg->header.stamp, "WARN", "TF not ready", ti);
-    return;
+    publishDiag(msg->header.stamp, "WARN", "deskew rejected: required static TF is unavailable", time_info);
+    return CloudProcessResult::Complete;
   }
 
   sensor_msgs::msg::PointCloud2 out;
   std::string reason;
-  const bool ok = deskewPointCloud(*msg, out, reason);
-
-  PointTimeInfo ti = preparePointTimeInfo(*msg);
-  if (!ok) {
-    publishDiag(msg->header.stamp, "WARN", "deskew failed: " + reason, ti);
-    return;
+  if (!deskewPointCloud(*msg, out, time_info, reason)) {
+    if (shouldWaitForFutureSensorData(time_info, reason)) {
+      return CloudProcessResult::WaitingForFutureSensorData;
+    }
+    publishDiag(msg->header.stamp, "WARN", "deskew rejected: " + reason, time_info);
+    return CloudProcessResult::Complete;
   }
 
   pub_points_->publish(out);
+  publishDiag(
+    out.header.stamp,
+    time_info.used_linear_fallback ? "WARN" : "OK",
+    time_info.used_linear_fallback ?
+    "deskew OK using explicitly enabled point-order timing fallback" :
+    "deskew OK using per-point timestamps",
+    time_info);
+  return CloudProcessResult::Complete;
+}
 
-  // Diagnostics: OK/WARN based on fallback usage
-  if (ti.used_linear_fallback) {
-    publishDiag(msg->header.stamp, "WARN", "deskew OK (linear fallback: no per-point time)", ti);
-  } else {
-    publishDiag(msg->header.stamp, "OK", "deskew OK (time field)", ti);
+void ImuUndistorter::drainPendingClouds()
+{
+  while (!pending_clouds_.empty()) {
+    if (processPointCloud(pending_clouds_.front()) ==
+      CloudProcessResult::WaitingForFutureSensorData)
+    {
+      break;
+    }
+    pending_clouds_.pop_front();
   }
+}
+
+void ImuUndistorter::retryPendingClouds()
+{
+  std::unique_lock<std::mutex> callback_lock(points_callback_mtx_, std::try_to_lock);
+  if (!callback_lock.owns_lock()) {
+    return;
+  }
+  drainPendingClouds();
+}
+
+void ImuUndistorter::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+{
+  // A mutually exclusive callback group is not guaranteed when this component
+  // is embedded in an arbitrary executor, so serialize scan processing here.
+  std::lock_guard<std::mutex> callback_lock(points_callback_mtx_);
+
+  if (pending_clouds_.size() >= static_cast<std::size_t>(max_pending_clouds_)) {
+    PointTimeInfo time_info;
+    std::string ignored_reason;
+    const auto & dropped = pending_clouds_.front();
+    (void)preparePointTimeInfo(*dropped, time_info, ignored_reason);
+    publishDiag(
+      dropped->header.stamp, "WARN",
+      "deskew rejected: pending cloud queue filled before sensor coverage arrived",
+      time_info);
+    pending_clouds_.pop_front();
+  }
+  pending_clouds_.push_back(msg);
+  drainPendingClouds();
 }
 
 }  // namespace pure_imu_undistortion

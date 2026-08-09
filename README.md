@@ -1,346 +1,311 @@
-# small_lidar_inertial_dead_reckoning
+# gicp_gnss_odom_localizer
 
-A lightweight **ROS 2 workspace for LiDAR + IMU dead reckoning**.
+`gicp_gnss_odom_localizer` is a ROS 2 workspace for prior-map-free planar GICP LiDAR–IMU odometry with optional NMEA GNSS anchoring. LiDAR tracking can run with either scan-to-scan or scan-to-local-submap as the primary registration path, selected in YAML. The workspace also includes a bounded fixed-lag SE(2) smoother and treats GNSS outage recovery as a multi-observation alignment problem rather than a one-fix reset.
 
-The default pipeline has two required stages:
+The workspace is derived from `KariControl/small_lidar_inertial_dead_reckoning`; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-1. `pure_imu_undistortion` deskews each LiDAR scan using IMU data.
-2. `pure_lidar_gyro_odometer` estimates relative motion from the deskewed point cloud and IMU.
+## Release status
 
-GNSS-related packages are included in this workspace, but **GNSS is optional**.
-The default launch configuration uses `use_gnss:=false`, so you can run the system as a **LiDAR + IMU-only dead-reckoning pipeline** without any GNSS sensor or topic.
+This `0.3.0-rc6` release keeps the repository/display name `gicp_gnss_odom_localizer`, renames `pure_nmea_gga_conversion` to `pure_nmea_gnss_conversion`, and removes the unused optional intensity-filter package. Existing estimator node names, topic names, parameter keys, C++ include roots/namespaces, component plugin types, and custom message types remain unchanged. Read [docs/migration_0_3.md](docs/migration_0_3.md) before rebuilding.
 
-## Features
+The estimator is intended for research and engineering evaluation. It is not a safety-certified localization system and must not be used as the sole input to a safety function.
 
-- Compact ROS 2 LiDAR/IMU odometry workspace
-- IMU-based LiDAR deskew / undistortion
-- Scan-to-scan LiDAR odometry
-- Gyro bias estimation during stops
-- Stop detection and corrected IMU output
-- `small_gicp` as the default registration backend
-- Optional lightweight GNSS fusion for absolute positioning
-- Both composable-node and standalone-node launch files
+### ROS package identity
 
-## LiDAR + IMU dead-reckoning example
+The repository name is `gicp_gnss_odom_localizer`, while the internal ROS packages use short responsibility-based names. RC6 changes the NMEA package identity listed above and removes the intensity-filter package. The NMEA executable/node remains `pure_nmea_gga_conversion` / `nmea_gga_conversion`. Estimator topics, frames, YAML parameter names, and `pure_gnss_msgs/msg/GnssFusionInput` are unchanged.
 
-The figure below shows an example estimated trajectory using **LiDAR + IMU only**.
-**No GNSS is used in this example.**
-The two trajectories are aligned at the start point for easier visual comparison.
+## Main changes in 0.2
 
-- Blue: `VGICP`
-- Orange: `GICP`
-- Black dot: start point
+- Strict IMU deskew: per-point timing, IMU coverage, data gaps, point-cloud layout, and static TFs are validated before a cloud is accepted.
+- `lidar_odom.tracking_mode` selects `scan_to_scan` or `scan_to_submap`; `scan_to_scan` remains the backward-compatible default.
+- In `scan_to_submap` mode, scan-to-scan is retained for submap warm-up, scheduled interim propagation, consistency monitoring, and failure fallback.
+- The active submap is stored in an independent anchor frame and rebuilt from fixed-lag-optimized keyframe poses, avoiding the stale-odom map distortion that degraded the earlier submap implementation.
+- Scan Hessian anisotropy is retained as continuous directional information in the SE(2) smoother and covariance. No binary LiDAR “degenerate/normal” state is used.
+- GNSS initialization and return from outage require a contiguous multi-fix window with observable and self-consistent SE(2) alignment.
+- GNSS recovery corrections are bounded per update and per second. The old timeout-triggered single-fix force-accept path is removed.
+- Single-antenna GGA positions remain antenna observations. The fusion node applies the lever arm in its measurement model.
+- NMEA heading sources remain available: dual antenna, Doppler course over ground, GNSS trajectory, trajectory corrected by `/localization/imu_corrected`, and bounded corrected-IMU propagation from a valid absolute heading seed.
+- Unknown heading is represented explicitly by `heading_valid=false`; it is not manufactured from an initial or previous yaw.
 
-![LiDAR + IMU dead-reckoning example](docs/lidar_imu_dead_reckoning_example.png)
-
-This plot is intended as a qualitative example of the dead-reckoning output, not a ground-truth benchmark.
-
-## Overall architecture
+## Architecture
 
 ```text
-[Required pipeline: works without GNSS]
+/points_raw --------> pure_imu_undistortion --------> /localization/points_undistorted
+/imu ---------------^
 
-/converted_points -----------------------> pure_imu_undistortion -----------------> /localization/points_undistorted
-/imu -----------------------------------^
+/localization/points_undistorted --> pure_lidar_gyro_odometer --> /localization/gyro_lidar_odom
+/imu -----------------------------^                              --> /localization/imu_corrected
+                                                               --> /localization/is_stopped
 
-/localization/points_undistorted -------> pure_lidar_gyro_odometer -------------> /localization/gyro_lidar_odom
-/imu -----------------------------------^                                      +-> /localization/twist
-                                                                                +-> /localization/imu_corrected
-                                                                                +-> /localization/is_stopped
+Optional GNSS:
+/nmea_sentence --------------------> pure_nmea_gnss_conversion --> /localization/gnss_fusion_input
+/fix_velocity --------------------^                            --> legacy base-pose topics only
+/localization/imu_corrected -------^                                when yaw + lever arm are valid
+/localization/is_stopped ----------^
 
-[Optional pipeline: only when GNSS is enabled]
-
-/ublox_gps_node/fix --------------------> pure_gnss_conversion ------------------> /localization/global_pose
-/ublox_gps_node/fix_velocity ----------->                                   +----> /localization/gnss_odometry
-/localization/imu_corrected ----------->                                    +----> /localization/gnss_fusion_input
-
-/localization/gyro_lidar_odom ----------> pure_gnss_map_odom_fusion -----------> /localization/ekf_pose
-/localization/gnss_fusion_input ------->                                     +---> /localization/ekf_odom
+/localization/gyro_lidar_odom -----> pure_gnss_map_odom_fusion --> /localization/ekf_odom
+/localization/gnss_fusion_input ---^                            --> map -> odom TF
 ```
 
-## Packages included
+See [docs/architecture.md](docs/architecture.md) for state and observation details.
 
-| Package | Role | Required / Optional |
-|---|---|---|
-| `pure_imu_undistortion` | LiDAR motion deskew using IMU | Required |
-| `pure_lidar_gyro_odometer` | LiDAR + IMU odometry / dead reckoning | Required |
-| `pure_odometry_bringup` | Launch files and diagnostic aggregation | Required |
-| `small_gicp` | Point cloud registration backend | Required |
-| `ndt_omp` | Registration library dependency | Required |
-| `pure_gnss_msgs` | Message definitions for GNSS fusion | Optional |
-| `pure_gnss_conversion` | Converts `NavSatFix` and Doppler velocity into local GNSS data | Optional |
-| `pure_gnss_map_odom_fusion` | Lightweight map/odom fusion of GNSS and odometry | Optional |
+## Packages
 
-## Requirements
+| Package | Purpose |
+|---|---|
+| `pure_imu_undistortion` | Strict rotational deskew and optional time-aligned translational deskew |
+| `pure_lidar_gyro_odometer` | Selectable scan-to-scan or scan-to-submap GICP/VGICP, corrected IMU, continuous directional observability weighting, covariance, fixed-lag smoothing |
+| `pure_nmea_gnss_conversion` | NMEA GGA projection, covariance, heading-source selection, antenna-observation output |
+| `pure_gnss_msgs` | Explicit GNSS observation message used by fusion |
+| `pure_gnss_map_odom_fusion` | Planar map-to-odom filtering, initialization, outage detection, bounded recovery |
+| `pure_odometry_bringup` | Composable and standalone launch files |
+| `pure_autoware_localization_adapter` | Standard-message bridge from fused odometry to Autoware localization topics, acceleration, and direct map-to-base TF |
+| `small_gicp` | Registration dependency, included as a Git submodule/source tree |
 
-- ROS 2 workspace environment
-- LiDAR point cloud input (`sensor_msgs/msg/PointCloud2`)
-- IMU input (`sensor_msgs/msg/Imu`)
-- At least the following TFs:
-  - `base_link -> velodyne` (or your actual LiDAR frame)
-  - `base_link -> imu` (recommended; otherwise the IMU is treated as if it were already in `base_link`)
-  - `base_link -> gnss_antenna` (only when GNSS is enabled)
+## Supported assumptions
+
+The public configuration assumes a ground vehicle whose main localization state is planar `(x, y, yaw)`. Roll, pitch, and height can be present in sensor transforms and registration, but the smoother and GNSS anchor are SE(2). NHC and ZUPT are optional and disabled by default because they are vehicle- and deployment-dependent.
+
+Required data:
+
+- `sensor_msgs/msg/PointCloud2` with a valid per-point time field for strict deskew;
+- `sensor_msgs/msg/Imu` with monotonic timestamps;
+- static transforms from `base_link` to the LiDAR and IMU frames;
+- for single-antenna GNSS fusion, a static transform from `base_link` to the antenna frame, or an explicitly enabled parameter fallback.
 
 ## Build
 
-This repository is a workspace root.
-If you cloned it from Git, initialize submodules first.
-If you are using the provided zip archive, the third-party sources are already included.
+The repository is a workspace root. ROS 2 Jazzy on Ubuntu 24.04 is the primary target of the included CI.
 
 ```bash
-cd <this_workspace_root>
+git clone --recurse-submodules <repository-url> gicp_gnss_odom_localizer
+cd gicp_gnss_odom_localizer
 
-git submodule update --init --recursive
-
-source /opt/ros/<ros_distro>/setup.bash
+source /opt/ros/jazzy/setup.bash
 rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 ```
 
-Notes:
+For an archive containing `src/small_gicp`, no submodule command is needed.
 
-- `small_gicp` and `ndt_omp` are included as third-party source trees
-- Dependencies are expected to be resolved with `rosdep`
-- Replace `<ros_distro>` with your ROS 2 distribution name
+## Run LiDAR + IMU only
 
-## Quick start: LiDAR + IMU only (no GNSS)
-
-### 1. Publish the required static TFs
-
-The following values are only examples.
-Replace them with your actual extrinsic calibration.
+The default parameter file keeps the existing scan-to-scan primary mode:
 
 ```bash
-ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 base_link velodyne
-
-ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 base_link imu
+ros2 launch pure_odometry_bringup odometry_container.launch.py \
+  use_gnss:=false
 ```
 
-### 2. Launch the pipeline
-
-Composable-node version:
+To use scan-to-submap as the primary mode, pass the supplied profile:
 
 ```bash
-ros2 launch pure_odometry_bringup odometry_container.launch.py
+ros2 launch pure_odometry_bringup odometry_container.launch.py \
+  use_gnss:=false \
+  odom_param:=$(ros2 pkg prefix pure_lidar_gyro_odometer)/share/pure_lidar_gyro_odometer/param/param_scan_to_submap.yaml
 ```
 
-Standalone-node version:
+The standalone launch accepts the same `odom_param` argument. Use `use_sim_time:=true` when replaying a bag with `/clock`. The mode can also be changed in any odometer YAML:
+
+```yaml
+lidar_odom.tracking_mode: scan_to_submap  # or scan_to_scan
+```
+
+The selection is read at node startup; it is not a live runtime mode switch.
+`scan_to_submap` requires the bundled SE(2) smoother to remain enabled.
+
+## Rosbag-first and Autoware Logging Simulation evaluation
+
+Validate the estimator by itself before replacing Autoware localization. Stage A
+uses the normal ROS 2 workspace and `play_localization_bag.sh`. Stage B is fully
+containerized, so the host does not need an Autoware source workspace.
+
+Standalone replay starts with:
 
 ```bash
-ros2 launch pure_odometry_bringup odometry_standalone.launch.py
+ros2 launch pure_odometry_bringup odometry_standalone.launch.py \
+  use_sim_time:=true \
+  use_gnss:=false
+
+./script/play_localization_bag.sh \
+  --bag <bag_path> \
+  --points <recorded_pointcloud_topic> \
+  --imu <recorded_imu_topic>
 ```
 
-Both launch files default to `use_gnss:=false`.
-That means **GNSS topics and GNSS hardware are not required**.
-
-### 3. Play a rosbag (optional)
-
-If your input topic names differ from the defaults, remap them when playing the bag.
-For example:
+After standalone scan-to-scan and scan-to-submap comparisons pass, run the
+localization-only Autoware LSim in Docker:
 
 ```bash
-ros2 bag play <bag_dir> --clock --remap <lidar_topic>:=/converted_points --remap <imu_topic>:=/imu
+./script/run_autoware_lsim_docker.sh \
+  --bag /absolute/path/to/bag \
+  --points /sensing/lidar/top/pointcloud_raw \
+  --imu /sensing/imu/tamagawa/imu_raw
 ```
 
-If you use simulated time, also pass `use_sim_time:=true` to the launch file.
+The Docker profile is pinned to the official CPU-only Autoware
+`universe-devel-jazzy-1.9.0` image. It disables Autoware's map/localization,
+perception, planning, control, system, API, and sensor drivers; it requires
+neither a CUDA GPU nor a PCD/Lanelet2 map. Without GNSS, it publishes
+`/initialpose` automatically after the first LiDAR odometry sample. Evaluation
+outputs and isolated `/reference/...` topics are recorded below
+`docker_output/` by default.
+
+Use `--tracking-mode scan_to_submap` for the alternative primary registration
+mode, `--nmea <topic>` to enable GNSS, `--already-deskewed` for a pre-corrected
+cloud, and `--rviz` only when CPU software-rendered visualization is needed.
+
+See [docs/rosbag_and_autoware_lsim_evaluation.md](docs/rosbag_and_autoware_lsim_evaluation.md)
+and [docker/autoware_lsim/README.md](docker/autoware_lsim/README.md) for exact
+commands, TF policies, output layout, metrics, and limitations.
+
+## Run with NMEA GNSS
 
 ```bash
-ros2 launch pure_odometry_bringup odometry_container.launch.py use_sim_time:=true
+ros2 launch pure_odometry_bringup odometry_container.launch.py \
+  use_gnss:=true \
+  use_imu_yaw_rate_heading:=true
 ```
 
-## Default topics (without GNSS)
+Before enabling GNSS, set the map origin and antenna frame in `src/pure_nmea_gnss_conversion/param/param.yaml`, then publish the calibrated static extrinsics. Example frame topology:
 
-### Inputs
+```text
+map -> odom -> base_link -> lidar
+                         -> imu
+                         -> gnss/0
+```
 
-| Topic | Type | Default |
-|---|---|---|
-| LiDAR points | `sensor_msgs/msg/PointCloud2` | `/converted_points` |
-| IMU | `sensor_msgs/msg/Imu` | `/imu` |
-| Velocity input for translational deskew (optional) | `geometry_msgs/msg/TwistStamped` | unused when `twist_topic` is empty |
-| Wheel speed (optional) | `geometry_msgs/msg/TwistStamped` | unused when `wheel_speed_topic` is empty |
+### What the NMEA node estimates
 
-### Outputs
+The NMEA path intentionally remains in this release:
 
-| Topic | Type | Description |
-|---|---|---|
-| `/localization/points_undistorted` | `sensor_msgs/msg/PointCloud2` | Deskewed / undistorted point cloud |
-| `/localization/gyro_lidar_odom` | `nav_msgs/msg/Odometry` | LiDAR + IMU dead-reckoning result |
-| `/localization/twist` | `geometry_msgs/msg/TwistStamped` | Estimated velocity and yaw rate |
-| `/localization/imu_corrected` | `sensor_msgs/msg/Imu` | IMU corrected into the `base_link` convention |
-| `/localization/is_stopped` | `std_msgs/msg/Bool` | Stop-state estimate |
-| `/diagnostics` | `diagnostic_msgs/msg/DiagnosticArray` | Per-node diagnostics |
-| `/diagnostics_agg` | `diagnostic_msgs/msg/DiagnosticArray` | Aggregated diagnostics |
+1. **Position:** GGA latitude/longitude are projected to the configured local map origin.
+2. **Position covariance/confidence:** GGA fix quality, HDOP, and differential-correction age are converted to a configurable horizontal sigma and confidence.
+3. **Absolute yaw sources, in priority order:**
+   - dual-antenna baseline;
+   - Doppler course over ground, after speed and uncertainty gates;
+   - GNSS trajectory chord, after minimum-baseline and confidence gates.
+4. **Corrected IMU use:** `/localization/imu_corrected` is strictly integrated only when it covers the full interval with bounded sample and boundary gaps. It can:
+   - curve-correct a trajectory chord using half of the integrated yaw change;
+   - propagate the most recent valid absolute heading for a bounded duration.
 
-## Parameter files
+The corrected IMU does **not** create absolute yaw by itself. A dual-antenna, Doppler, or trajectory seed is required first. See [docs/nmea_heading_and_covariance.md](docs/nmea_heading_and_covariance.md).
 
-The default parameter files are:
+### Position-only GGA behavior
 
-- `src/pure_imu_undistortion/param/param.yaml`
-- `src/pure_lidar_gyro_odometer/param/param.yaml`
-- `src/pure_gnss_conversion/param/param.yaml` (only when GNSS is enabled)
-- `src/pure_gnss_map_odom_fusion/param/param.yaml` (only when GNSS is enabled)
+A GGA fix without valid yaw is still sent to `/localization/gnss_fusion_input` with:
 
-Override example:
+- `heading_valid=false`;
+- `position_is_base_link=false`;
+- `observation_point_in_base` set to the antenna lever arm when available.
+
+The legacy `/localization/global_pose`, pose-with-covariance, and GNSS odometry outputs are suppressed until a valid base-link yaw and antenna geometry exist. This prevents an antenna coordinate plus identity quaternion from being mislabeled as a `base_link` pose.
+
+## GNSS outage and return
+
+The fusion state machine is:
+
+```text
+UNINITIALIZED -> TRACKING -> OUTAGE -> REACQUIRING -> RECOVERING -> TRACKING
+                                          |
+                                          +-> RECOVERING_XY_ONLY -> TRACKING_XY_ONLY
+```
+
+Initialization and reacquisition use a contiguous window of synchronized GNSS/odom samples. Yaw must be observable from consistent direct headings, sufficient odometry/GNSS motion, or both. The window is rejected for time gaps, excessive RMS, excessive single-point residual, inconsistent headings, or disagreement between heading sources.
+
+During `RECOVERING`, `map -> odom` approaches the accepted target with both per-update and per-second limits. A late sliding-window target is also gated against the current recovery target. Details are in [docs/gnss_recovery.md](docs/gnss_recovery.md).
+
+An opt-in, fail-closed XY-only branch supports a stopped single-antenna vehicle
+that regains RTK position while yaw remains unobservable. It requires strict
+fix, covariance, stationary-motion, timing, residual, retained-yaw, and
+lever-arm gates. It corrects translation only, preserves yaw and yaw
+uncertainty, reports a degraded `*_XY_ONLY` state, and yields immediately to the
+full SE(2) path when yaw becomes observable. Generic bringup keeps it disabled;
+the Hesai single-antenna parking-bag runner enables it explicitly.
+
+## LiDAR odometry and drift control
+
+Two primary tracking modes are available:
+
+- `scan_to_scan` registers every accepted scan against the previous accepted scan. It is the default so existing deployments can return to the original behavior by changing one YAML value.
+- `scan_to_submap` registers the current scan against a rolling local keyframe submap after a scan-to-scan warm-up. A valid submap result is the primary factor. Scan-to-scan remains available for scheduled interim frames and as a configurable fallback after an attempted submap registration fails.
+
+The active submap is not baked directly into `odom`. Keyframes are stored in a submap-anchor frame, recent keyframe poses are repaired from the fixed-lag optimizer, the map is rebuilt after meaningful corrections, and rolling re-anchoring keeps coordinates bounded. Consecutive failed submap attempts trigger a controlled submap reset and warm-up rather than contaminating the target with failed fallback scans.
+
+Both modes use:
+
+- corrected-IMU yaw factors;
+- a bounded fixed-lag SE(2) graph;
+- the reduced registration Hessian as an anisotropic information matrix;
+- continuous Hessian-derived directional information weighting, independent of whether wheel speed exists;
+- optional ZUPT, NHC, and wheel assistance;
+- transactional graph rollback and ordinary registration-quality rejection for non-convergence, non-finite output, invalid timing, or fitness-gate failure.
+
+Wheel speed remains optional in both modes. See [docs/lidar_odometry.md](docs/lidar_odometry.md) and [docs/tuning.md](docs/tuning.md) for mode behavior, gates, diagnostics, and bag comparison.
+
+## Strict deskew behavior
+
+By default a cloud is rejected when any of these conditions holds:
+
+- no supported per-point time field;
+- point times are non-finite, have no usable span, or disagree with the cloud timestamp;
+- IMU samples do not cover the entire scan or contain a gap over the configured threshold;
+- required `base_link <- scan` or `base_link <- imu` static TF is unavailable;
+- the `PointCloud2` layout is malformed or big-endian;
+- translation deskew is enabled but the selected speed source does not cover the interval.
+
+`allow_linear_time_fallback` and `allow_default_speed_fallback` are explicit compatibility switches and remain false in bundled configurations.
+
+## Important defaults
+
+- `use_gnss:=false` at bringup level;
+- corrected-IMU heading support enabled when the GNSS node is launched;
+- `lidar_odom.tracking_mode: scan_to_scan` in the generic profile;
+- the legacy periodic local-map factor disabled in scan-to-scan mode;
+- ZUPT and NHC disabled;
+- binary LiDAR degeneracy state, threshold-triggered mode switching, and binary pose-mode topics removed;
+- optional continuous wheel observability assistance, wheel-speed scale learning, and low-speed shaping disabled;
+- control-oriented filtered odometry disabled;
+- single-fix GNSS force acceptance unavailable;
+- parameter antenna fallback disabled unless explicitly selected.
+
+## Tests
+
+ROS-independent algorithm tests can run without ROS:
 
 ```bash
-ros2 launch pure_odometry_bringup odometry_container.launch.py imu_param:=/path/to/imu.yaml odom_param:=/path/to/odom.yaml
+./tools/run_reference_tests.sh
 ```
 
-If you use GNSS, you can also override the GNSS parameter files:
+Repository checks:
 
 ```bash
-ros2 launch pure_odometry_bringup odometry_container.launch.py use_gnss:=true gnss_param:=/path/to/gnss.yaml gnss_fusion_param:=/path/to/gnss_fusion.yaml
+python3 tools/check_repository.py
 ```
 
-## Frequently tuned parameters
-
-### `pure_imu_undistortion`
-
-| Parameter | Meaning |
-|---|---|
-| `base_frame` | Base vehicle frame |
-| `imu_frame` | IMU frame name |
-| `scan_frame` | LiDAR frame name. If empty, the input point cloud `header.frame_id` is used |
-| `points_in_topic` | Input point cloud topic |
-| `points_out_topic` | Output point cloud topic |
-| `imu_topic` | IMU topic |
-| `time_fields` | Candidate per-point time fields (`time`, `t`, `timestamp`, etc.) |
-| `fallback_scan_period` | Scan period used when the point cloud has no point-wise time field |
-| `use_translation` | Enables translational deskew |
-| `twist_topic` | Velocity input used for translational deskew |
-
-### `pure_lidar_gyro_odometer`
-
-| Parameter | Meaning |
-|---|---|
-| `points_topic` | Input point cloud, usually `/localization/points_undistorted` |
-| `imu_topic` | IMU input |
-| `out_odom_topic` | Odometry output |
-| `out_twist_topic` | Twist output |
-| `out_imu_topic` | Corrected IMU output |
-| `lidar_odom.backend` | Default: `SMALL_GICP` |
-| `lidar_odom.registration_type` | Default: `GICP` |
-| `lidar_odom.voxel_leaf_m` | Downsampling voxel size |
-| `lidar_odom.gicp.*` | GICP registration settings |
-| `stop.*` | Stop-detection thresholds |
-| `gyro_bias.*` | Gyro-bias estimation during stationary periods |
-| `wheel_speed.*` | Wheel-speed mode settings |
-
-### About ZUPT / NHC
-
-The mini-smoother in `pure_lidar_gyro_odometer` supports the following optional factors:
-
-- `lidar_odom.smoother.zupt.*`: ZUPT constraints during detected stops
-- `lidar_odom.smoother.nhc.*`: NHC constraints to suppress lateral slip
-
-The code-level defaults are `false`, but the bundled `param.yaml` currently enables both.
-If you do not want them, set them explicitly to `false`.
-
-### Frequently adjusted GNSS parameters
-
-| Parameter | Meaning |
-|---|---|
-| `p0`, `gnss0` | Local-map origin correspondence |
-| `antenna_frame_id` | GNSS antenna frame |
-| `sync_tolerance_sec` | Allowed time mismatch between `fix` and `fix_velocity` |
-| `odom_topic` | Odometry input for fusion |
-| `gnss_input_topic` | Input from `pure_gnss_conversion` |
-| `gnss_base_alpha_xy`, `gnss_base_alpha_yaw` | Base fusion gains for GNSS updates |
-
-## Optional GNSS pipeline
-
-Enable the following nodes only when GNSS is required:
-
-- `pure_gnss_conversion`
-- `pure_gnss_map_odom_fusion`
-
-### Additional requirements
-
-- Static TF: `base_link -> gnss_antenna`
-- `sensor_msgs/msg/NavSatFix`
-- `geometry_msgs/msg/TwistWithCovarianceStamped` for Doppler velocity
-
-### Default GNSS-related launch arguments
-
-| Launch argument | Default |
-|---|---|
-| `gnss_fix_topic` | `/ublox_gps_node/fix` |
-| `gnss_fix_velocity_topic` | `/ublox_gps_node/fix_velocity` |
-| `gnss_global_pose_topic` | `/localization/global_pose` |
-| `gnss_odom_topic` | `/localization/gnss_odometry` |
-| `gnss_fusion_input_topic` | `/localization/gnss_fusion_input` |
-
-### Launch example with GNSS enabled
+A full release check in a ROS environment should include:
 
 ```bash
-ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 base_link gnss_antenna
-
-ros2 launch pure_odometry_bringup odometry_container.launch.py use_gnss:=true
+colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+colcon test --event-handlers console_direct+
+colcon test-result --verbose
 ```
 
-### Main outputs when GNSS is enabled
+Bag-level acceptance criteria are listed in [docs/known_limitations.md](docs/known_limitations.md).
 
-| Topic | Type | Description |
-|---|---|---|
-| `/localization/global_pose` | `geometry_msgs/msg/PoseStamped` | GNSS position in local coordinates |
-| `/localization/gnss_odometry` | `nav_msgs/msg/Odometry` | GNSS-derived absolute pose and velocity |
-| `/localization/gnss_fusion_input` | `pure_gnss_msgs/msg/GnssFusionInput` | Fusion input message |
-| `/localization/ekf_pose` | `geometry_msgs/msg/PoseWithCovarianceStamped` | Fused pose in the `map` frame |
-| `/localization/ekf_odom` | `nav_msgs/msg/Odometry` | Fused odometry |
+## Documentation
 
-## Launch files
+- [Architecture](docs/architecture.md)
+- [NMEA heading and covariance](docs/nmea_heading_and_covariance.md)
+- [GNSS outage/recovery](docs/gnss_recovery.md)
+- [LiDAR odometry and smoother](docs/lidar_odometry.md)
+- [Tuning and validation](docs/tuning.md)
+- [Known limitations](docs/known_limitations.md)
+- [Rosbag and Autoware Logging Simulation evaluation](docs/rosbag_and_autoware_lsim_evaluation.md)
+- [0.2 migration guide](docs/migration_0_2.md)
+- [Single-antenna algorithm notes](docs/algorithm_spec_single_antenna.md)
 
-| Launch file | Description |
-|---|---|
-| `src/pure_odometry_bringup/launch/odometry_container.launch.py` | Composable-node version |
-| `src/pure_odometry_bringup/launch/odometry_standalone.launch.py` | Standalone-process version |
+## Contributing and security
 
-Main launch arguments:
-
-| Argument | Default | Description |
-|---|---|---|
-| `use_gnss` | `false` | Whether to start GNSS nodes |
-| `use_sim_time` | `false` | Whether to use simulated time |
-| `log_level` | `info` | Logging level |
-| `imu_param` | default YAML | IMU undistortion settings |
-| `odom_param` | default YAML | Odometry settings |
-| `gnss_param` | default YAML | GNSS conversion settings |
-| `gnss_fusion_param` | default YAML | GNSS fusion settings |
-
-## Notes and limitations
-
-- **GNSS is not required.** Start with the default `use_gnss:=false` setting.
-- When `wheel_speed.use=true`, the current implementation disables LiDAR odometry.
-- `pure_lidar_gyro_odometer` publishes `nav_msgs/Odometry`, but by itself it does **not** publish TF.
-- When enabled, `pure_gnss_map_odom_fusion` can publish fused `map`-frame pose / odometry and TF.
-- `pure_imu_undistortion` uses TF internally for coordinate conversion, while the output point cloud keeps the input `header.frame_id`.
-- `run_vehicle_localizer_wait_topics.sh` is a local helper script for bag playback and topic monitoring. It is environment-specific and may need adjustment before use.
-
-## Diagnostics
-
-`pure_odometry_bringup` launches `diagnostic_aggregator`.
-You can inspect the aggregated diagnostic output with:
-
-```bash
-ros2 topic echo /diagnostics_agg
-```
-
-## Third-party components
-
-This workspace includes the following third-party components:
-
-- `small_gicp` (`src/small_gicp`) — MIT license
-- `ndt_omp` (`src/ndt_omp`) — BSD-2-Clause license
-
-See `THIRD_PARTY_NOTICES.md` and the corresponding `LICENSE` files inside each component for details.
-
-## License
-
-Unless otherwise noted in a subdirectory, the code in this repository is provided under the **Apache License 2.0**.
-See the top-level `LICENSE` file.
-
-Bundled third-party components keep their own licenses:
-
-- `src/small_gicp`: MIT
-- `src/ndt_omp`: BSD-2-Clause
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md). The project is licensed under Apache-2.0.

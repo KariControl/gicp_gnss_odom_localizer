@@ -1,0 +1,57 @@
+services:
+  lsim:
+    image: ${LOCALIZER_LSIM_IMAGE:-gicp-gnss-odom-localizer:autoware-1.9.0}
+    build:
+      context: ../..
+      dockerfile: docker/autoware_lsim/Dockerfile
+      args:
+        AUTOWARE_IMAGE: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-devel-jazzy-1.9.0}
+        ROS_DISTRO: jazzy
+        COLCON_PARALLEL_WORKERS: ${COLCON_PARALLEL_WORKERS:-2}
+    network_mode: host
+    ipc: host
+    privileged: true
+    stdin_open: true
+    tty: true
+    environment:
+      HOST_UID: ${HOST_UID:-1000}
+      HOST_GID: ${HOST_GID:-1000}
+      AUTOWARE_IMAGE: ${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-devel-jazzy-1.9.0}
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+      RMW_IMPLEMENTATION: ${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
+      BAG_PATH: /bags/input
+      OUTPUT_ROOT: /output
+      RUN_NAME: ${RUN_NAME:-autoware_lsim}
+      POINTS_SOURCE_TOPIC: ${POINTS_SOURCE_TOPIC:-/sensing/lidar/top/pointcloud_raw}
+      IMU_SOURCE_TOPIC: ${IMU_SOURCE_TOPIC:-/sensing/imu/tamagawa/imu_raw}
+      NMEA_SOURCE_TOPIC: ${NMEA_SOURCE_TOPIC:-}
+      NMEA_SECONDARY_SOURCE_TOPIC: ${NMEA_SECONDARY_SOURCE_TOPIC:-}
+      FIX_VELOCITY_SOURCE_TOPIC: ${FIX_VELOCITY_SOURCE_TOPIC:-}
+      TWIST_SOURCE_TOPIC: ${TWIST_SOURCE_TOPIC:-}
+      PLAYBACK_RATE: ${PLAYBACK_RATE:-1.0}
+      TF_POLICY: ${TF_POLICY:-isolate-dynamic}
+      KEEP_RECORDED_LOCALIZATION: ${KEEP_RECORDED_LOCALIZATION:-false}
+      TRACKING_MODE: ${TRACKING_MODE:-scan_to_scan}
+      USE_GNSS: ${USE_GNSS:-false}
+      USE_IMU_DESKEW: ${USE_IMU_DESKEW:-true}
+      LAUNCH_VEHICLE: ${LAUNCH_VEHICLE:-false}
+      LAUNCH_SENSING: ${LAUNCH_SENSING:-false}
+      VEHICLE_MODEL: ${VEHICLE_MODEL:-sample_vehicle}
+      SENSOR_MODEL: ${SENSOR_MODEL:-sample_sensor_kit}
+      RVIZ: ${RVIZ:-false}
+      RECORD_OUTPUT: ${RECORD_OUTPUT:-true}
+      AUTO_INITIAL_POSE: ${AUTO_INITIAL_POSE:-true}
+      INITIAL_X: ${INITIAL_X:-0.0}
+      INITIAL_Y: ${INITIAL_Y:-0.0}
+      INITIAL_Z: ${INITIAL_Z:-0.0}
+      INITIAL_YAW: ${INITIAL_YAW:-0.0}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - type: bind
+        source: ${HOST_BAG_PATH:?HOST_BAG_PATH must point to a rosbag file or directory}
+        target: /bags/input
+        read_only: true
+      - type: bind
+        source: ${HOST_OUTPUT_DIR:?HOST_OUTPUT_DIR must point to a writable directory}
+        target: /output
+    command: /opt/gicp_gnss_odom_localizer/bin/run_autoware_lsim.sh

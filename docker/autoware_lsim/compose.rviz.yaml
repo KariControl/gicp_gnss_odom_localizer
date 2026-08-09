@@ -1,0 +1,12 @@
+services:
+  lsim:
+    environment:
+      DISPLAY: ${DISPLAY:?DISPLAY is required when RViz is enabled}
+      QT_X11_NO_MITSHM: "1"
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      RVIZ: "true"
+    volumes:
+      - type: bind
+        source: /tmp/.X11-unix
+        target: /tmp/.X11-unix
+        read_only: false
