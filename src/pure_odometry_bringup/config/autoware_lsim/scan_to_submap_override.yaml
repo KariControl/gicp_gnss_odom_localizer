@@ -1,0 +1,4 @@
+/**:
+  ros__parameters:
+    lidar_odom.tracking_mode: scan_to_submap
+

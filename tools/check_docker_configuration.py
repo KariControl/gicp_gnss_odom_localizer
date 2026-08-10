@@ -60,7 +60,10 @@ def check_compose() -> None:
     required_environment = {
         "BAG_PATH": "/bags/input",
         "OUTPUT_ROOT": "/output",
+        "DATASET_PROFILE": "${DATASET_PROFILE:-generic}",
+        "CLOCK_FREQUENCY": "${CLOCK_FREQUENCY:-100.0}",
         "RVIZ": "${RVIZ:-false}",
+        "LOCALIZER_IMAGE_ID": "${LOCALIZER_IMAGE_ID:-unknown}",
         "USE_GNSS": "${USE_GNSS:-false}",
         "TRACKING_MODE": "${TRACKING_MODE:-scan_to_scan}",
         "AUTO_INITIAL_POSE": "${AUTO_INITIAL_POSE:-true}",
@@ -103,18 +106,55 @@ def check_dockerfile() -> None:
     for token in (
         "universe-devel-jazzy-1.9.0",
         "source /opt/autoware/setup.bash",
+        "rosbag2-storage-mcap",
         "rosdep install",
-        "colcon build",
+        "colcon --log-base /tmp/gicp_gnss_odom_ws/log build",
+        "--merge-install",
         "-DBUILD_TESTING=OFF",
+        "python3-numpy",
         "/opt/gicp_gnss_odom_localizer",
         "container_entrypoint.sh",
         "play_localization_bag.sh",
+        "analyze_autoware_lsim_output.py",
     ):
         if token not in text:
             fail(f"Dockerfile required token missing: {token}")
     for token in ("universe-devel-cuda", "--gpus", "nvidia"):
         if token in text.lower():
             fail(f"CPU-only Dockerfile contains GPU-specific token: {token}")
+
+    ignore_path = ROOT / ".dockerignore"
+    if not ignore_path.is_file():
+        fail(".dockerignore is missing; large bags would enter the build context")
+    else:
+        ignored = set(ignore_path.read_text(encoding="utf-8").splitlines())
+        for required in ("build", "install", "log", "rosbag", "test_results"):
+            if required not in ignored:
+                fail(f".dockerignore must exclude {required}")
+
+
+def check_rviz_config() -> None:
+    path = (
+        ROOT
+        / "src/pure_odometry_bringup/config/autoware_lsim/hesai_rosbag23.rviz"
+    )
+    if not path.is_file():
+        fail("Hesai ROSBAG2/3 RViz config is missing")
+        return
+    text = path.read_text(encoding="utf-8")
+    for token in (
+        "Fixed Frame: map",
+        "rviz_default_plugins/Grid",
+        "rviz_default_plugins/PointCloud2",
+        "/localization/points_undistorted",
+        "Reliability Policy: Best Effort",
+        "rviz_default_plugins/Odometry",
+        "/localization/kinematic_state",
+        "rviz_default_plugins/TF",
+        "Reference Frame: base_link",
+    ):
+        if token not in text:
+            fail(f"Hesai RViz config required display missing: {token}")
 
 
 def check_container_runner() -> None:
@@ -125,12 +165,30 @@ def check_container_runner() -> None:
     text = path.read_text(encoding="utf-8")
     for token in (
         "autoware_lsim_localization.launch.py",
+        "set +u",
         "play_localization_bag.sh",
         "ros2 bag record",
         "ros2 topic echo --once /localization/gyro_lidar_odom",
         "ros2 topic pub --once /initialpose",
-        "param_scan_to_submap.yaml",
-        "TF_POLICY=isolate-all requires LAUNCH_VEHICLE=true",
+        "param_xt_lidar_imu_only.yaml",
+        "hesai_rosbag23_nmea_override.yaml",
+        "--clock-frequency",
+        "autoware_lsim_output_recorder",
+        "first_kinematic_state.yaml",
+        "analyze_autoware_lsim_output.py",
+        '--tracking-mode "$TRACKING_MODE"',
+        "validation.log",
+        "launch_was_alive",
+        "record_was_alive",
+        "check_required_nodes",
+        "wait_for_required_nodes",
+        "/pointcloud_container",
+        "/rviz2",
+        "rviz_node_info.txt",
+        "docker_runtime.txt",
+        "final_nodes.txt",
+        "FIRST_STATE_WAIT_SEC",
+        "DRAIN_WAIT_SEC",
     ):
         if token not in text:
             fail(f"container runner required behavior missing: {token}")
@@ -182,15 +240,51 @@ def check_host_wrapper() -> None:
             "GNSS:                true",
             "compose.rviz.yaml",
             "build lsim",
-            "run --rm lsim",
+            "run --rm --no-tty lsim",
         ):
             if token not in result.stdout:
                 fail(f"Docker wrapper dry run missing: {token}")
+
+        profile_result = subprocess.run(
+            [
+                str(wrapper),
+                "--dry-run",
+                "--bag",
+                str(bag),
+                "--output",
+                str(output),
+                "--profile",
+                "hesai-rosbag23",
+            ],
+            cwd=ROOT,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if profile_result.returncode != 0:
+            fail(
+                "Hesai ROSBAG2/3 Docker profile dry run failed:\n"
+                + profile_result.stdout
+                + profile_result.stderr
+            )
+            return
+        for token in (
+            "Dataset profile:     hesai_rosbag23",
+            "Clock frequency:     100.0 Hz",
+            "PointCloud input:    /pandar_points_ex",
+            "IMU input:           /sensor/imu/data_raw",
+            "NMEA input:          /sensor/gnss/nmea_sentence",
+            "TF policy:           isolate-all",
+        ):
+            if token not in profile_result.stdout:
+                fail(f"Hesai profile dry run missing: {token}")
 
 
 def main() -> int:
     check_compose()
     check_dockerfile()
+    check_rviz_config()
     check_container_runner()
     check_host_wrapper()
     if ERRORS:

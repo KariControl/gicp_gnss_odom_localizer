@@ -4,6 +4,13 @@
 
 ### Added
 
+- Added the `hesai-rosbag23` Autoware lSIM profile for the included ROSBAG2/3,
+  including calibrated LiDAR/IMU/GNSS static transforms, XT parameters, a
+  shared site-local GNSS origin, 100 Hz simulation clock, input topic
+  allowlisting, and detailed Japanese operating instructions.
+- Added an Autoware localization-interface output bag analyzer and a native
+  `--lsim-interface-test` path for environments where the official Autoware
+  Docker image cannot be started.
 - Added an opt-in guarded XY-only GNSS recovery mode for a stopped
   single-antenna vehicle that regains RTK position while yaw remains
   unobservable.
@@ -15,6 +22,15 @@
 
 ### Changed
 
+- Autoware lSIM now waits for recorder discovery and the first valid
+  kinematic-state message, records GNSS/deskew/fusion diagnostics, preserves
+  the selected sensor profile when switching tracking mode, and restores
+  output ownership to the host user.
+- RViz lSIM uses a localization-specific display profile for the deskewed
+  point cloud, Autoware state trail, TF tree, and vehicle axes; an enabled
+  RViz node must remain alive through replay completion.
+- The Autoware adapter treats equal simulation timestamps as expected
+  duplicate timer outputs while continuing to reject true timestamp reversal.
 - Trajectory-derived NMEA headings now exclude high-position-uncertainty fixes
   and cannot replace a valid heading seed when their yaw variance exceeds the
   configured limit.
@@ -30,6 +46,16 @@
   stale request that would make output timestamps move backwards.
 - The ROS-bag single-antenna runner explicitly enables XY-only recovery while
   the generic fusion and launch defaults remain disabled.
+
+### Fixed
+
+- Fixed the Autoware overlay image to use colcon's global `--log-base` syntax
+  and a merged install tree, and made ROS setup sourcing safe with strict shell
+  mode enabled.
+- Empty optional twist topics are no longer emitted as malformed ROS launch
+  arguments.
+- The lSIM RViz PointCloud2 display now uses Jazzy's explicit best-effort,
+  volatile QoS schema so the deskewed SensorDataQoS cloud is rendered.
 
 ## 0.3.0-rc6 - 2026-08-08
 

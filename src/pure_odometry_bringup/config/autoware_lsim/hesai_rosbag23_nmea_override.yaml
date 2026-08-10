@@ -1,0 +1,11 @@
+/**:
+  ros__parameters:
+    # Shared center of the valid-GGA bounding box in ROSBAG2 and ROSBAG3.
+    # This keeps map-free LSim coordinates within about 77 m of the origin.
+    map_origin.latitude: 35.1254574925
+    map_origin.longitude: 136.8226007017
+    gnss0:
+      - 35.1254574925
+      - 136.8226007017
+      - 0.0
+

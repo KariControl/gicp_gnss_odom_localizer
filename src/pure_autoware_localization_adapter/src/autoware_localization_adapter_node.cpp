@@ -179,8 +179,16 @@ private:
       reject("zero_stamp");
       return;
     }
-    if (has_last_stamp_ && stamp <= last_stamp_) {
-      reject("non_monotonic_stamp");
+    // A wall/sim-time timer can publish more than once at the same discrete
+    // /clock value. Suppress those duplicates without turning an otherwise
+    // healthy Logging Simulation diagnostic WARN. True time reversal remains
+    // an input rejection.
+    if (has_last_stamp_ && stamp == last_stamp_) {
+      ++duplicate_stamp_drop_count_;
+      return;
+    }
+    if (has_last_stamp_ && stamp < last_stamp_) {
+      reject("out_of_order_stamp");
       return;
     }
     if (!finiteOdometry(*message)) {
@@ -325,6 +333,7 @@ private:
     add("base_frame", base_frame_);
     add("received_count", std::to_string(received_count_));
     add("published_count", std::to_string(published_count_));
+    add("duplicate_stamp_drop_count", std::to_string(duplicate_stamp_drop_count_));
     add("rejected_count", std::to_string(rejected_count_));
     add("last_rejection_reason", last_rejection_reason_);
     add("acceleration_valid", acceleration_valid_ ? "true" : "false");
@@ -366,6 +375,7 @@ private:
   bool has_last_stamp_{false};
   std::uint64_t received_count_{0U};
   std::uint64_t published_count_{0U};
+  std::uint64_t duplicate_stamp_drop_count_{0U};
   std::uint64_t rejected_count_{0U};
   std::string last_rejection_reason_{"none"};
   bool acceleration_valid_{false};

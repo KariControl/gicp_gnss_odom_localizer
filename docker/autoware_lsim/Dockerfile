@@ -15,6 +15,9 @@ USER root
 COPY --chown=aw:aw src /tmp/gicp_gnss_odom_ws/src
 
 RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      python3-numpy \
+      "ros-${ROS_DISTRO}-rosbag2-storage-mcap" && \
     source "/opt/ros/${ROS_DISTRO}/setup.bash" && \
     source /opt/autoware/setup.bash && \
     rosdep install \
@@ -27,11 +30,11 @@ RUN apt-get update && \
 RUN source "/opt/ros/${ROS_DISTRO}/setup.bash" && \
     source /opt/autoware/setup.bash && \
     MAKEFLAGS="-j${COLCON_PARALLEL_WORKERS}" \
-    colcon build \
+    colcon --log-base /tmp/gicp_gnss_odom_ws/log build \
+      --merge-install \
       --base-paths /tmp/gicp_gnss_odom_ws/src \
       --build-base /tmp/gicp_gnss_odom_ws/build \
       --install-base /opt/gicp_gnss_odom_localizer \
-      --log-base /tmp/gicp_gnss_odom_ws/log \
       --parallel-workers "${COLCON_PARALLEL_WORKERS}" \
       --cmake-args \
         -DCMAKE_BUILD_TYPE=Release \
@@ -40,11 +43,14 @@ RUN source "/opt/ros/${ROS_DISTRO}/setup.bash" && \
 
 COPY --chown=aw:aw script/play_localization_bag.sh \
   /opt/gicp_gnss_odom_localizer/bin/play_localization_bag.sh
+COPY --chown=aw:aw tools/analyze_autoware_lsim_output.py \
+  /opt/gicp_gnss_odom_localizer/bin/analyze_autoware_lsim_output.py
 COPY --chown=aw:aw docker/autoware_lsim/container_entrypoint.sh \
   /opt/gicp_gnss_odom_localizer/bin/run_autoware_lsim.sh
 
 RUN chmod 0755 \
       /opt/gicp_gnss_odom_localizer/bin/play_localization_bag.sh \
+      /opt/gicp_gnss_odom_localizer/bin/analyze_autoware_lsim_output.py \
       /opt/gicp_gnss_odom_localizer/bin/run_autoware_lsim.sh && \
     mkdir -p /bags /output && \
     chown -R aw:aw /bags /output /opt/gicp_gnss_odom_localizer

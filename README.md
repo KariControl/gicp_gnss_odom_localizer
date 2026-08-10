@@ -144,6 +144,23 @@ localization-only Autoware LSim in Docker:
   --imu /sensing/imu/tamagawa/imu_raw
 ```
 
+The included ROSBAG2/3 data has a dedicated Hesai profile. It selects the
+recorded topics, the XT estimator parameters, the local GNSS origin, and the
+three calibrated static transforms from the vehicle-localizer runner:
+
+```bash
+ROS_DOMAIN_ID=82 ./script/run_autoware_lsim_docker.sh \
+  --bag "$PWD/rosbag/output_pointcloud2" \
+  --profile hesai-rosbag23 \
+  --run-name rosbag2_lsim
+
+ROS_DOMAIN_ID=83 ./script/run_autoware_lsim_docker.sh \
+  --bag "$PWD/rosbag/output_pointcloud3" \
+  --profile hesai-rosbag23 \
+  --run-name rosbag3_lsim \
+  --no-build
+```
+
 The Docker profile is pinned to the official CPU-only Autoware
 `universe-devel-jazzy-1.9.0` image. It disables Autoware's map/localization,
 perception, planning, control, system, API, and sensor drivers; it requires
@@ -156,8 +173,9 @@ Use `--tracking-mode scan_to_submap` for the alternative primary registration
 mode, `--nmea <topic>` to enable GNSS, `--already-deskewed` for a pre-corrected
 cloud, and `--rviz` only when CPU software-rendered visualization is needed.
 
-See [docs/rosbag_and_autoware_lsim_evaluation.md](docs/rosbag_and_autoware_lsim_evaluation.md)
-and [docker/autoware_lsim/README.md](docker/autoware_lsim/README.md) for exact
+See [docs/rosbag_and_autoware_lsim_evaluation.md](docs/rosbag_and_autoware_lsim_evaluation.md),
+[docker/autoware_lsim/README.md](docker/autoware_lsim/README.md), and the
+[ROSBAG2/3 Japanese runbook](docs/autoware_lsim_rosbag2_rosbag3.md) for exact
 commands, TF policies, output layout, metrics, and limitations.
 
 ## Run with NMEA GNSS

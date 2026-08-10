@@ -16,6 +16,8 @@ Options:
   --output <directory>        Result directory
                                default: test_results/output_pointcloud2_<timestamp>
   --playback-duration <sec>   Stop after this many seconds of bag time
+  --lsim-interface-test       Run the LSim localizer/Autoware adapter launch
+                              without requiring the Autoware installation
   --no-record                 Run without recording localization outputs
   --dry-run                   Validate inputs and print commands only
   -h, --help                  Show this help
@@ -57,6 +59,7 @@ rate="1.0"
 output=""
 playback_duration=""
 record_output=true
+lsim_interface_test=false
 dry_run=false
 
 while (($# > 0)); do
@@ -80,6 +83,10 @@ while (($# > 0)); do
       [[ $# -ge 2 ]] || fail "--playback-duration requires a value"
       playback_duration="$2"
       shift 2
+      ;;
+    --lsim-interface-test)
+      lsim_interface_test=true
+      shift
       ;;
     --no-record)
       record_output=false
@@ -107,7 +114,8 @@ fi
 [[ -e "$bag" ]] || fail "bag does not exist: $bag"
 bag="$(realpath -e -- "$bag")"
 if [[ -z "$output" ]]; then
-  output="$ROOT/test_results/output_pointcloud2_$(date +%Y%m%d_%H%M%S)"
+  bag_name="$(basename "$bag")"
+  output="$ROOT/test_results/${bag_name}_$(date +%Y%m%d_%H%M%S)"
 fi
 output="$(realpath -m -- "$output")"
 [[ ! -e "$output" ]] || fail "output directory already exists: $output"
@@ -133,9 +141,13 @@ else
   GNSS_FUSION_PARAM="$GNSS_FUSION_SHARE/param.yaml"
 fi
 NMEA_GNSS_PARAM="$(ros2 pkg prefix pure_nmea_gnss_conversion)/share/pure_nmea_gnss_conversion/param/param.yaml"
+BRINGUP_SHARE="$(ros2 pkg prefix pure_odometry_bringup)/share/pure_odometry_bringup"
+NMEA_GNSS_OVERRIDE_PARAM="$BRINGUP_SHARE/config/autoware_lsim/hesai_rosbag23_nmea_override.yaml"
 for parameter_file in "$IMU_PARAM" "$ODOM_PARAM" "$GNSS_FUSION_PARAM" "$NMEA_GNSS_PARAM"; do
   [[ -f "$parameter_file" ]] || fail "parameter file does not exist: $parameter_file"
 done
+[[ -f "$NMEA_GNSS_OVERRIDE_PARAM" ]] ||
+  fail "parameter file does not exist: $NMEA_GNSS_OVERRIDE_PARAM"
 
 tf_lidar_command=(
   ros2 run tf2_ros static_transform_publisher
@@ -155,25 +167,47 @@ tf_gnss_command=(
   --roll 0.0 --pitch 0.0 --yaw 0.0
   --frame-id base_link --child-frame-id gnss/0
 )
-launch_command=(
-  ros2 launch pure_odometry_bringup odometry_container.launch.py
-  use_gnss:=true
-  use_imu_deskew:=true
-  use_sim_time:=true
-  points_input_topic:=/points_raw
-  imu_input_topic:=/imu
-  imu_param:="$IMU_PARAM"
-  odom_param:="$ODOM_PARAM"
-  gnss_fusion_param:="$GNSS_FUSION_PARAM"
-  nmea_gnss_param:="$NMEA_GNSS_PARAM"
-  gnss_primary_gga_topic:=/nmea_sentence
-  use_secondary_gga:=false
-  use_doppler_heading:=false
-  use_imu_yaw_rate_heading:=true
-  # This single-antenna parking profile may regain RTK position while stopped.
-  # Enable guarded XY-only recovery; generic bringup remains disabled by default.
-  fusion_xy_only_recovery:=true
-)
+if [[ "$lsim_interface_test" == true ]]; then
+  launch_command=(
+    ros2 launch pure_odometry_bringup autoware_lsim_localization.launch.py
+    launch_autoware:=false
+    launch_vehicle:=false
+    launch_sensing:=false
+    launch_rviz:=false
+    sensor_profile:=hesai_rosbag23
+    use_gnss:=true
+    use_imu_deskew:=true
+    points_input_topic:=/points_raw
+    imu_input_topic:=/imu
+    imu_param:="$IMU_PARAM"
+    odom_param:="$ODOM_PARAM"
+    gnss_fusion_param:="$GNSS_FUSION_PARAM"
+    nmea_gnss_param:="$NMEA_GNSS_PARAM"
+    nmea_gnss_override_param:="$NMEA_GNSS_OVERRIDE_PARAM"
+    gnss_primary_gga_topic:=/nmea_sentence
+    fusion_xy_only_recovery:=true
+  )
+else
+  launch_command=(
+    ros2 launch pure_odometry_bringup odometry_container.launch.py
+    use_gnss:=true
+    use_imu_deskew:=true
+    use_sim_time:=true
+    points_input_topic:=/points_raw
+    imu_input_topic:=/imu
+    imu_param:="$IMU_PARAM"
+    odom_param:="$ODOM_PARAM"
+    gnss_fusion_param:="$GNSS_FUSION_PARAM"
+    nmea_gnss_param:="$NMEA_GNSS_PARAM"
+    gnss_primary_gga_topic:=/nmea_sentence
+    use_secondary_gga:=false
+    use_doppler_heading:=false
+    use_imu_yaw_rate_heading:=true
+    # This single-antenna parking profile may regain RTK position while stopped.
+    # Enable guarded XY-only recovery; generic bringup remains disabled by default.
+    fusion_xy_only_recovery:=true
+  )
+fi
 record_directory="$output/localization_output"
 record_topics=(
   /clock
@@ -190,12 +224,15 @@ record_topics=(
   /localization/gnss_fusion_input
   /localization/global_pose_with_covariance
   /localization/gnss_confidence
+  /localization/kinematic_state
+  /localization/pose_estimator/pose_with_covariance
+  /localization/acceleration
 )
 record_command=(
   ros2 bag record
   --storage mcap
   --output "$record_directory"
-  --node-name output_pointcloud2_localization_recorder
+  --node-name vehicle_localizer_output_recorder
   --topics "${record_topics[@]}"
 )
 play_command=(
@@ -206,6 +243,11 @@ play_command=(
   --nmea /sensor/gnss/nmea_sentence
   --rate "$rate"
   --tf-policy isolate-all
+)
+if [[ "$lsim_interface_test" == true ]]; then
+  play_command+=(--clock-frequency 100.0)
+fi
+play_command+=(
   --
   --disable-keyboard-controls
   # Give the bag player's publishers time to match existing subscribers so
@@ -225,9 +267,11 @@ log "output: $output"
 log "ROS_DOMAIN_ID: $ROS_DOMAIN_ID"
 
 if [[ "$dry_run" == true ]]; then
-  print_command "${tf_lidar_command[@]}"
-  print_command "${tf_imu_command[@]}"
-  print_command "${tf_gnss_command[@]}"
+  if [[ "$lsim_interface_test" != true ]]; then
+    print_command "${tf_lidar_command[@]}"
+    print_command "${tf_imu_command[@]}"
+    print_command "${tf_gnss_command[@]}"
+  fi
   print_command "${launch_command[@]}"
   if [[ "$record_output" == true ]]; then
     print_command "${record_command[@]}"
@@ -243,6 +287,7 @@ export ROS_LOG_DIR="$output/ros_logs"
   printf 'rate=%q\n' "$rate"
   printf 'playback_duration=%q\n' "$playback_duration"
   printf 'record_output=%q\n' "$record_output"
+  printf 'lsim_interface_test=%q\n' "$lsim_interface_test"
   printf 'ROS_DOMAIN_ID=%q\n' "$ROS_DOMAIN_ID"
 } > "$output/run.env"
 ros2 bag info "$bag" > "$output/input_bag_info.txt" 2>&1 || true
@@ -353,16 +398,18 @@ wait_for_node() {
   return 1
 }
 
-start_process_group "$output/tf_lidar.log" "${tf_lidar_command[@]}"
-tf_lidar_pid=$started_pid
-start_process_group "$output/tf_imu.log" "${tf_imu_command[@]}"
-tf_imu_pid=$started_pid
-start_process_group "$output/tf_gnss.log" "${tf_gnss_command[@]}"
-tf_gnss_pid=$started_pid
-sleep 0.2
-process_group_alive "$tf_lidar_pid" || fail "LiDAR static TF publisher failed; see $output/tf_lidar.log"
-process_group_alive "$tf_imu_pid" || fail "IMU static TF publisher failed; see $output/tf_imu.log"
-process_group_alive "$tf_gnss_pid" || fail "GNSS static TF publisher failed; see $output/tf_gnss.log"
+if [[ "$lsim_interface_test" != true ]]; then
+  start_process_group "$output/tf_lidar.log" "${tf_lidar_command[@]}"
+  tf_lidar_pid=$started_pid
+  start_process_group "$output/tf_imu.log" "${tf_imu_command[@]}"
+  tf_imu_pid=$started_pid
+  start_process_group "$output/tf_gnss.log" "${tf_gnss_command[@]}"
+  tf_gnss_pid=$started_pid
+  sleep 0.2
+  process_group_alive "$tf_lidar_pid" || fail "LiDAR static TF publisher failed; see $output/tf_lidar.log"
+  process_group_alive "$tf_imu_pid" || fail "IMU static TF publisher failed; see $output/tf_imu.log"
+  process_group_alive "$tf_gnss_pid" || fail "GNSS static TF publisher failed; see $output/tf_gnss.log"
+fi
 
 start_process_group "$output/launch.log" "${launch_command[@]}"
 launch_pid=$started_pid
@@ -376,12 +423,17 @@ fi
 if ! wait_for_topic /localization/ekf_odom 60; then
   fail "GNSS fusion did not become ready; see $output/launch.log"
 fi
+if [[ "$lsim_interface_test" == true ]] &&
+  ! wait_for_topic /localization/kinematic_state 60
+then
+  fail "Autoware localization adapter did not become ready; see $output/launch.log"
+fi
 log "localization publishers are ready"
 
 if [[ "$record_output" == true ]]; then
   start_process_group "$output/record.log" "${record_command[@]}"
   record_pid=$started_pid
-  if ! wait_for_node /output_pointcloud2_localization_recorder "$record_pid" 15; then
+  if ! wait_for_node /vehicle_localizer_output_recorder "$record_pid" 15; then
     fail "bag recorder did not become ready; see $output/record.log"
   fi
   log "recording localization outputs to $record_directory"

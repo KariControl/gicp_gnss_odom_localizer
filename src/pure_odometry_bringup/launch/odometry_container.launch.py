@@ -23,6 +23,12 @@ def generate_launch_description():
     default_gnss_fusion_param = os.path.join(
         get_package_share_directory("pure_gnss_map_odom_fusion"), "param", "param.yaml"
     )
+    default_empty_param = os.path.join(
+        get_package_share_directory("pure_odometry_bringup"),
+        "config",
+        "autoware_lsim",
+        "empty_params.yaml",
+    )
     diag_agg_param = os.path.join(
         get_package_share_directory("pure_odometry_bringup"),
         "config",
@@ -31,7 +37,9 @@ def generate_launch_description():
 
     imu_param = LaunchConfiguration("imu_param")
     odom_param = LaunchConfiguration("odom_param")
+    odom_override_param = LaunchConfiguration("odom_override_param")
     nmea_gnss_param = LaunchConfiguration("nmea_gnss_param")
+    nmea_gnss_override_param = LaunchConfiguration("nmea_gnss_override_param")
     gnss_fusion_param = LaunchConfiguration("gnss_fusion_param")
     use_gnss = LaunchConfiguration("use_gnss")
     use_map_odom_fusion = LaunchConfiguration("use_map_odom_fusion")
@@ -94,6 +102,7 @@ def generate_launch_description():
         name="gyro_odometer",
         parameters=[
             odom_param,
+            odom_override_param,
             {
                 "use_sim_time": use_sim_time,
                 "points_topic": deskewed_points_topic,
@@ -107,6 +116,7 @@ def generate_launch_description():
         name="gyro_odometer",
         parameters=[
             odom_param,
+            odom_override_param,
             {
                 "use_sim_time": use_sim_time,
                 "points_topic": points_input_topic,
@@ -144,6 +154,7 @@ def generate_launch_description():
         output="screen",
         parameters=[
             nmea_gnss_param,
+            nmea_gnss_override_param,
             {
                 "use_sim_time": use_sim_time,
                 "use_secondary_gga": use_secondary_gga,
@@ -197,7 +208,11 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("imu_param", default_value=default_imu_param),
             DeclareLaunchArgument("odom_param", default_value=default_odom_param),
+            DeclareLaunchArgument("odom_override_param", default_value=default_empty_param),
             DeclareLaunchArgument("nmea_gnss_param", default_value=default_nmea_gnss_param),
+            DeclareLaunchArgument(
+                "nmea_gnss_override_param", default_value=default_empty_param
+            ),
             DeclareLaunchArgument("gnss_fusion_param", default_value=default_gnss_fusion_param),
             DeclareLaunchArgument("use_gnss", default_value="false"),
             DeclareLaunchArgument("use_map_odom_fusion", default_value="false"),

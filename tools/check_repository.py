@@ -357,6 +357,11 @@ def check_required_semantics() -> None:
         "pure_autoware_localization_adapter",
         "use_map_odom_fusion",
         "autoware.launch.xml",
+        "hesai_rosbag23",
+        "hesai_lidar_static_transform",
+        "hesai_imu_static_transform",
+        "hesai_gnss_static_transform",
+        "nmea_gnss_override_param",
     ):
         if token not in lsim_launch:
             fail(f"Autoware LSim launch path missing: {token}")
@@ -364,9 +369,19 @@ def check_required_semantics() -> None:
     bringup_launch = (
         ROOT / "src/pure_odometry_bringup/launch/odometry_standalone.launch.py"
     ).read_text(encoding="utf-8")
-    for token in ("use_map_odom_fusion", "use_imu_deskew", "points_input_topic"):
+    for token in (
+        "use_map_odom_fusion",
+        "use_imu_deskew",
+        "points_input_topic",
+        "odom_override_param",
+        "nmea_gnss_override_param",
+    ):
         if token not in bringup_launch:
             fail(f"bag-replay launch argument missing: {token}")
+
+    for token in ("duplicate_stamp_drop_count", "out_of_order_stamp"):
+        if token not in adapter:
+            fail(f"Autoware adapter timestamp handling missing: {token}")
 
     bringup_package = (ROOT / "src/pure_odometry_bringup/package.xml").read_text(
         encoding="utf-8"

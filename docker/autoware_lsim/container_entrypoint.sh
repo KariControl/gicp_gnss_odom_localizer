@@ -34,13 +34,18 @@ require_positive_number() {
   fi
 }
 
+# ROS-generated setup files are not nounset-safe.  Keep strict mode for the
+# runner itself, but suspend it only while the three overlays are sourced.
+set +u
 source "/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash"
 source /opt/autoware/setup.bash
 source "${GICP_GNSS_ODOM_INSTALL:-/opt/gicp_gnss_odom_localizer}/setup.bash"
+set -u
 
 BAG_PATH="${BAG_PATH:-/bags/input}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/output}"
 RUN_NAME="${RUN_NAME:-autoware_lsim}"
+DATASET_PROFILE="${DATASET_PROFILE:-generic}"
 POINTS_SOURCE_TOPIC="${POINTS_SOURCE_TOPIC:-/sensing/lidar/top/pointcloud_raw}"
 IMU_SOURCE_TOPIC="${IMU_SOURCE_TOPIC:-/sensing/imu/tamagawa/imu_raw}"
 NMEA_SOURCE_TOPIC="${NMEA_SOURCE_TOPIC:-}"
@@ -48,6 +53,7 @@ NMEA_SECONDARY_SOURCE_TOPIC="${NMEA_SECONDARY_SOURCE_TOPIC:-}"
 FIX_VELOCITY_SOURCE_TOPIC="${FIX_VELOCITY_SOURCE_TOPIC:-}"
 TWIST_SOURCE_TOPIC="${TWIST_SOURCE_TOPIC:-}"
 PLAYBACK_RATE="${PLAYBACK_RATE:-1.0}"
+CLOCK_FREQUENCY="${CLOCK_FREQUENCY:-100.0}"
 TF_POLICY="${TF_POLICY:-isolate-dynamic}"
 TRACKING_MODE="${TRACKING_MODE:-scan_to_scan}"
 USE_GNSS="$(normalize_bool "${USE_GNSS:-false}")"
@@ -65,36 +71,86 @@ INITIAL_Y="${INITIAL_Y:-0.0}"
 INITIAL_Z="${INITIAL_Z:-0.0}"
 INITIAL_YAW="${INITIAL_YAW:-0.0}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
+LOCALIZER_IMAGE_ID="${LOCALIZER_IMAGE_ID:-unknown}"
 STARTUP_WAIT_SEC="${STARTUP_WAIT_SEC:-90}"
 INITIALPOSE_WAIT_SEC="${INITIALPOSE_WAIT_SEC:-90}"
+DRAIN_WAIT_SEC="${DRAIN_WAIT_SEC:-5}"
 
 [[ -e "$BAG_PATH" ]] || fail "mounted bag does not exist: $BAG_PATH"
 mkdir -p "$OUTPUT_ROOT"
 [[ -w "$OUTPUT_ROOT" ]] || fail "output directory is not writable: $OUTPUT_ROOT"
 require_positive_number "PLAYBACK_RATE" "$PLAYBACK_RATE"
+require_positive_number "CLOCK_FREQUENCY" "$CLOCK_FREQUENCY"
 require_positive_number "STARTUP_WAIT_SEC" "$STARTUP_WAIT_SEC"
 require_positive_number "INITIALPOSE_WAIT_SEC" "$INITIALPOSE_WAIT_SEC"
+require_positive_number "DRAIN_WAIT_SEC" "$DRAIN_WAIT_SEC"
+
+FIRST_STATE_WAIT_SEC="$(awk -v base="$STARTUP_WAIT_SEC" -v rate="$PLAYBACK_RATE" \
+  'BEGIN { scaled = base / rate; if (scaled < base) scaled = base; printf "%.3f", scaled }')"
+INITIALPOSE_DATA_WAIT_SEC="$(awk -v base="$INITIALPOSE_WAIT_SEC" -v rate="$PLAYBACK_RATE" \
+  'BEGIN { scaled = base / rate; if (scaled < base) scaled = base; printf "%.3f", scaled }')"
 
 case "$TF_POLICY" in
   keep|isolate-dynamic|isolate-all) ;;
   *) fail "TF_POLICY must be keep, isolate-dynamic, or isolate-all: $TF_POLICY" ;;
 esac
 
+BRINGUP_SHARE="${GICP_GNSS_ODOM_INSTALL}/share/pure_odometry_bringup"
+RVIZ_CONFIG="$BRINGUP_SHARE/config/autoware_lsim/hesai_rosbag23.rviz"
+EMPTY_PARAM="$BRINGUP_SHARE/config/autoware_lsim/empty_params.yaml"
+SUBMAP_OVERRIDE_PARAM="$BRINGUP_SHARE/config/autoware_lsim/scan_to_submap_override.yaml"
+NMEA_GNSS_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_nmea_gnss_conversion/param/param.yaml"
+GNSS_FUSION_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_gnss_map_odom_fusion/param/param.yaml"
+ODOM_OVERRIDE_PARAM="$EMPTY_PARAM"
+
 case "$TRACKING_MODE" in
-  scan_to_scan)
-    ODOM_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_lidar_gyro_odometer/param/param.yaml"
-    ;;
-  scan_to_submap)
-    ODOM_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_lidar_gyro_odometer/param/param_scan_to_submap.yaml"
-    ;;
+  scan_to_scan) ;;
+  scan_to_submap) ODOM_OVERRIDE_PARAM="$SUBMAP_OVERRIDE_PARAM" ;;
   *) fail "TRACKING_MODE must be scan_to_scan or scan_to_submap: $TRACKING_MODE" ;;
 esac
+
+case "$DATASET_PROFILE" in
+  generic)
+    SENSOR_PROFILE="generic"
+    IMU_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_imu_undistortion/param/param.yaml"
+    ODOM_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_lidar_gyro_odometer/param/param.yaml"
+    NMEA_GNSS_OVERRIDE_PARAM="$EMPTY_PARAM"
+    FUSION_XY_ONLY_RECOVERY="false"
+    ;;
+  hesai_rosbag23)
+    [[ "$POINTS_SOURCE_TOPIC" == /pandar_points_ex ]] ||
+      fail "hesai_rosbag23 requires POINTS_SOURCE_TOPIC=/pandar_points_ex"
+    [[ "$IMU_SOURCE_TOPIC" == /sensor/imu/data_raw ]] ||
+      fail "hesai_rosbag23 requires IMU_SOURCE_TOPIC=/sensor/imu/data_raw"
+    [[ "$NMEA_SOURCE_TOPIC" == /sensor/gnss/nmea_sentence ]] ||
+      fail "hesai_rosbag23 requires NMEA_SOURCE_TOPIC=/sensor/gnss/nmea_sentence"
+    [[ "$USE_GNSS" == true ]] || fail "hesai_rosbag23 requires USE_GNSS=true"
+    [[ "$USE_IMU_DESKEW" == true ]] || fail "hesai_rosbag23 requires USE_IMU_DESKEW=true"
+    [[ "$LAUNCH_VEHICLE" != true ]] ||
+      fail "hesai_rosbag23 publishes calibrated TFs and cannot launch sample vehicle TFs"
+    SENSOR_PROFILE="hesai_rosbag23"
+    IMU_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_imu_undistortion/param/param_xt.yaml"
+    ODOM_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_lidar_gyro_odometer/param/param_xt_lidar_imu_only.yaml"
+    NMEA_GNSS_OVERRIDE_PARAM="$BRINGUP_SHARE/config/autoware_lsim/hesai_rosbag23_nmea_override.yaml"
+    FUSION_XY_ONLY_RECOVERY="true"
+    ;;
+  *) fail "DATASET_PROFILE must be generic or hesai_rosbag23: $DATASET_PROFILE" ;;
+esac
+
+for parameter_file in \
+  "$EMPTY_PARAM" "$IMU_PARAM" "$ODOM_PARAM" "$ODOM_OVERRIDE_PARAM" \
+  "$NMEA_GNSS_PARAM" "$NMEA_GNSS_OVERRIDE_PARAM" "$GNSS_FUSION_PARAM"
+do
+  [[ -f "$parameter_file" ]] || fail "parameter file does not exist: $parameter_file"
+done
+[[ -f "$RVIZ_CONFIG" ]] || fail "RViz config does not exist: $RVIZ_CONFIG"
 
 if [[ "$USE_GNSS" == true && -z "$NMEA_SOURCE_TOPIC" ]]; then
   warn "USE_GNSS=true but NMEA_SOURCE_TOPIC is empty; GNSS initialization will not occur."
 fi
-if [[ "$TF_POLICY" == isolate-all && "$LAUNCH_VEHICLE" != true ]]; then
-  fail "TF_POLICY=isolate-all requires LAUNCH_VEHICLE=true or another static-TF publisher."
+if [[ "$TF_POLICY" == isolate-all && "$LAUNCH_VEHICLE" != true && \
+  "$SENSOR_PROFILE" == generic ]]; then
+  fail "TF_POLICY=isolate-all requires LAUNCH_VEHICLE=true or a calibrated sensor profile."
 fi
 if [[ "$RVIZ" == true && -z "${DISPLAY:-}" ]]; then
   fail "RVIZ=true requires DISPLAY and the RViz compose overlay."
@@ -117,8 +173,20 @@ stop_process() {
   local signal="${2:-INT}"
   if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
     kill "-$signal" "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
+    for _ in {1..50}; do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -TERM "$pid" 2>/dev/null || true
+      for _ in {1..20}; do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+      done
+    fi
+    kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null || true
   fi
+  [[ -n "$pid" ]] && wait "$pid" 2>/dev/null || true
 }
 
 cleanup() {
@@ -127,6 +195,10 @@ cleanup() {
   stop_process "$bag_pid" INT
   stop_process "$record_pid" INT
   stop_process "$launch_pid" INT
+  if [[ "${HOST_UID:-}" =~ ^[0-9]+$ && "${HOST_GID:-}" =~ ^[0-9]+$ ]]; then
+    chown -R "${HOST_UID}:${HOST_GID}" "$run_directory" 2>/dev/null ||
+      warn "could not restore host ownership for $run_directory"
+  fi
   exit "$status"
 }
 trap cleanup EXIT
@@ -136,7 +208,9 @@ write_manifest() {
   local manifest="$run_directory/run.env"
   {
     printf 'AUTOWARE_IMAGE=%q\n' "${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-devel-jazzy-1.9.0}"
+    printf 'LOCALIZER_IMAGE_ID=%q\n' "$LOCALIZER_IMAGE_ID"
     printf 'BAG_PATH=%q\n' "$BAG_PATH"
+    printf 'DATASET_PROFILE=%q\n' "$DATASET_PROFILE"
     printf 'POINTS_SOURCE_TOPIC=%q\n' "$POINTS_SOURCE_TOPIC"
     printf 'IMU_SOURCE_TOPIC=%q\n' "$IMU_SOURCE_TOPIC"
     printf 'NMEA_SOURCE_TOPIC=%q\n' "$NMEA_SOURCE_TOPIC"
@@ -144,8 +218,19 @@ write_manifest() {
     printf 'FIX_VELOCITY_SOURCE_TOPIC=%q\n' "$FIX_VELOCITY_SOURCE_TOPIC"
     printf 'TWIST_SOURCE_TOPIC=%q\n' "$TWIST_SOURCE_TOPIC"
     printf 'PLAYBACK_RATE=%q\n' "$PLAYBACK_RATE"
+    printf 'CLOCK_FREQUENCY=%q\n' "$CLOCK_FREQUENCY"
+    printf 'FIRST_STATE_WAIT_SEC=%q\n' "$FIRST_STATE_WAIT_SEC"
+    printf 'DRAIN_WAIT_SEC=%q\n' "$DRAIN_WAIT_SEC"
     printf 'TF_POLICY=%q\n' "$TF_POLICY"
     printf 'TRACKING_MODE=%q\n' "$TRACKING_MODE"
+    printf 'SENSOR_PROFILE=%q\n' "$SENSOR_PROFILE"
+    printf 'IMU_PARAM=%q\n' "$IMU_PARAM"
+    printf 'ODOM_PARAM=%q\n' "$ODOM_PARAM"
+    printf 'ODOM_OVERRIDE_PARAM=%q\n' "$ODOM_OVERRIDE_PARAM"
+    printf 'NMEA_GNSS_PARAM=%q\n' "$NMEA_GNSS_PARAM"
+    printf 'NMEA_GNSS_OVERRIDE_PARAM=%q\n' "$NMEA_GNSS_OVERRIDE_PARAM"
+    printf 'GNSS_FUSION_PARAM=%q\n' "$GNSS_FUSION_PARAM"
+    printf 'FUSION_XY_ONLY_RECOVERY=%q\n' "$FUSION_XY_ONLY_RECOVERY"
     printf 'USE_GNSS=%q\n' "$USE_GNSS"
     printf 'USE_IMU_DESKEW=%q\n' "$USE_IMU_DESKEW"
     printf 'LAUNCH_VEHICLE=%q\n' "$LAUNCH_VEHICLE"
@@ -153,6 +238,7 @@ write_manifest() {
     printf 'VEHICLE_MODEL=%q\n' "$VEHICLE_MODEL"
     printf 'SENSOR_MODEL=%q\n' "$SENSOR_MODEL"
     printf 'RVIZ=%q\n' "$RVIZ"
+    printf 'RVIZ_CONFIG=%q\n' "$RVIZ_CONFIG"
     printf 'RECORD_OUTPUT=%q\n' "$RECORD_OUTPUT"
     printf 'AUTO_INITIAL_POSE=%q\n' "$AUTO_INITIAL_POSE"
     printf 'INITIAL_X=%q\n' "$INITIAL_X"
@@ -162,7 +248,28 @@ write_manifest() {
     printf 'ROS_DOMAIN_ID=%q\n' "${ROS_DOMAIN_ID:-0}"
     printf 'RMW_IMPLEMENTATION=%q\n' "${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
   } > "$manifest"
+  {
+    printf 'localizer_image_id=%s\n' "$LOCALIZER_IMAGE_ID"
+    printf 'autoware_image=%s\n' "${AUTOWARE_IMAGE:-unknown}"
+    printf 'autoware_launch_prefix=%s\n' "$(ros2 pkg prefix autoware_launch)"
+    printf 'autoware_launch_version=%s\n' "$(ros2 pkg xml --tag version autoware_launch)"
+    printf 'ros_distro=%s\n' "${ROS_DISTRO:-jazzy}"
+  } > "$run_directory/docker_runtime.txt"
   ros2 bag info "$BAG_PATH" > "$run_directory/input_bag_info.txt" 2>&1 || true
+}
+
+wait_for_node() {
+  local node="$1"
+  local pid="$2"
+  local deadline=$((SECONDS + STARTUP_WAIT_SEC))
+  while ((SECONDS < deadline)); do
+    kill -0 "$pid" 2>/dev/null || return 2
+    if ros2 node list --no-daemon --spin-time 1 2>/dev/null | grep -Fxq "$node"; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
 }
 
 wait_for_topic() {
@@ -176,6 +283,68 @@ wait_for_topic() {
       return 0
     fi
     sleep 1
+  done
+  return 1
+}
+
+missing_required_nodes=""
+check_required_nodes() {
+  missing_required_nodes=""
+  local snapshot
+  if ! snapshot="$(ros2 node list --no-daemon --spin-time 2 2>/dev/null)"; then
+    missing_required_nodes="ROS graph query failed"
+    return 1
+  fi
+  printf '%s\n' "$snapshot" > "$run_directory/final_nodes.txt"
+
+  local required=(
+    /pointcloud_container
+    /pure_odometry_container
+    /gyro_odometer
+    /gnss_map_odom_fusion
+    /autoware_localization_adapter
+  )
+  if [[ "$USE_IMU_DESKEW" == true ]]; then
+    required+=(/imu_undistorter)
+  fi
+  if [[ "$USE_GNSS" == true ]]; then
+    required+=(/nmea_gga_conversion)
+  fi
+  if [[ "$DATASET_PROFILE" == hesai_rosbag23 ]]; then
+    required+=(
+      /hesai_lidar_static_transform
+      /hesai_imu_static_transform
+      /hesai_gnss_static_transform
+    )
+  fi
+  if [[ "$RVIZ" == true ]]; then
+    required+=(/rviz2)
+  fi
+
+  local node
+  local missing=()
+  for node in "${required[@]}"; do
+    if ! grep -Fxq "$node" <<< "$snapshot"; then
+      missing+=("$node")
+    fi
+  done
+  if ((${#missing[@]} > 0)); then
+    missing_required_nodes="${missing[*]}"
+    return 1
+  fi
+  return 0
+}
+
+wait_for_required_nodes() {
+  local deadline=$((SECONDS + STARTUP_WAIT_SEC))
+  while ((SECONDS < deadline)); do
+    if [[ -n "$launch_pid" ]] && ! kill -0 "$launch_pid" 2>/dev/null; then
+      return 2
+    fi
+    if check_required_nodes; then
+      return 0
+    fi
+    sleep 0.5
   done
   return 1
 }
@@ -209,14 +378,24 @@ launch_command=(
   launch_vehicle:="$LAUNCH_VEHICLE"
   launch_sensing:="$LAUNCH_SENSING"
   launch_rviz:="$RVIZ"
+  rviz_config:="$RVIZ_CONFIG"
+  sensor_profile:="$SENSOR_PROFILE"
   use_gnss:="$USE_GNSS"
   use_imu_deskew:="$USE_IMU_DESKEW"
   points_input_topic:=/points_raw
   imu_input_topic:=/imu
-  twist_input_topic:="$(if [[ -n "$TWIST_SOURCE_TOPIC" ]]; then printf '/localization/input_twist'; fi)"
+  imu_param:="$IMU_PARAM"
   odom_param:="$ODOM_PARAM"
+  odom_override_param:="$ODOM_OVERRIDE_PARAM"
+  nmea_gnss_param:="$NMEA_GNSS_PARAM"
+  nmea_gnss_override_param:="$NMEA_GNSS_OVERRIDE_PARAM"
+  gnss_fusion_param:="$GNSS_FUSION_PARAM"
+  fusion_xy_only_recovery:="$FUSION_XY_ONLY_RECOVERY"
   log_level:="$LOG_LEVEL"
 )
+if [[ -n "$TWIST_SOURCE_TOPIC" ]]; then
+  launch_command+=(twist_input_topic:=/localization/input_twist)
+fi
 
 printf '[autoware-lsim] launch:'
 printf ' %q' "${launch_command[@]}"
@@ -229,6 +408,9 @@ launch_pid=$!
 if ! wait_for_topic /localization/kinematic_state; then
   fail "Autoware/localizer launch did not create /localization/kinematic_state; see $run_directory/launch.log"
 fi
+if ! wait_for_required_nodes; then
+  fail "required Autoware/localizer node(s) did not start: $missing_required_nodes"
+fi
 log "Autoware localization interface is ready."
 
 if [[ "$RECORD_OUTPUT" == true ]]; then
@@ -238,8 +420,16 @@ if [[ "$RECORD_OUTPUT" == true ]]; then
     /tf
     /tf_static
     /diagnostics
+    /diagnostics_agg
     /localization/gyro_lidar_odom
+    /localization/imu_corrected
+    /localization/is_stopped
     /localization/ekf_odom
+    /localization/ekf_pose
+    /localization/gnss_fusion_input
+    /localization/gnss_odometry
+    /localization/global_pose_with_covariance
+    /localization/gnss_confidence
     /localization/kinematic_state
     /localization/pose_estimator/pose_with_covariance
     /localization/acceleration
@@ -252,9 +442,14 @@ if [[ "$RECORD_OUTPUT" == true ]]; then
     /reference/localization/pose_estimator/pose_with_covariance
   )
   log "recording evaluation outputs to $record_directory"
-  ros2 bag record --output "$record_directory" "${record_topics[@]}" \
+  ros2 bag record --storage mcap --output "$record_directory" \
+    --node-name autoware_lsim_output_recorder --topics "${record_topics[@]}" \
     > "$run_directory/record.log" 2>&1 &
   record_pid=$!
+  if ! wait_for_node /autoware_lsim_output_recorder "$record_pid"; then
+    fail "output recorder did not become ready; see $run_directory/record.log"
+  fi
+  log "output recorder is ready."
 fi
 
 play_command=(
@@ -263,6 +458,7 @@ play_command=(
   --points "$POINTS_SOURCE_TOPIC"
   --imu "$IMU_SOURCE_TOPIC"
   --rate "$PLAYBACK_RATE"
+  --clock-frequency "$CLOCK_FREQUENCY"
   --tf-policy "$TF_POLICY"
 )
 [[ -n "$NMEA_SOURCE_TOPIC" ]] && play_command+=(--nmea "$NMEA_SOURCE_TOPIC")
@@ -273,6 +469,19 @@ play_command=(
 [[ -n "$TWIST_SOURCE_TOPIC" ]] && play_command+=(--twist "$TWIST_SOURCE_TOPIC")
 [[ "$KEEP_RECORDED_LOCALIZATION" == true ]] && \
   play_command+=(--keep-recorded-localization)
+if [[ "$DATASET_PROFILE" == hesai_rosbag23 ]]; then
+  play_command+=(
+    --
+    --disable-keyboard-controls
+    --delay 2
+    --topics
+    "$POINTS_SOURCE_TOPIC"
+    "$IMU_SOURCE_TOPIC"
+    "$NMEA_SOURCE_TOPIC"
+  )
+else
+  play_command+=(-- --disable-keyboard-controls --delay 2)
+fi
 
 printf '[autoware-lsim] replay:'
 printf ' %q' "${play_command[@]}"
@@ -283,12 +492,20 @@ stdbuf -oL -eL "${play_command[@]}" \
 bag_pid=$!
 
 if [[ "$USE_GNSS" != true && "$AUTO_INITIAL_POSE" == true ]]; then
-  if timeout "$INITIALPOSE_WAIT_SEC" \
+  if timeout "$INITIALPOSE_DATA_WAIT_SEC" \
     ros2 topic echo --once /localization/gyro_lidar_odom > /dev/null 2>&1; then
     publish_initial_pose
   else
     warn "no LiDAR odometry arrived before the initial-pose timeout; fused Autoware output may remain unavailable"
   fi
+fi
+
+if timeout "$FIRST_STATE_WAIT_SEC" ros2 topic echo --once \
+  /localization/kinematic_state > "$run_directory/first_kinematic_state.yaml" 2>&1
+then
+  log "received the first valid Autoware kinematic state."
+else
+  fail "no valid Autoware kinematic state arrived; see launch/replay logs"
 fi
 
 set +e
@@ -297,9 +514,29 @@ bag_status=$?
 set -e
 bag_pid=""
 
-# Give recorder subscriptions one final scheduling cycle, then stop cleanly so
-# rosbag2 writes metadata before the container exits.
-sleep 1
+# Let queued callbacks drain before stopping the recorder and launch. The
+# analyzer below still enforces that the last state reaches the final /clock.
+sleep "$DRAIN_WAIT_SEC"
+launch_was_alive="false"
+record_was_alive="true"
+required_nodes_were_alive="true"
+if [[ -n "$launch_pid" ]] && kill -0 "$launch_pid" 2>/dev/null; then
+  launch_was_alive="true"
+fi
+if [[ "$RECORD_OUTPUT" == true ]] &&
+  { [[ -z "$record_pid" ]] || ! kill -0 "$record_pid" 2>/dev/null; }
+then
+  record_was_alive="false"
+fi
+if ! check_required_nodes; then
+  required_nodes_were_alive="false"
+fi
+if [[ "$RVIZ" == true && "$required_nodes_were_alive" == true ]]; then
+  if ! ros2 node info /rviz2 > "$run_directory/rviz_node_info.txt" 2>&1; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="/rviz2 node info failed"
+  fi
+fi
 stop_process "$record_pid" INT
 record_pid=""
 stop_process "$launch_pid" INT
@@ -307,5 +544,26 @@ launch_pid=""
 
 if ((bag_status != 0)); then
   fail "rosbag playback exited with status $bag_status; see $run_directory/replay.log"
+fi
+if [[ "$launch_was_alive" != true ]]; then
+  fail "Autoware/localizer launch exited before replay completed; see $run_directory/launch.log"
+fi
+if [[ "$record_was_alive" != true ]]; then
+  fail "output recorder exited before replay completed; see $run_directory/record.log"
+fi
+if [[ "$required_nodes_were_alive" != true ]]; then
+  fail "required localization node(s) missing at replay completion: $missing_required_nodes"
+fi
+
+if [[ "$RECORD_OUTPUT" == true ]]; then
+  validation_profile="${DATASET_PROFILE//_/-}"
+  log "validating recorded Autoware localization output."
+  if ! "${GICP_GNSS_ODOM_INSTALL}/bin/analyze_autoware_lsim_output.py" \
+    "$record_directory" --profile "$validation_profile" \
+    --tracking-mode "$TRACKING_MODE" \
+    2>&1 | tee "$run_directory/validation.log"
+  then
+    fail "recorded output failed acceptance checks; see $run_directory/validation.log"
+  fi
 fi
 log "evaluation complete: $run_directory"

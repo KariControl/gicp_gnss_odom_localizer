@@ -17,6 +17,8 @@ Options:
   --fix-velocity <topic>     Source Doppler/fix-velocity topic; empty disables remap
   --twist <topic>            Source deskew twist topic; empty disables remap
   --rate <factor>            Playback rate (default: 1.0)
+  --clock-frequency <hz>     Publish /clock at this rate; when omitted rosbag2
+                             uses its default rate
   --tf-policy <policy>       keep | isolate-dynamic | isolate-all
                              default: isolate-dynamic
   --keep-recorded-localization
@@ -35,7 +37,8 @@ Stable destinations:
 The default TF policy keeps /tf_static for calibrated sensor extrinsics and moves
 recorded dynamic /tf to /reference/tf so that recorded localization does not
 conflict with the estimator under test. Use isolate-all only when the launched
-vehicle/sensor model provides every required static transform.
+vehicle/sensor model or selected calibrated profile provides every required
+static transform.
 USAGE
 }
 
@@ -47,6 +50,7 @@ nmea_secondary_topic=""
 fix_velocity_topic=""
 twist_topic=""
 rate="1.0"
+clock_frequency=""
 tf_policy="isolate-dynamic"
 keep_recorded_localization=false
 dry_run=false
@@ -78,6 +82,9 @@ while (($# > 0)); do
     --rate)
       [[ $# -ge 2 ]] || { echo "--rate requires a value" >&2; exit 2; }
       rate="$2"; shift 2 ;;
+    --clock-frequency)
+      [[ $# -ge 2 ]] || { echo "--clock-frequency requires a value" >&2; exit 2; }
+      clock_frequency="$2"; shift 2 ;;
     --tf-policy)
       [[ $# -ge 2 ]] || { echo "--tf-policy requires a value" >&2; exit 2; }
       tf_policy="$2"; shift 2 ;;
@@ -112,6 +119,14 @@ if ! awk -v value="$rate" 'BEGIN { exit !(value > 0.0) }'; then
   echo "Playback rate must be greater than zero: $rate" >&2
   exit 2
 fi
+if [[ -n "$clock_frequency" ]]; then
+  if ! [[ "$clock_frequency" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] ||
+    ! awk -v value="$clock_frequency" 'BEGIN { exit !(value > 0.0) }'
+  then
+    echo "Clock frequency must be a positive number: $clock_frequency" >&2
+    exit 2
+  fi
+fi
 
 remaps=()
 add_remap() {
@@ -133,14 +148,21 @@ if [[ "$keep_recorded_localization" != true ]]; then
   recorded_outputs=(
     /initialpose
     /localization/gyro_lidar_odom
+    /localization/points_undistorted
     /localization/imu_corrected
     /localization/is_stopped
     /localization/ekf_odom
     /localization/ekf_pose
+    /localization/gnss_fusion_input
+    /localization/gnss_odometry
+    /localization/global_pose
+    /localization/global_pose_with_covariance
+    /localization/gnss_confidence
     /localization/kinematic_state
     /localization/acceleration
     /localization/pose_estimator/pose_with_covariance
     /diagnostics
+    /diagnostics_agg
   )
   for topic in "${recorded_outputs[@]}"; do
     add_remap "$topic" "/reference${topic}"
@@ -156,7 +178,11 @@ case "$tf_policy" in
     add_remap "/tf_static" "/reference/tf_static" ;;
 esac
 
-command=(ros2 bag play "$bag" --clock --rate "$rate")
+command=(ros2 bag play "$bag" --clock)
+if [[ -n "$clock_frequency" ]]; then
+  command+=("$clock_frequency")
+fi
+command+=(--rate "$rate")
 if ((${#remaps[@]} > 0)); then
   command+=(--remap "${remaps[@]}")
 fi

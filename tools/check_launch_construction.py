@@ -43,6 +43,7 @@ def install_stub_modules() -> None:
     conditions.UnlessCondition = Dummy
     substitutions = module("launch.substitutions")
     substitutions.LaunchConfiguration = Dummy
+    substitutions.PathJoinSubstitution = Dummy
     substitutions.PythonExpression = Dummy
     sources = module("launch.launch_description_sources")
     sources.AnyLaunchDescriptionSource = Dummy
@@ -54,6 +55,8 @@ def install_stub_modules() -> None:
     ros_actions.ComposableNodeContainer = Dummy
     descriptions = module("launch_ros.descriptions")
     descriptions.ComposableNode = Dummy
+    ros_substitutions = module("launch_ros.substitutions")
+    ros_substitutions.FindPackageShare = Dummy
 
 
 def main() -> int:

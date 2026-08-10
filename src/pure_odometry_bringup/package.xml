@@ -11,6 +11,8 @@
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>rclcpp_components</exec_depend>
   <exec_depend>diagnostic_aggregator</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>rviz2</exec_depend>
   <exec_depend>pure_imu_undistortion</exec_depend>
   <exec_depend>pure_lidar_gyro_odometer</exec_depend>
   <exec_depend>pure_nmea_gnss_conversion</exec_depend>

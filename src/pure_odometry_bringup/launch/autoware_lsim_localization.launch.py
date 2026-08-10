@@ -16,19 +16,28 @@ from launch.launch_description_sources import (
     AnyLaunchDescriptionSource,
     PythonLaunchDescriptionSource,
 )
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
     bringup_share = get_package_share_directory("pure_odometry_bringup")
     adapter_share = get_package_share_directory("pure_autoware_localization_adapter")
-    autoware_share = get_package_share_directory("autoware_launch")
 
     default_empty_map_path = os.path.join(
         bringup_share, "config", "autoware_lsim", "empty_map"
     )
+    default_empty_param = os.path.join(
+        bringup_share, "config", "autoware_lsim", "empty_params.yaml"
+    )
     default_adapter_param = os.path.join(adapter_share, "param", "param.yaml")
+    default_rviz_config = os.path.join(
+        bringup_share, "config", "autoware_lsim", "hesai_rosbag23.rviz"
+    )
+    default_imu_param = os.path.join(
+        get_package_share_directory("pure_imu_undistortion"), "param", "param.yaml"
+    )
     default_odom_param = os.path.join(
         get_package_share_directory("pure_lidar_gyro_odometer"), "param", "param.yaml"
     )
@@ -46,7 +55,9 @@ def generate_launch_description():
     launch_vehicle = LaunchConfiguration("launch_vehicle")
     launch_sensing = LaunchConfiguration("launch_sensing")
     launch_rviz = LaunchConfiguration("launch_rviz")
+    rviz_config = LaunchConfiguration("rviz_config")
     pointcloud_container_name = LaunchConfiguration("pointcloud_container_name")
+    sensor_profile = LaunchConfiguration("sensor_profile")
 
     use_gnss = LaunchConfiguration("use_gnss")
     use_imu_deskew = LaunchConfiguration("use_imu_deskew")
@@ -54,9 +65,13 @@ def generate_launch_description():
     deskewed_points_topic = LaunchConfiguration("deskewed_points_topic")
     imu_input_topic = LaunchConfiguration("imu_input_topic")
     twist_input_topic = LaunchConfiguration("twist_input_topic")
+    imu_param = LaunchConfiguration("imu_param")
     odom_param = LaunchConfiguration("odom_param")
+    odom_override_param = LaunchConfiguration("odom_override_param")
     nmea_gnss_param = LaunchConfiguration("nmea_gnss_param")
+    nmea_gnss_override_param = LaunchConfiguration("nmea_gnss_override_param")
     gnss_fusion_param = LaunchConfiguration("gnss_fusion_param")
+    fusion_xy_only_recovery = LaunchConfiguration("fusion_xy_only_recovery")
     gnss_primary_gga_topic = LaunchConfiguration("gnss_primary_gga_topic")
     gnss_secondary_gga_topic = LaunchConfiguration("gnss_secondary_gga_topic")
     gnss_fix_velocity_topic = LaunchConfiguration("gnss_fix_velocity_topic")
@@ -66,7 +81,9 @@ def generate_launch_description():
 
     autoware = IncludeLaunchDescription(
         AnyLaunchDescriptionSource(
-            os.path.join(autoware_share, "launch", "autoware.launch.xml")
+            PathJoinSubstitution(
+                [FindPackageShare("autoware_launch"), "launch", "autoware.launch.xml"]
+            )
         ),
         condition=IfCondition(launch_autoware),
         launch_arguments={
@@ -87,7 +104,10 @@ def generate_launch_description():
             "launch_api": "false",
             "use_sim_time": "true",
             "system_run_mode": "logging_simulation",
-            "rviz": launch_rviz,
+            # The standard Autoware RViz profile expects the full sensing and
+            # localization stacks.  This launch owns a profile that displays
+            # the localization-only topics published below.
+            "rviz": "false",
             "is_simulation": "true",
         }.items(),
     )
@@ -105,9 +125,13 @@ def generate_launch_description():
             "deskewed_points_topic": deskewed_points_topic,
             "imu_input_topic": imu_input_topic,
             "twist_input_topic": twist_input_topic,
+            "imu_param": imu_param,
             "odom_param": odom_param,
+            "odom_override_param": odom_override_param,
             "nmea_gnss_param": nmea_gnss_param,
+            "nmea_gnss_override_param": nmea_gnss_override_param,
             "gnss_fusion_param": gnss_fusion_param,
+            "fusion_xy_only_recovery": fusion_xy_only_recovery,
             "gnss_primary_gga_topic": gnss_primary_gga_topic,
             "gnss_secondary_gga_topic": gnss_secondary_gga_topic,
             "gnss_fix_velocity_topic": gnss_fix_velocity_topic,
@@ -135,6 +159,58 @@ def generate_launch_description():
         arguments=["--ros-args", "--log-level", log_level],
     )
 
+    rviz = Node(
+        condition=IfCondition(launch_rviz),
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
+        output="screen",
+        parameters=[{"use_sim_time": True}],
+        arguments=["-d", rviz_config],
+    )
+
+    hesai_profile_condition = IfCondition(
+        PythonExpression(["'", sensor_profile, "' == 'hesai_rosbag23'"])
+    )
+    hesai_static_transforms = [
+        Node(
+            condition=hesai_profile_condition,
+            package="tf2_ros",
+            executable="static_transform_publisher",
+            name="hesai_lidar_static_transform",
+            output="screen",
+            arguments=[
+                "--x", "0.0", "--y", "0.0", "--z", "0.0",
+                "--roll", "0.0", "--pitch", "0.0", "--yaw", "0.0",
+                "--frame-id", "base_link", "--child-frame-id", "lidar/0",
+            ],
+        ),
+        Node(
+            condition=hesai_profile_condition,
+            package="tf2_ros",
+            executable="static_transform_publisher",
+            name="hesai_imu_static_transform",
+            output="screen",
+            arguments=[
+                "--x", "0.0", "--y", "0.0", "--z", "-0.1874",
+                "--roll", "3.14159", "--pitch", "0.0", "--yaw", "0.0",
+                "--frame-id", "base_link", "--child-frame-id", "imu",
+            ],
+        ),
+        Node(
+            condition=hesai_profile_condition,
+            package="tf2_ros",
+            executable="static_transform_publisher",
+            name="hesai_gnss_static_transform",
+            output="screen",
+            arguments=[
+                "--x", "0.0", "--y", "0.0", "--z", "-0.1326",
+                "--roll", "0.0", "--pitch", "0.0", "--yaw", "0.0",
+                "--frame-id", "base_link", "--child-frame-id", "gnss/0",
+            ],
+        ),
+    ]
+
     return LaunchDescription(
         [
             DeclareLaunchArgument("launch_autoware", default_value="true"),
@@ -155,8 +231,17 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument("launch_rviz", default_value="true"),
+            DeclareLaunchArgument("rviz_config", default_value=default_rviz_config),
             DeclareLaunchArgument(
                 "pointcloud_container_name", default_value="pointcloud_container"
+            ),
+            DeclareLaunchArgument(
+                "sensor_profile",
+                default_value="generic",
+                description=(
+                    "Sensor static-TF profile. Use hesai_rosbag23 only for the "
+                    "calibrated ROSBAG2/3 rig."
+                ),
             ),
             DeclareLaunchArgument("use_gnss", default_value="false"),
             DeclareLaunchArgument("use_imu_deskew", default_value="true"),
@@ -166,13 +251,19 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("imu_input_topic", default_value="/imu"),
             DeclareLaunchArgument("twist_input_topic", default_value=""),
+            DeclareLaunchArgument("imu_param", default_value=default_imu_param),
             DeclareLaunchArgument("odom_param", default_value=default_odom_param),
+            DeclareLaunchArgument("odom_override_param", default_value=default_empty_param),
             DeclareLaunchArgument(
                 "nmea_gnss_param", default_value=default_nmea_gnss_param
             ),
             DeclareLaunchArgument(
+                "nmea_gnss_override_param", default_value=default_empty_param
+            ),
+            DeclareLaunchArgument(
                 "gnss_fusion_param", default_value=default_gnss_fusion_param
             ),
+            DeclareLaunchArgument("fusion_xy_only_recovery", default_value="false"),
             DeclareLaunchArgument("gnss_primary_gga_topic", default_value="/nmea_sentence"),
             DeclareLaunchArgument(
                 "gnss_secondary_gga_topic", default_value="/nmea_sentence_secondary"
@@ -184,6 +275,8 @@ def generate_launch_description():
             DeclareLaunchArgument("adapter_param", default_value=default_adapter_param),
             DeclareLaunchArgument("log_level", default_value="info"),
             autoware,
+            rviz,
+            *hesai_static_transforms,
             localizer,
             adapter,
         ]

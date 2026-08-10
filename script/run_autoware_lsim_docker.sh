@@ -13,6 +13,9 @@ Required:
   --bag <path>                  Rosbag2 directory or single MCAP/DB3 file
 
 Sensor topic options:
+  --profile <name>              generic | hesai-rosbag23
+                                hesai-rosbag23 selects the ROSBAG2/3 topics,
+                                calibrated TFs, XT parameters, and GNSS origin
   --points <topic>              PointCloud2 source topic
                                 default: /sensing/lidar/top/pointcloud_raw
   --imu <topic>                 IMU source topic
@@ -26,6 +29,7 @@ Estimator options:
   --tracking-mode <mode>        scan_to_scan | scan_to_submap
   --already-deskewed            Bypass internal IMU point-cloud deskew
   --rate <factor>               Rosbag playback rate (default: 1.0)
+  --clock-frequency <hz>        Simulation clock rate (default: 100.0)
   --tf-policy <policy>          keep | isolate-dynamic | isolate-all
                                 default: isolate-dynamic
   --keep-recorded-localization  Do not move recorded localization outputs to /reference
@@ -75,6 +79,7 @@ COMPOSE_BASE="$ROOT/docker/autoware_lsim/compose.yaml"
 COMPOSE_RVIZ="$ROOT/docker/autoware_lsim/compose.rviz.yaml"
 
 bag=""
+dataset_profile="generic"
 points_topic="/sensing/lidar/top/pointcloud_raw"
 imu_topic="/sensing/imu/tamagawa/imu_raw"
 nmea_topic=""
@@ -84,6 +89,7 @@ twist_topic=""
 tracking_mode="scan_to_scan"
 use_imu_deskew="true"
 playback_rate="1.0"
+clock_frequency="100.0"
 tf_policy="isolate-dynamic"
 keep_recorded_localization="false"
 launch_vehicle="false"
@@ -109,6 +115,7 @@ dry_run="false"
 while (($# > 0)); do
   case "$1" in
     --bag) [[ $# -ge 2 ]] || fail "--bag requires a value"; bag="$2"; shift 2 ;;
+    --profile) [[ $# -ge 2 ]] || fail "--profile requires a value"; dataset_profile="$2"; shift 2 ;;
     --points) [[ $# -ge 2 ]] || fail "--points requires a value"; points_topic="$2"; shift 2 ;;
     --imu) [[ $# -ge 2 ]] || fail "--imu requires a value"; imu_topic="$2"; shift 2 ;;
     --nmea) [[ $# -ge 2 ]] || fail "--nmea requires a value"; nmea_topic="$2"; shift 2 ;;
@@ -118,6 +125,7 @@ while (($# > 0)); do
     --tracking-mode) [[ $# -ge 2 ]] || fail "--tracking-mode requires a value"; tracking_mode="$2"; shift 2 ;;
     --already-deskewed) use_imu_deskew="false"; shift ;;
     --rate) [[ $# -ge 2 ]] || fail "--rate requires a value"; playback_rate="$2"; shift 2 ;;
+    --clock-frequency) [[ $# -ge 2 ]] || fail "--clock-frequency requires a value"; clock_frequency="$2"; shift 2 ;;
     --tf-policy) [[ $# -ge 2 ]] || fail "--tf-policy requires a value"; tf_policy="$2"; shift 2 ;;
     --keep-recorded-localization) keep_recorded_localization="true"; shift ;;
     --launch-vehicle) launch_vehicle="true"; shift ;;
@@ -149,6 +157,32 @@ if [[ -z "$bag" && "$build_only" == true ]]; then
 fi
 [[ -n "$bag" ]] || fail "--bag is required"
 [[ -e "$bag" ]] || fail "bag does not exist: $bag"
+case "$dataset_profile" in
+  generic) ;;
+  hesai-rosbag23)
+    if [[ "$points_topic" != "/sensing/lidar/top/pointcloud_raw" && \
+      "$points_topic" != "/pandar_points_ex" ]]; then
+      fail "--profile hesai-rosbag23 requires --points /pandar_points_ex"
+    fi
+    if [[ "$imu_topic" != "/sensing/imu/tamagawa/imu_raw" && \
+      "$imu_topic" != "/sensor/imu/data_raw" ]]; then
+      fail "--profile hesai-rosbag23 requires --imu /sensor/imu/data_raw"
+    fi
+    if [[ -n "$nmea_topic" && "$nmea_topic" != "/sensor/gnss/nmea_sentence" ]]; then
+      fail "--profile hesai-rosbag23 requires --nmea /sensor/gnss/nmea_sentence"
+    fi
+    [[ -z "$nmea_secondary_topic" ]] || fail "hesai-rosbag23 has no secondary NMEA topic"
+    [[ -z "$fix_velocity_topic" ]] || fail "hesai-rosbag23 has no fix-velocity topic"
+    [[ -z "$twist_topic" ]] || fail "hesai-rosbag23 has no twist topic"
+    [[ "$use_imu_deskew" == true ]] || fail "hesai-rosbag23 requires internal IMU deskew"
+    [[ "$launch_vehicle" != true ]] || fail "hesai-rosbag23 supplies its own static TFs; do not use --launch-vehicle"
+    points_topic="/pandar_points_ex"
+    imu_topic="/sensor/imu/data_raw"
+    nmea_topic="/sensor/gnss/nmea_sentence"
+    tf_policy="isolate-all"
+    ;;
+  *) fail "invalid profile: $dataset_profile" ;;
+esac
 case "$tracking_mode" in scan_to_scan|scan_to_submap) ;; *) fail "invalid tracking mode: $tracking_mode" ;; esac
 case "$tf_policy" in keep|isolate-dynamic|isolate-all) ;; *) fail "invalid TF policy: $tf_policy" ;; esac
 [[ "$build_jobs" =~ ^[1-9][0-9]*$ ]] || fail "--build-jobs must be a positive integer"
@@ -156,8 +190,13 @@ if ! [[ "$playback_rate" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] || \
   ! awk -v value="$playback_rate" 'BEGIN { exit !(value > 0.0) }'; then
   fail "--rate must be a positive number"
 fi
-if [[ "$tf_policy" == isolate-all && "$launch_vehicle" != true ]]; then
-  fail "--tf-policy isolate-all requires --launch-vehicle"
+if ! [[ "$clock_frequency" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] || \
+  ! awk -v value="$clock_frequency" 'BEGIN { exit !(value > 0.0) }'; then
+  fail "--clock-frequency must be a positive number"
+fi
+if [[ "$tf_policy" == isolate-all && "$launch_vehicle" != true && \
+  "$dataset_profile" != hesai-rosbag23 ]]; then
+  fail "--tf-policy isolate-all requires --launch-vehicle or --profile hesai-rosbag23"
 fi
 if [[ "$rviz" == true && -z "${DISPLAY:-}" ]]; then
   fail "--rviz requires DISPLAY"
@@ -172,7 +211,8 @@ if [[ -z "$run_name" ]]; then
 fi
 
 export HOST_BAG_PATH HOST_OUTPUT_DIR
-export HOST_UID="$(id -u)" HOST_GID="$(id -g)"
+export HOST_UID="$(id -u)" HOST_GID="$(id -g "$(id -un)")"
+export DATASET_PROFILE="${dataset_profile//-/_}"
 export POINTS_SOURCE_TOPIC="$points_topic"
 export IMU_SOURCE_TOPIC="$imu_topic"
 export NMEA_SOURCE_TOPIC="$nmea_topic"
@@ -180,6 +220,7 @@ export NMEA_SECONDARY_SOURCE_TOPIC="$nmea_secondary_topic"
 export FIX_VELOCITY_SOURCE_TOPIC="$fix_velocity_topic"
 export TWIST_SOURCE_TOPIC="$twist_topic"
 export PLAYBACK_RATE="$playback_rate"
+export CLOCK_FREQUENCY="$clock_frequency"
 export TF_POLICY="$tf_policy"
 export KEEP_RECORDED_LOCALIZATION="$keep_recorded_localization"
 export TRACKING_MODE="$tracking_mode"
@@ -209,8 +250,14 @@ printf 'Autoware base image: %s\n' "$AUTOWARE_IMAGE"
 printf 'Local image:         %s\n' "$LOCALIZER_LSIM_IMAGE"
 printf 'Bag:                 %s\n' "$HOST_BAG_PATH"
 printf 'Output root:         %s\n' "$HOST_OUTPUT_DIR"
+printf 'Dataset profile:     %s\n' "$DATASET_PROFILE"
 printf 'Tracking mode:       %s\n' "$TRACKING_MODE"
+printf 'Clock frequency:     %s Hz\n' "$CLOCK_FREQUENCY"
 printf 'GNSS:                %s\n' "$USE_GNSS"
+printf 'PointCloud input:    %s\n' "$POINTS_SOURCE_TOPIC"
+printf 'IMU input:           %s\n' "$IMU_SOURCE_TOPIC"
+printf 'NMEA input:          %s\n' "${NMEA_SOURCE_TOPIC:-disabled}"
+printf 'TF policy:           %s\n' "$TF_POLICY"
 printf 'RViz:                %s\n' "$RVIZ"
 
 if [[ "$dry_run" == true ]]; then
@@ -227,7 +274,7 @@ if [[ "$dry_run" == true ]]; then
     if [[ "$open_shell" == true ]]; then
       printf ' %q' "${compose[@]}" run --rm lsim bash
     else
-      printf ' %q' "${compose[@]}" run --rm lsim
+      printf ' %q' "${compose[@]}" run --rm --no-tty lsim
     fi
     printf '\n'
   fi
@@ -240,8 +287,9 @@ docker info >/dev/null 2>&1 || fail "Docker daemon is not accessible by the curr
 
 if [[ "$rviz" == true ]]; then
   command -v xhost >/dev/null 2>&1 || fail "xhost is required for --rviz"
-  xhost +local:docker >/dev/null
-  trap 'xhost -local:docker >/dev/null 2>&1 || true' EXIT
+  xhost_rule="SI:localuser:$(id -un)"
+  xhost +"$xhost_rule" >/dev/null
+  trap 'xhost -"$xhost_rule" >/dev/null 2>&1 || true' EXIT
 fi
 
 if [[ "$pull_base" == true ]]; then
@@ -250,11 +298,15 @@ fi
 if [[ "$build_image" == true ]]; then
   "${compose[@]}" build lsim
 fi
+if ! LOCALIZER_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$LOCALIZER_LSIM_IMAGE")"; then
+  fail "local lSIM image does not exist: $LOCALIZER_LSIM_IMAGE (remove --no-build)"
+fi
+export LOCALIZER_IMAGE_ID
 if [[ "$build_only" == true ]]; then
   exit 0
 fi
 if [[ "$open_shell" == true ]]; then
   "${compose[@]}" run --rm lsim bash
 else
-  "${compose[@]}" run --rm lsim
+  "${compose[@]}" run --rm --no-tty lsim
 fi
