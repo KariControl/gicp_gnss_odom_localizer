@@ -127,17 +127,29 @@ def check_docker_configuration() -> None:
 def check_stable_package_identity() -> None:
     """Verify the project package set and retained runtime APIs."""
     expected = {
-        Path("src/pure_nmea_gnss_conversion/package.xml"): "pure_nmea_gnss_conversion",
-        Path("src/pure_gnss_map_odom_fusion/package.xml"): "pure_gnss_map_odom_fusion",
-        Path("src/pure_gnss_msgs/package.xml"): "pure_gnss_msgs",
-        Path("src/pure_imu_undistortion/package.xml"): "pure_imu_undistortion",
-        Path("src/pure_lidar_gyro_odometer/package.xml"): "pure_lidar_gyro_odometer",
-        Path("src/pure_odometry_bringup/package.xml"): "pure_odometry_bringup",
+        Path("src/pure_nmea_gnss_conversion/package.xml"):
+            ("pure_nmea_gnss_conversion", "0.3.0"),
+        Path("src/pure_gnss_map_odom_fusion/package.xml"):
+            ("pure_gnss_map_odom_fusion", "0.3.0"),
+        Path("src/pure_gnss_msgs/package.xml"): ("pure_gnss_msgs", "0.3.0"),
+        Path("src/pure_imu_undistortion/package.xml"):
+            ("pure_imu_undistortion", "0.3.0"),
+        Path("src/pure_lidar_gyro_odometer/package.xml"):
+            ("pure_lidar_gyro_odometer", "0.3.0"),
+        Path("src/pure_odometry_bringup/package.xml"):
+            ("pure_odometry_bringup", "0.3.0"),
         Path("src/pure_autoware_localization_adapter/package.xml"):
-            "pure_autoware_localization_adapter",
+            ("pure_autoware_localization_adapter", "0.3.0"),
+        Path("src/pure_lidar_msgs/package.xml"): ("pure_lidar_msgs", "0.1.0"),
+        Path("src/pure_lidar_submap_matcher/package.xml"):
+            ("pure_lidar_submap_matcher", "0.1.0"),
+        Path("src/pure_precision_global_localizer/package.xml"):
+            ("pure_precision_global_localizer", "0.1.0"),
+        Path("src/pure_precision_bringup/package.xml"):
+            ("pure_precision_bringup", "0.1.0"),
     }
     discovered: dict[Path, str] = {}
-    for relative_path, expected_name in expected.items():
+    for relative_path, (expected_name, expected_version) in expected.items():
         package_path = ROOT / relative_path
         if not package_path.is_file():
             fail(f"stable ROS package missing: {relative_path}")
@@ -150,8 +162,10 @@ def check_stable_package_identity() -> None:
                 f"ROS package identity changed in {relative_path}: "
                 f"expected {expected_name}, got {actual_name}"
             )
-        if package.findtext("version") != "0.3.0":
-            fail(f"project package version must be 0.3.0: {relative_path}")
+        if package.findtext("version") != expected_version:
+            fail(
+                f"project package version must be {expected_version}: {relative_path}"
+            )
 
     package_xmls = {
         path.relative_to(ROOT)

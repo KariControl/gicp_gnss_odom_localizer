@@ -1,9 +1,11 @@
 #include "pure_lidar_gyro_odometer/gyro_odometer_node.hpp"
+#include "pure_lidar_gyro_odometer/accepted_scan_snapshot_policy.hpp"
 #include "pure_lidar_gyro_odometer/observability_policy.hpp"
 
 #include <functional>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <iomanip>
 #include <limits>
@@ -573,6 +575,23 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
   lidar_local_map_fitness_sigma_ = declare_parameter<double>(
     "lidar_odom.local_map.fitness_sigma", 0.50);
 
+  external_submap_snapshot_enable_ = declare_parameter<bool>(
+    "lidar_odom.external_submap_snapshot.enable", false);
+  external_submap_snapshot_topic_ = declare_parameter<std::string>(
+    "lidar_odom.external_submap_snapshot.topic",
+    external_submap_snapshot_topic_);
+  external_submap_snapshot_publish_interval_frames_ = declare_parameter<int>(
+    "lidar_odom.external_submap_snapshot.publish_interval_frames",
+    external_submap_snapshot_publish_interval_frames_);
+  if (external_submap_snapshot_enable_) {
+    external_submap_odom_session_id_ = static_cast<std::uint64_t>(
+      std::chrono::steady_clock::now().time_since_epoch().count());
+    if (external_submap_odom_session_id_ == 0) {
+      external_submap_odom_session_id_ = 1;
+    }
+    external_submap_odom_generation_ = 1;
+  }
+
   if (lidar_local_map_enable_ &&
     lidar_tracking_mode_ == tracking::Mode::ScanToScan && !lidar_smoother_enable_)
   {
@@ -617,6 +636,11 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
 
   // Publishers
   pub_odom_raw_ = create_publisher<nav_msgs::msg::Odometry>(out_odom_topic_, 10);
+  if (external_submap_snapshot_enable_) {
+    pub_external_submap_snapshot_ =
+      create_publisher<pure_lidar_msgs::msg::SubmapScan>(
+      external_submap_snapshot_topic_, rclcpp::SensorDataQoS().keep_last(1));
+  }
   if (out_filtered_odom_enable_ && !out_filtered_odom_topic_.empty() && out_filtered_odom_topic_ != out_odom_topic_) {
     pub_odom_filtered_ = create_publisher<nav_msgs::msg::Odometry>(out_filtered_odom_topic_, 10);
   } else if (out_filtered_odom_enable_ && !out_filtered_odom_topic_.empty() && out_filtered_odom_topic_ == out_odom_topic_) {
@@ -1346,6 +1370,13 @@ void GyroOdometerNode::resetLidarTrackingLocked()
     lidar_smoother_.reset(se2::Pose{odom_x_, odom_y_, odom_yaw_});
   }
   resetLocalMapLocked("tracking_reset");
+  if (external_submap_snapshot_enable_) {
+    ++external_submap_odom_generation_;
+    if (external_submap_odom_generation_ == 0) {
+      external_submap_odom_generation_ = 1;
+    }
+    external_submap_generation_has_snapshot_ = false;
+  }
 }
 
 void GyroOdometerNode::validateParameters() const
@@ -1384,6 +1415,21 @@ void GyroOdometerNode::validateParameters() const
   }
   if (lidar_smoother_window_size_ < 1 || lidar_smoother_max_iter_ < 1) {
     throw std::invalid_argument("LiDAR smoother window and iterations must be >= 1");
+  }
+  if (external_submap_snapshot_publish_interval_frames_ < 1) {
+    throw std::invalid_argument(
+            "lidar_odom.external_submap_snapshot.publish_interval_frames must be >= 1");
+  }
+  if (external_submap_snapshot_enable_ && external_submap_snapshot_topic_.empty()) {
+    throw std::invalid_argument(
+            "lidar_odom.external_submap_snapshot.topic must be non-empty when enabled");
+  }
+  if (external_submap_snapshot_enable_ &&
+    (!lidar_odom_enable_ || !lidar_pose_se2_enable_ ||
+    lidar_tracking_mode_ != tracking::Mode::ScanToScan))
+  {
+    throw std::invalid_argument(
+            "external_submap_snapshot requires enabled SE2 LiDAR in scan_to_scan mode");
   }
   require_positive(
     lidar_smoother_max_position_correction_m_,
@@ -2358,6 +2404,9 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
       "yaw_only" : "full_due_to_current_registration_reject";
   }
 
+  bool publish_external_submap_snapshot = false;
+  pure_lidar_msgs::msg::SubmapScan external_submap_snapshot;
+
   {
     std::lock_guard<std::mutex> lock(mtx_);
     if (!has_odom_pose_) {
@@ -2566,6 +2615,38 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
       odom_cov_total_yaw_ += std::max(0.0, odom_cov_invalid_yaw_step_);
     }
 
+    if (accepted_pose && pub_external_submap_snapshot_ &&
+      snapshot_policy::due(
+        external_submap_generation_has_snapshot_, lidar_pose_sequence_,
+        static_cast<std::uint64_t>(external_submap_snapshot_publish_interval_frames_)))
+    {
+      publish_external_submap_snapshot = true;
+      external_submap_generation_has_snapshot_ = true;
+      external_submap_snapshot.header = msg->header;
+      external_submap_snapshot.header.frame_id = odom_frame_;
+      external_submap_snapshot.odom_session_id = external_submap_odom_session_id_;
+      external_submap_snapshot.odom_generation = external_submap_odom_generation_;
+      external_submap_snapshot.sequence = lidar_pose_sequence_;
+      external_submap_snapshot.raw_pose.pose.position.x = odom_x_;
+      external_submap_snapshot.raw_pose.pose.position.y = odom_y_;
+      external_submap_snapshot.raw_pose.pose.position.z = 0.0;
+      const auto quaternion = quatFromYaw(odom_yaw_);
+      external_submap_snapshot.raw_pose.pose.orientation.x = quaternion.x();
+      external_submap_snapshot.raw_pose.pose.orientation.y = quaternion.y();
+      external_submap_snapshot.raw_pose.pose.orientation.z = quaternion.z();
+      external_submap_snapshot.raw_pose.pose.orientation.w = quaternion.w();
+      external_submap_snapshot.raw_pose.covariance.fill(0.0);
+      external_submap_snapshot.raw_pose.covariance[0] =
+        std::max(0.0, odom_cov_total_xy_);
+      external_submap_snapshot.raw_pose.covariance[7] =
+        std::max(0.0, odom_cov_total_xy_);
+      external_submap_snapshot.raw_pose.covariance[14] = 1.0e6;
+      external_submap_snapshot.raw_pose.covariance[21] = 1.0e6;
+      external_submap_snapshot.raw_pose.covariance[28] = 1.0e6;
+      external_submap_snapshot.raw_pose.covariance[35] =
+        std::max(0.0, odom_cov_total_yaw_);
+    }
+
     last_lidar_ = output;
     last_icp_guess_mode_ = guess_mode_used;
     next_icp_use_full_guess_ = use_full_guess_next;
@@ -2578,6 +2659,30 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
       has_prev_cloud_ = true;
       prev_cloud_stamp_ = stamp;
       last_gicp_guess_ = next_scan_to_scan_guess;
+    }
+  }
+
+  if (publish_external_submap_snapshot && pub_external_submap_snapshot_) {
+    const auto conversion_start = std::chrono::steady_clock::now();
+    try {
+      pcl::toROSMsg(*cloud, external_submap_snapshot.cloud);
+      const double conversion_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - conversion_start).count();
+      external_submap_snapshot.cloud.header = msg->header;
+      pub_external_submap_snapshot_->publish(external_submap_snapshot);
+      std::lock_guard<std::mutex> lock(mtx_);
+      ++external_submap_snapshot_published_count_;
+      external_submap_snapshot_conversion_last_ms_ = conversion_ms;
+      external_submap_snapshot_conversion_sum_ms_ += conversion_ms;
+      external_submap_snapshot_conversion_max_ms_ = std::max(
+        external_submap_snapshot_conversion_max_ms_, conversion_ms);
+    } catch (const std::exception & exception) {
+      std::lock_guard<std::mutex> lock(mtx_);
+      external_submap_generation_has_snapshot_ = false;
+      RCLCPP_ERROR_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "[pure_gyro_odometer] Failed to serialize accepted-scan snapshot: %s",
+        exception.what());
     }
   }
 
@@ -2757,6 +2862,13 @@ void GyroOdometerNode::onPublishTimer()
   std::string speed_source{"none"};
   std::string last_icp_guess_mode;
   std::string next_icp_guess_mode;
+  std::uint64_t external_snapshot_session = 0;
+  std::uint64_t external_snapshot_generation = 0;
+  std::uint64_t external_snapshot_sequence = 0;
+  std::uint64_t external_snapshot_published_count = 0;
+  double external_snapshot_conversion_last_ms = 0.0;
+  double external_snapshot_conversion_sum_ms = 0.0;
+  double external_snapshot_conversion_max_ms = 0.0;
 
   {
     std::lock_guard<std::mutex> lk(mtx_);
@@ -2804,6 +2916,13 @@ void GyroOdometerNode::onPublishTimer()
     local_map_reset_reason = local_map_reset_reason_;
     last_icp_guess_mode = last_icp_guess_mode_;
     next_icp_guess_mode = next_icp_guess_mode_;
+    external_snapshot_session = external_submap_odom_session_id_;
+    external_snapshot_generation = external_submap_odom_generation_;
+    external_snapshot_sequence = lidar_pose_sequence_;
+    external_snapshot_published_count = external_submap_snapshot_published_count_;
+    external_snapshot_conversion_last_ms = external_submap_snapshot_conversion_last_ms_;
+    external_snapshot_conversion_sum_ms = external_submap_snapshot_conversion_sum_ms_;
+    external_snapshot_conversion_max_ms = external_submap_snapshot_conversion_max_ms_;
     has_lidar = (lidar_odom_enable_ && lidar.valid);
     if (has_lidar) {
       const double age = std::fabs((nowt - lidar.stamp).seconds());
@@ -3062,6 +3181,23 @@ void GyroOdometerNode::onPublishTimer()
     add("odom_cov_xy_total", std::to_string(odom_cov_xy_total));
     add("odom_cov_yaw_total", std::to_string(odom_cov_yaw_total));
     add("raw_odom_topic", out_odom_topic_);
+    add("external_submap_snapshot_enabled", boolString(external_submap_snapshot_enable_));
+    add("external_submap_snapshot_topic", external_submap_snapshot_topic_);
+    add("external_submap_snapshot_exact_key_contract",
+      "session+generation+sequence+accepted_scan_stamp");
+    add("external_submap_snapshot_session", std::to_string(external_snapshot_session));
+    add("external_submap_snapshot_generation", std::to_string(external_snapshot_generation));
+    add("external_submap_snapshot_sequence", std::to_string(external_snapshot_sequence));
+    add("external_submap_snapshot_published_count",
+      std::to_string(external_snapshot_published_count));
+    add("external_submap_snapshot_conversion_last_ms",
+      std::to_string(external_snapshot_conversion_last_ms));
+    add("external_submap_snapshot_conversion_mean_ms",
+      std::to_string(external_snapshot_published_count == 0 ? 0.0 :
+      external_snapshot_conversion_sum_ms /
+      static_cast<double>(external_snapshot_published_count)));
+    add("external_submap_snapshot_conversion_max_ms",
+      std::to_string(external_snapshot_conversion_max_ms));
     add(
       "filtered_odom_topic",
       pub_odom_filtered_ ? out_filtered_odom_topic_ : std::string("disabled"));

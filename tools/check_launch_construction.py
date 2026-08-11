@@ -66,6 +66,7 @@ def main() -> int:
         launch_directory / "odometry_standalone.launch.py",
         launch_directory / "odometry_container.launch.py",
         launch_directory / "autoware_lsim_localization.launch.py",
+        ROOT / "src/pure_precision_bringup/launch/precision_overlay.launch.py",
     )
     for index, path in enumerate(paths):
         spec = importlib.util.spec_from_file_location(f"launch_under_test_{index}", path)

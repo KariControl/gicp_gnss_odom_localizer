@@ -17,6 +17,8 @@
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
 
+#include <pure_lidar_msgs/msg/submap_scan.hpp>
+
 #include <rclcpp/rclcpp.hpp>
 
 #include <tf2_ros/buffer.h>
@@ -360,6 +362,12 @@ private:
   double lidar_local_map_factor_weight_yaw_{10.0};
   double lidar_local_map_fitness_sigma_{0.50};
 
+  // Optional, output-only bridge to the isolated precision pipeline.  When
+  // disabled (the default), no cloud conversion or publication is performed.
+  bool external_submap_snapshot_enable_{false};
+  std::string external_submap_snapshot_topic_{"/localization/submap_scan"};
+  int external_submap_snapshot_publish_interval_frames_{5};
+
   // -------- ROS I/F --------
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
   rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr sub_wheel_twist_;
@@ -373,6 +381,8 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr pub_imu_corrected_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr pub_diag_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_observability_debug_;
+  rclcpp::Publisher<pure_lidar_msgs::msg::SubmapScan>::SharedPtr
+    pub_external_submap_snapshot_;
 
 
   rclcpp::TimerBase::SharedPtr timer_;
@@ -451,6 +461,16 @@ private:
   std::string next_icp_guess_mode_{"yaw_only"};
   double odom_cov_total_xy_{0.0};
   double odom_cov_total_yaw_{0.0};
+
+  // Exact accepted-scan stream identity.  These fields are metadata only and
+  // never feed back into local odometry state.
+  std::uint64_t external_submap_odom_session_id_{0};
+  std::uint64_t external_submap_odom_generation_{0};
+  bool external_submap_generation_has_snapshot_{false};
+  std::uint64_t external_submap_snapshot_published_count_{0};
+  double external_submap_snapshot_conversion_last_ms_{0.0};
+  double external_submap_snapshot_conversion_sum_ms_{0.0};
+  double external_submap_snapshot_conversion_max_ms_{0.0};
 
   // Fixed-lag SE(2) factor graph (ROS/PCL independent and unit-tested).
   se2::FixedLagSmoother lidar_smoother_;

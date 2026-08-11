@@ -13,6 +13,13 @@ Options:
   --bag <path>                 Input rosbag directory
                                default: rosbag/output_pointcloud2
   --rate <factor>             Playback rate (default: 1.0)
+  --tracking-mode <mode>      scan_to_scan | scan_to_submap
+                               scan_to_submap starts the isolated precision
+                               overlay; the production odometer remains
+                               scan_to_scan (default: scan_to_scan)
+  --accepted-scan-control     Evaluation-only scan_to_scan control: enable and
+                              record the same accepted-scan snapshots as the
+                              precision run, without starting its overlay
   --output <directory>        Result directory
                                default: test_results/output_pointcloud2_<timestamp>
   --playback-duration <sec>   Stop after this many seconds of bag time
@@ -56,11 +63,13 @@ print_command() {
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 bag="$ROOT/rosbag/output_pointcloud2"
 rate="1.0"
+tracking_mode="scan_to_scan"
 output=""
 playback_duration=""
 record_output=true
 lsim_interface_test=false
 dry_run=false
+accepted_scan_control=false
 
 while (($# > 0)); do
   case "$1" in
@@ -72,6 +81,11 @@ while (($# > 0)); do
     --rate)
       [[ $# -ge 2 ]] || fail "--rate requires a value"
       rate="$2"
+      shift 2
+      ;;
+    --tracking-mode)
+      [[ $# -ge 2 ]] || fail "--tracking-mode requires a value"
+      tracking_mode="$2"
       shift 2
       ;;
     --output)
@@ -86,6 +100,10 @@ while (($# > 0)); do
       ;;
     --lsim-interface-test)
       lsim_interface_test=true
+      shift
+      ;;
+    --accepted-scan-control)
+      accepted_scan_control=true
       shift
       ;;
     --no-record)
@@ -107,8 +125,18 @@ while (($# > 0)); do
 done
 
 require_positive_number "--rate" "$rate"
+case "$tracking_mode" in
+  scan_to_scan|scan_to_submap) ;;
+  *) fail "--tracking-mode must be scan_to_scan or scan_to_submap: $tracking_mode" ;;
+esac
 if [[ -n "$playback_duration" ]]; then
   require_positive_number "--playback-duration" "$playback_duration"
+fi
+if [[ "$accepted_scan_control" == true ]]; then
+  [[ "$tracking_mode" == "scan_to_scan" ]] ||
+    fail "--accepted-scan-control requires --tracking-mode scan_to_scan"
+  [[ "$record_output" == true ]] ||
+    fail "--accepted-scan-control requires recording"
 fi
 
 [[ -e "$bag" ]] || fail "bag does not exist: $bag"
@@ -142,12 +170,36 @@ else
 fi
 NMEA_GNSS_PARAM="$(ros2 pkg prefix pure_nmea_gnss_conversion)/share/pure_nmea_gnss_conversion/param/param.yaml"
 BRINGUP_SHARE="$(ros2 pkg prefix pure_odometry_bringup)/share/pure_odometry_bringup"
+ODOM_OVERRIDE_PARAM="$BRINGUP_SHARE/config/autoware_lsim/empty_params.yaml"
+PRECISION_BRINGUP_SHARE=""
+PRECISION_MATCHER_PARAM=""
+PRECISION_GLOBAL_PARAM=""
+if [[ "$tracking_mode" == "scan_to_submap" || "$accepted_scan_control" == true ]]; then
+  PRECISION_BRINGUP_SHARE="$(ros2 pkg prefix pure_precision_bringup)/share/pure_precision_bringup"
+  ODOM_OVERRIDE_PARAM="$PRECISION_BRINGUP_SHARE/config/submap_snapshot_override.yaml"
+fi
+if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+  PRECISION_MATCHER_PARAM="$(ros2 pkg prefix pure_lidar_submap_matcher)/share/pure_lidar_submap_matcher/param/param.yaml"
+  PRECISION_GLOBAL_PARAM="$(ros2 pkg prefix pure_precision_global_localizer)/share/pure_precision_global_localizer/param/param.yaml"
+fi
 NMEA_GNSS_OVERRIDE_PARAM="$BRINGUP_SHARE/config/autoware_lsim/hesai_rosbag23_nmea_override.yaml"
-for parameter_file in "$IMU_PARAM" "$ODOM_PARAM" "$GNSS_FUSION_PARAM" "$NMEA_GNSS_PARAM"; do
+for parameter_file in \
+  "$IMU_PARAM" \
+  "$ODOM_PARAM" \
+  "$ODOM_OVERRIDE_PARAM" \
+  "$GNSS_FUSION_PARAM" \
+  "$NMEA_GNSS_PARAM"
+do
   [[ -f "$parameter_file" ]] || fail "parameter file does not exist: $parameter_file"
 done
 [[ -f "$NMEA_GNSS_OVERRIDE_PARAM" ]] ||
   fail "parameter file does not exist: $NMEA_GNSS_OVERRIDE_PARAM"
+if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+  [[ -f "$PRECISION_MATCHER_PARAM" ]] ||
+    fail "parameter file does not exist: $PRECISION_MATCHER_PARAM"
+  [[ -f "$PRECISION_GLOBAL_PARAM" ]] ||
+    fail "parameter file does not exist: $PRECISION_GLOBAL_PARAM"
+fi
 
 tf_lidar_command=(
   ros2 run tf2_ros static_transform_publisher
@@ -181,6 +233,7 @@ if [[ "$lsim_interface_test" == true ]]; then
     imu_input_topic:=/imu
     imu_param:="$IMU_PARAM"
     odom_param:="$ODOM_PARAM"
+    odom_override_param:="$ODOM_OVERRIDE_PARAM"
     gnss_fusion_param:="$GNSS_FUSION_PARAM"
     nmea_gnss_param:="$NMEA_GNSS_PARAM"
     nmea_gnss_override_param:="$NMEA_GNSS_OVERRIDE_PARAM"
@@ -197,6 +250,7 @@ else
     imu_input_topic:=/imu
     imu_param:="$IMU_PARAM"
     odom_param:="$ODOM_PARAM"
+    odom_override_param:="$ODOM_OVERRIDE_PARAM"
     gnss_fusion_param:="$GNSS_FUSION_PARAM"
     nmea_gnss_param:="$NMEA_GNSS_PARAM"
     gnss_primary_gga_topic:=/nmea_sentence
@@ -206,6 +260,15 @@ else
     # This single-antenna parking profile may regain RTK position while stopped.
     # Enable guarded XY-only recovery; generic bringup remains disabled by default.
     fusion_xy_only_recovery:=true
+  )
+fi
+precision_launch_command=()
+if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+  precision_launch_command=(
+    ros2 launch pure_precision_bringup precision_overlay.launch.py
+    use_sim_time:=true
+    matcher_param:="$PRECISION_MATCHER_PARAM"
+    global_param:="$PRECISION_GLOBAL_PARAM"
   )
 fi
 record_directory="$output/localization_output"
@@ -228,6 +291,19 @@ record_topics=(
   /localization/pose_estimator/pose_with_covariance
   /localization/acceleration
 )
+if [[ "$tracking_mode" == "scan_to_submap" || "$accepted_scan_control" == true ]]; then
+  record_topics+=(
+    /localization/submap_scan
+  )
+fi
+if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+  record_topics+=(
+    /localization/submap_correction
+    /localization/precision_local_odom
+    /localization/precision_global_odom
+    /localization/precision_global_pose
+  )
+fi
 record_command=(
   ros2 bag record
   --storage mcap
@@ -265,6 +341,8 @@ fi
 log "bag: $bag"
 log "output: $output"
 log "ROS_DOMAIN_ID: $ROS_DOMAIN_ID"
+log "tracking mode: $tracking_mode"
+log "accepted-scan control instrumentation: $accepted_scan_control"
 
 if [[ "$dry_run" == true ]]; then
   if [[ "$lsim_interface_test" != true ]]; then
@@ -273,6 +351,9 @@ if [[ "$dry_run" == true ]]; then
     print_command "${tf_gnss_command[@]}"
   fi
   print_command "${launch_command[@]}"
+  if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+    print_command "${precision_launch_command[@]}"
+  fi
   if [[ "$record_output" == true ]]; then
     print_command "${record_command[@]}"
   fi
@@ -285,6 +366,12 @@ export ROS_LOG_DIR="$output/ros_logs"
 {
   printf 'bag=%q\n' "$bag"
   printf 'rate=%q\n' "$rate"
+  printf 'tracking_mode=%q\n' "$tracking_mode"
+  printf 'accepted_scan_control=%q\n' "$accepted_scan_control"
+  printf 'odom_param=%q\n' "$ODOM_PARAM"
+  printf 'odom_override_param=%q\n' "$ODOM_OVERRIDE_PARAM"
+  printf 'precision_matcher_param=%q\n' "$PRECISION_MATCHER_PARAM"
+  printf 'precision_global_param=%q\n' "$PRECISION_GLOBAL_PARAM"
   printf 'playback_duration=%q\n' "$playback_duration"
   printf 'record_output=%q\n' "$record_output"
   printf 'lsim_interface_test=%q\n' "$lsim_interface_test"
@@ -296,6 +383,7 @@ tf_lidar_pid=""
 tf_imu_pid=""
 tf_gnss_pid=""
 launch_pid=""
+precision_launch_pid=""
 record_pid=""
 play_pid=""
 started_pid=""
@@ -359,6 +447,7 @@ cleanup() {
   trap - EXIT INT TERM
   stop_process_group "$play_pid" "bag player"
   stop_process_group "$record_pid" "bag recorder"
+  stop_process_group "$precision_launch_pid" "precision overlay launch"
   stop_process_group "$launch_pid" "localization launch"
   stop_process_group "$tf_gnss_pid" "GNSS static TF"
   stop_process_group "$tf_imu_pid" "IMU static TF"
@@ -372,9 +461,10 @@ trap 'exit 143' TERM
 wait_for_topic() {
   local topic="$1"
   local timeout_sec="$2"
+  local owner_pid="${3:-$launch_pid}"
   local deadline=$((SECONDS + timeout_sec))
   while ((SECONDS < deadline)); do
-    process_alive "$launch_pid" || return 2
+    process_alive "$owner_pid" || return 2
     if ros2 topic list --no-daemon --spin-time 1 2>/dev/null | grep -Fx "$topic" >/dev/null; then
       return 0
     fi
@@ -413,6 +503,10 @@ fi
 
 start_process_group "$output/launch.log" "${launch_command[@]}"
 launch_pid=$started_pid
+if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+  start_process_group "$output/precision_launch.log" "${precision_launch_command[@]}"
+  precision_launch_pid=$started_pid
+fi
 
 if ! wait_for_topic /localization/gyro_lidar_odom 60; then
   fail "localization stack did not become ready; see $output/launch.log"
@@ -422,6 +516,25 @@ if ! wait_for_topic /localization/gnss_fusion_input 60; then
 fi
 if ! wait_for_topic /localization/ekf_odom 60; then
   fail "GNSS fusion did not become ready; see $output/launch.log"
+fi
+if [[ "$tracking_mode" == "scan_to_submap" || "$accepted_scan_control" == true ]]; then
+  if ! wait_for_topic /localization/submap_scan 60 "$launch_pid"; then
+    fail "exact-key scan publisher did not become ready; see $output/launch.log"
+  fi
+fi
+if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+  if ! wait_for_topic /localization/submap_correction 60 "$precision_launch_pid"; then
+    fail "submap matcher did not become ready; see $output/precision_launch.log"
+  fi
+  if ! wait_for_topic /localization/precision_local_odom 60 "$precision_launch_pid"; then
+    fail "precision localizer did not become ready; see $output/precision_launch.log"
+  fi
+  if ! wait_for_topic /localization/precision_global_odom 60 "$precision_launch_pid"; then
+    fail "precision global output did not become ready; see $output/precision_launch.log"
+  fi
+  if ! wait_for_topic /localization/precision_global_pose 60 "$precision_launch_pid"; then
+    fail "precision global pose did not become ready; see $output/precision_launch.log"
+  fi
 fi
 if [[ "$lsim_interface_test" == true ]] &&
   ! wait_for_topic /localization/kinematic_state 60
@@ -450,10 +563,46 @@ set -e
 play_pid=""
 
 # Give the recorder a final scheduling cycle before sending SIGINT so that it
-# can write the last messages and finalize metadata.yaml.
-sleep 1
+# can write the last messages and finalize metadata.yaml. Precision mode waits
+# for at least one complete 1 Hz diagnostics period so bag/diagnostic counters
+# can be checked exactly.
+if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+  sleep 2
+else
+  sleep 1
+fi
+precision_runtime_healthy=true
+precision_runtime_detail=""
+if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+  if ! process_alive "$precision_launch_pid"; then
+    precision_runtime_healthy=false
+    precision_runtime_detail+=" precision_overlay_exited"
+  fi
+  precision_nodes="$(ros2 node list --no-daemon --spin-time 2 2>/dev/null || true)"
+  precision_topics="$(ros2 topic list --no-daemon --spin-time 2 2>/dev/null || true)"
+  for required_node in /submap_matcher /precision_global_localizer; do
+    if ! grep -Fx "$required_node" <<< "$precision_nodes" >/dev/null; then
+      precision_runtime_healthy=false
+      precision_runtime_detail+=" missing_node=$required_node"
+    fi
+  done
+  for required_topic in \
+    /localization/submap_scan \
+    /localization/submap_correction \
+    /localization/precision_local_odom \
+    /localization/precision_global_odom \
+    /localization/precision_global_pose
+  do
+    if ! grep -Fx "$required_topic" <<< "$precision_topics" >/dev/null; then
+      precision_runtime_healthy=false
+      precision_runtime_detail+=" missing_topic=$required_topic"
+    fi
+  done
+fi
 stop_process_group "$record_pid" "bag recorder"
 record_pid=""
+stop_process_group "$precision_launch_pid" "precision overlay launch"
+precision_launch_pid=""
 stop_process_group "$launch_pid" "localization launch"
 launch_pid=""
 stop_process_group "$tf_gnss_pid" "GNSS static TF"
@@ -465,5 +614,17 @@ tf_lidar_pid=""
 
 if ((play_status != 0)); then
   fail "bag playback exited with status $play_status; see $output/play.log"
+fi
+if [[ "$precision_runtime_healthy" != true ]]; then
+  fail "precision runtime health check failed:$precision_runtime_detail"
+fi
+if [[ "$tracking_mode" == "scan_to_submap" && "$record_output" == true ]]; then
+  if ! ros2 run pure_precision_bringup validate_precision_bag.py \
+    "$record_directory" --expected-rate "$rate" \
+    > "$output/precision_validation.log" 2>&1
+  then
+    fail "precision output validation failed; see $output/precision_validation.log"
+  fi
+  log "precision output validation passed"
 fi
 log "localization run completed: $output"

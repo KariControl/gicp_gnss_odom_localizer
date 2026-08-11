@@ -96,16 +96,19 @@ case "$TF_POLICY" in
 esac
 
 BRINGUP_SHARE="${GICP_GNSS_ODOM_INSTALL}/share/pure_odometry_bringup"
+PRECISION_BRINGUP_SHARE="${GICP_GNSS_ODOM_INSTALL}/share/pure_precision_bringup"
 RVIZ_CONFIG="$BRINGUP_SHARE/config/autoware_lsim/hesai_rosbag23.rviz"
 EMPTY_PARAM="$BRINGUP_SHARE/config/autoware_lsim/empty_params.yaml"
-SUBMAP_OVERRIDE_PARAM="$BRINGUP_SHARE/config/autoware_lsim/scan_to_submap_override.yaml"
+SUBMAP_SNAPSHOT_OVERRIDE_PARAM="$PRECISION_BRINGUP_SHARE/config/submap_snapshot_override.yaml"
+PRECISION_MATCHER_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_lidar_submap_matcher/param/param.yaml"
+PRECISION_GLOBAL_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_precision_global_localizer/param/param.yaml"
 NMEA_GNSS_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_nmea_gnss_conversion/param/param.yaml"
 GNSS_FUSION_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_gnss_map_odom_fusion/param/param.yaml"
 ODOM_OVERRIDE_PARAM="$EMPTY_PARAM"
 
 case "$TRACKING_MODE" in
   scan_to_scan) ;;
-  scan_to_submap) ODOM_OVERRIDE_PARAM="$SUBMAP_OVERRIDE_PARAM" ;;
+  scan_to_submap) ODOM_OVERRIDE_PARAM="$SUBMAP_SNAPSHOT_OVERRIDE_PARAM" ;;
   *) fail "TRACKING_MODE must be scan_to_scan or scan_to_submap: $TRACKING_MODE" ;;
 esac
 
@@ -143,6 +146,11 @@ for parameter_file in \
 do
   [[ -f "$parameter_file" ]] || fail "parameter file does not exist: $parameter_file"
 done
+if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
+  for parameter_file in "$PRECISION_MATCHER_PARAM" "$PRECISION_GLOBAL_PARAM"; do
+    [[ -f "$parameter_file" ]] || fail "parameter file does not exist: $parameter_file"
+  done
+fi
 [[ -f "$RVIZ_CONFIG" ]] || fail "RViz config does not exist: $RVIZ_CONFIG"
 
 if [[ "$USE_GNSS" == true && -z "$NMEA_SOURCE_TOPIC" ]]; then
@@ -165,6 +173,7 @@ fi
 mkdir -p "$run_directory"
 
 launch_pid=""
+precision_launch_pid=""
 bag_pid=""
 record_pid=""
 
@@ -194,6 +203,7 @@ cleanup() {
   trap - EXIT INT TERM
   stop_process "$bag_pid" INT
   stop_process "$record_pid" INT
+  stop_process "$precision_launch_pid" INT
   stop_process "$launch_pid" INT
   if [[ "${HOST_UID:-}" =~ ^[0-9]+$ && "${HOST_GID:-}" =~ ^[0-9]+$ ]]; then
     chown -R "${HOST_UID}:${HOST_GID}" "$run_directory" 2>/dev/null ||
@@ -227,6 +237,8 @@ write_manifest() {
     printf 'IMU_PARAM=%q\n' "$IMU_PARAM"
     printf 'ODOM_PARAM=%q\n' "$ODOM_PARAM"
     printf 'ODOM_OVERRIDE_PARAM=%q\n' "$ODOM_OVERRIDE_PARAM"
+    printf 'PRECISION_MATCHER_PARAM=%q\n' "$PRECISION_MATCHER_PARAM"
+    printf 'PRECISION_GLOBAL_PARAM=%q\n' "$PRECISION_GLOBAL_PARAM"
     printf 'NMEA_GNSS_PARAM=%q\n' "$NMEA_GNSS_PARAM"
     printf 'NMEA_GNSS_OVERRIDE_PARAM=%q\n' "$NMEA_GNSS_OVERRIDE_PARAM"
     printf 'GNSS_FUSION_PARAM=%q\n' "$GNSS_FUSION_PARAM"
@@ -274,9 +286,10 @@ wait_for_node() {
 
 wait_for_topic() {
   local topic="$1"
+  local owner_pid="${2:-$launch_pid}"
   local deadline=$((SECONDS + STARTUP_WAIT_SEC))
   while ((SECONDS < deadline)); do
-    if [[ -n "$launch_pid" ]] && ! kill -0 "$launch_pid" 2>/dev/null; then
+    if [[ -n "$owner_pid" ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
       return 2
     fi
     if ros2 topic list 2>/dev/null | grep -Fxq "$topic"; then
@@ -310,6 +323,9 @@ check_required_nodes() {
   if [[ "$USE_GNSS" == true ]]; then
     required+=(/nmea_gga_conversion)
   fi
+  if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
+    required+=(/submap_matcher /precision_global_localizer)
+  fi
   if [[ "$DATASET_PROFILE" == hesai_rosbag23 ]]; then
     required+=(
       /hesai_lidar_static_transform
@@ -328,6 +344,25 @@ check_required_nodes() {
       missing+=("$node")
     fi
   done
+  if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
+    local topic_snapshot
+    if ! topic_snapshot="$(ros2 topic list --no-daemon --spin-time 2 2>/dev/null)"; then
+      missing+=("precision ROS topic graph query failed")
+    else
+      local required_topic
+      for required_topic in \
+        /localization/submap_scan \
+        /localization/submap_correction \
+        /localization/precision_local_odom \
+        /localization/precision_global_odom \
+        /localization/precision_global_pose
+      do
+        if ! grep -Fxq "$required_topic" <<< "$topic_snapshot"; then
+          missing+=("$required_topic")
+        fi
+      done
+    fi
+  fi
   if ((${#missing[@]} > 0)); then
     missing_required_nodes="${missing[*]}"
     return 1
@@ -405,8 +440,42 @@ stdbuf -oL -eL "${launch_command[@]}" \
   2>&1 &
 launch_pid=$!
 
+if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
+  precision_launch_command=(
+    ros2 launch pure_precision_bringup precision_overlay.launch.py
+    use_sim_time:=true
+    matcher_param:="$PRECISION_MATCHER_PARAM"
+    global_param:="$PRECISION_GLOBAL_PARAM"
+    log_level:="$LOG_LEVEL"
+  )
+  printf '[autoware-lsim] precision overlay:'
+  printf ' %q' "${precision_launch_command[@]}"
+  printf '\n'
+  stdbuf -oL -eL "${precision_launch_command[@]}" \
+    > >(tee "$run_directory/precision_launch.log") \
+    2>&1 &
+  precision_launch_pid=$!
+fi
+
 if ! wait_for_topic /localization/kinematic_state; then
   fail "Autoware/localizer launch did not create /localization/kinematic_state; see $run_directory/launch.log"
+fi
+if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
+  if ! wait_for_topic /localization/submap_scan "$launch_pid"; then
+    fail "exact-key snapshot publisher did not start; see $run_directory/launch.log"
+  fi
+  if ! wait_for_topic /localization/submap_correction "$precision_launch_pid"; then
+    fail "submap matcher did not start; see $run_directory/precision_launch.log"
+  fi
+  if ! wait_for_topic /localization/precision_local_odom "$precision_launch_pid"; then
+    fail "precision local output did not start; see $run_directory/precision_launch.log"
+  fi
+  if ! wait_for_topic /localization/precision_global_odom "$precision_launch_pid"; then
+    fail "precision global output did not start; see $run_directory/precision_launch.log"
+  fi
+  if ! wait_for_topic /localization/precision_global_pose "$precision_launch_pid"; then
+    fail "precision global pose did not start; see $run_directory/precision_launch.log"
+  fi
 fi
 if ! wait_for_required_nodes; then
   fail "required Autoware/localizer node(s) did not start: $missing_required_nodes"
@@ -441,6 +510,15 @@ if [[ "$RECORD_OUTPUT" == true ]]; then
     /reference/localization/kinematic_state
     /reference/localization/pose_estimator/pose_with_covariance
   )
+  if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
+    record_topics+=(
+      /localization/submap_scan
+      /localization/submap_correction
+      /localization/precision_local_odom
+      /localization/precision_global_odom
+      /localization/precision_global_pose
+    )
+  fi
   log "recording evaluation outputs to $record_directory"
   ros2 bag record --storage mcap --output "$record_directory" \
     --node-name autoware_lsim_output_recorder --topics "${record_topics[@]}" \
@@ -518,10 +596,16 @@ bag_pid=""
 # analyzer below still enforces that the last state reaches the final /clock.
 sleep "$DRAIN_WAIT_SEC"
 launch_was_alive="false"
+precision_launch_was_alive="true"
 record_was_alive="true"
 required_nodes_were_alive="true"
 if [[ -n "$launch_pid" ]] && kill -0 "$launch_pid" 2>/dev/null; then
   launch_was_alive="true"
+fi
+if [[ "$TRACKING_MODE" == scan_to_submap ]] &&
+  { [[ -z "$precision_launch_pid" ]] || ! kill -0 "$precision_launch_pid" 2>/dev/null; }
+then
+  precision_launch_was_alive="false"
 fi
 if [[ "$RECORD_OUTPUT" == true ]] &&
   { [[ -z "$record_pid" ]] || ! kill -0 "$record_pid" 2>/dev/null; }
@@ -539,6 +623,8 @@ if [[ "$RVIZ" == true && "$required_nodes_were_alive" == true ]]; then
 fi
 stop_process "$record_pid" INT
 record_pid=""
+stop_process "$precision_launch_pid" INT
+precision_launch_pid=""
 stop_process "$launch_pid" INT
 launch_pid=""
 
@@ -547,6 +633,9 @@ if ((bag_status != 0)); then
 fi
 if [[ "$launch_was_alive" != true ]]; then
   fail "Autoware/localizer launch exited before replay completed; see $run_directory/launch.log"
+fi
+if [[ "$precision_launch_was_alive" != true ]]; then
+  fail "precision overlay exited before replay completed; see $run_directory/precision_launch.log"
 fi
 if [[ "$record_was_alive" != true ]]; then
   fail "output recorder exited before replay completed; see $run_directory/record.log"
@@ -560,10 +649,19 @@ if [[ "$RECORD_OUTPUT" == true ]]; then
   log "validating recorded Autoware localization output."
   if ! "${GICP_GNSS_ODOM_INSTALL}/bin/analyze_autoware_lsim_output.py" \
     "$record_directory" --profile "$validation_profile" \
-    --tracking-mode "$TRACKING_MODE" \
+    --tracking-mode scan_to_scan \
     2>&1 | tee "$run_directory/validation.log"
   then
     fail "recorded output failed acceptance checks; see $run_directory/validation.log"
+  fi
+  if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
+    if ! ros2 run pure_precision_bringup validate_precision_bag.py \
+      "$record_directory" --expected-rate "$PLAYBACK_RATE" \
+      > "$run_directory/precision_validation.log" 2>&1
+    then
+      fail "precision output failed acceptance checks; see $run_directory/precision_validation.log"
+    fi
+    log "precision output validation passed."
   fi
 fi
 log "evaluation complete: $run_directory"

@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>pure_precision_global_localizer</name>
+  <version>0.1.0</version>
+  <description>Isolated precision-local composition and single-antenna GNSS global anchoring.</description>
+  <maintainer email="maintainers@users.noreply.github.com">gicp_gnss_odom_localizer maintainers</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>eigen3_cmake_module</buildtool_depend>
+  <build_depend>eigen</build_depend>
+  <build_export_depend>eigen</build_export_depend>
+  <buildtool_export_depend>eigen3_cmake_module</buildtool_export_depend>
+
+  <depend>diagnostic_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>pure_gnss_msgs</depend>
+  <depend>pure_lidar_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>tf2</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

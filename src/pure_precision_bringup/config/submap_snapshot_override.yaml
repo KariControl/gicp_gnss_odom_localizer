@@ -1,0 +1,9 @@
+/**:
+  ros__parameters:
+    # The production odometer remains scan-to-scan.  This publisher is the only
+    # precision-mode addition inside the existing node and is disabled by
+    # default in every normal odometer parameter file.
+    lidar_odom.tracking_mode: scan_to_scan
+    lidar_odom.external_submap_snapshot.enable: true
+    lidar_odom.external_submap_snapshot.topic: /localization/submap_scan
+    lidar_odom.external_submap_snapshot.publish_interval_frames: 5

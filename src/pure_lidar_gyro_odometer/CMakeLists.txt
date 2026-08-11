@@ -13,6 +13,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
+find_package(pure_lidar_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
@@ -41,6 +42,7 @@ ament_target_dependencies(${PROJECT_NAME}
   nav_msgs
   std_msgs
   diagnostic_msgs
+  pure_lidar_msgs
   tf2
   tf2_ros
   tf2_geometry_msgs
@@ -101,10 +103,20 @@ if(BUILD_TESTING)
   target_include_directories(test_observability_policy PRIVATE include)
   target_compile_features(test_observability_policy PRIVATE cxx_std_17)
   add_test(NAME test_observability_policy COMMAND test_observability_policy)
+
+  add_executable(
+    test_accepted_scan_snapshot_policy
+    test/test_accepted_scan_snapshot_policy.cpp)
+  target_include_directories(test_accepted_scan_snapshot_policy PRIVATE include)
+  target_compile_features(test_accepted_scan_snapshot_policy PRIVATE cxx_std_17)
+  add_test(
+    NAME test_accepted_scan_snapshot_policy
+    COMMAND test_accepted_scan_snapshot_policy)
 endif()
 
 ament_export_dependencies(
   rclcpp rclcpp_components sensor_msgs geometry_msgs nav_msgs std_msgs diagnostic_msgs
+  pure_lidar_msgs
   tf2 tf2_ros tf2_geometry_msgs pcl_conversions small_gicp
   eigen3_cmake_module Eigen3
 )
