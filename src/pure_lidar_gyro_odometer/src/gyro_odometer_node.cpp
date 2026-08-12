@@ -1,4 +1,6 @@
 #include "pure_lidar_gyro_odometer/gyro_odometer_node.hpp"
+#include "pure_lidar_gyro_odometer/accepted_scan_odometry.hpp"
+#include "pure_lidar_gyro_odometer/imu_linear_acceleration.hpp"
 #include "pure_lidar_gyro_odometer/accepted_scan_snapshot_policy.hpp"
 #include "pure_lidar_gyro_odometer/observability_policy.hpp"
 
@@ -14,7 +16,6 @@
 #include <utility>
 #include <vector>
 
-#include <pcl/common/transforms.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl_conversions/pcl_conversions.h>
 
@@ -196,25 +197,6 @@ void integrateSe2Delta(double & x, double & y, double & yaw, const Eigen::Vector
   yaw = wrapYaw(yaw + delta_local.z());
 }
 
-Eigen::Matrix4f poseToMatrix(const se2::Pose & pose)
-{
-  Eigen::Matrix4f transform = Eigen::Matrix4f::Identity();
-  transform.block<3, 3>(0, 0) =
-    Eigen::AngleAxisf(static_cast<float>(pose.yaw), Eigen::Vector3f::UnitZ()).toRotationMatrix();
-  transform(0, 3) = static_cast<float>(pose.x);
-  transform(1, 3) = static_cast<float>(pose.y);
-  return transform;
-}
-
-se2::Pose planarPoseFromMatrix(const Eigen::Matrix4f & transform)
-{
-  const Eigen::Matrix3d rotation = transform.block<3, 3>(0, 0).cast<double>();
-  return se2::Pose{
-    static_cast<double>(transform(0, 3)),
-    static_cast<double>(transform(1, 3)),
-    wrapYaw(std::atan2(rotation(1, 0), rotation(0, 0)))};
-}
-
 DirectionalInformationAnalysis analyzeDirectionalInformation(
   const Matrix3d & information_se2,
   double yaw_metric_m,
@@ -345,6 +327,8 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
   imu_corrected_apply_tf_ = declare_parameter<bool>("imu_corrected.apply_tf", true);
   imu_corrected_transform_orientation_ =
     declare_parameter<bool>("imu_corrected.transform_orientation", false);
+  imu_linear_acceleration_scale_ = declare_parameter<double>(
+    "imu_corrected.linear_acceleration_scale", imu_linear_acceleration_scale_);
   imu_max_abs_yaw_rate_radps_ = declare_parameter<double>(
     "imu_corrected.max_abs_yaw_rate_radps", imu_max_abs_yaw_rate_radps_);
   imu_max_sample_gap_sec_ = declare_parameter<double>(
@@ -438,8 +422,8 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
   odom_cov_deadreckon_yaw_per_sec_ = declare_parameter<double>(
     "odom_covariance.deadreckon_yaw_per_sec", odom_cov_deadreckon_yaw_per_sec_);
 
-  // LiDAR odometry. The registration target is selected by
-  // lidar_odom.tracking_mode; small_gicp remains the backend for both paths.
+  // LiDAR odometry. Internal registration is scan-to-scan only; isolated
+  // precision submap matching consumes the accepted-scan snapshot output.
   lidar_odom_enable_ = declare_parameter<bool>("lidar_odom.enable", true);
   lidar_backend_ = declare_parameter<std::string>("lidar_odom.backend", lidar_backend_);
   lidar_registration_type_ = declare_parameter<std::string>("lidar_odom.registration_type", lidar_registration_type_);
@@ -461,18 +445,8 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
   lidar_guess_use_imu_yaw_only_ = declare_parameter<bool>("lidar_odom.pose_se2.guess_use_imu_yaw_only", true);
   lidar_tracking_mode_name_ = declare_parameter<std::string>(
     "lidar_odom.tracking_mode", lidar_tracking_mode_name_);
-  lidar_tracking_mode_ = tracking::parseMode(lidar_tracking_mode_name_);
-  lidar_tracking_mode_name_ = tracking::toString(lidar_tracking_mode_);
-  lidar_scan_to_submap_fallback_enable_ = declare_parameter<bool>(
-    "lidar_odom.scan_to_submap.fallback_to_scan_to_scan", true);
-  lidar_scan_to_submap_match_interval_frames_ = declare_parameter<int>(
-    "lidar_odom.scan_to_submap.match_interval_frames", 1);
-  lidar_scan_to_submap_max_consecutive_failures_ = declare_parameter<int>(
-    "lidar_odom.scan_to_submap.max_consecutive_failures", 5);
-  lidar_scan_to_submap_max_scan_disagreement_translation_m_ = declare_parameter<double>(
-    "lidar_odom.scan_to_submap.max_scan_to_scan_disagreement_translation_m", 1.0);
-  lidar_scan_to_submap_max_scan_disagreement_yaw_rad_ = declare_parameter<double>(
-    "lidar_odom.scan_to_submap.max_scan_to_scan_disagreement_yaw_rad", 0.35);
+  lidar_tracking_mode_name_ = tracking::toString(
+    tracking::parseMode(lidar_tracking_mode_name_));
 
   lidar_smoother_enable_ = declare_parameter<bool>("lidar_odom.smoother.enable", true);
   lidar_smoother_window_size_ = declare_parameter<int>("lidar_odom.smoother.window_size", 20);
@@ -490,10 +464,6 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
   lidar_smoother_nhc_w_lateral_ = declare_parameter<double>("lidar_odom.smoother.nhc.w_lateral", 2.0);
   lidar_smoother_nhc_huber_delta_m_ = declare_parameter<double>("lidar_odom.smoother.nhc.huber_delta_m", 0.10);
 
-  lidar_smoother_local_huber_delta_xy_m_ = declare_parameter<double>(
-    "lidar_odom.smoother.local_pose.huber_delta_xy_m", 0.35);
-  lidar_smoother_local_huber_delta_yaw_rad_ = declare_parameter<double>(
-    "lidar_odom.smoother.local_pose.huber_delta_yaw_rad", 0.12);
   lidar_smoother_max_position_correction_m_ = declare_parameter<double>(
     "lidar_odom.smoother.max_solution_position_correction_m",
     lidar_smoother_max_position_correction_m_);
@@ -524,56 +494,10 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
   smoother_config.nhc_enable = lidar_smoother_nhc_enable_;
   smoother_config.nhc_weight_lateral = lidar_smoother_nhc_w_lateral_;
   smoother_config.nhc_huber_delta_m = lidar_smoother_nhc_huber_delta_m_;
-  smoother_config.local_huber_delta_xy_m = lidar_smoother_local_huber_delta_xy_m_;
-  smoother_config.local_huber_delta_yaw_rad = lidar_smoother_local_huber_delta_yaw_rad_;
   smoother_config.max_solution_position_correction_m =
     lidar_smoother_max_position_correction_m_;
   smoother_config.max_solution_yaw_correction_rad = lidar_smoother_max_yaw_correction_rad_;
   lidar_smoother_.setConfig(smoother_config);
-
-  lidar_local_map_enable_ = declare_parameter<bool>("lidar_odom.local_map.enable", false);
-  lidar_local_map_match_interval_frames_ = declare_parameter<int>(
-    "lidar_odom.local_map.match_interval_frames", 5);
-  lidar_local_map_min_keyframes_ = declare_parameter<int>(
-    "lidar_odom.local_map.min_keyframes", 3);
-  lidar_local_map_max_keyframes_ = declare_parameter<int>(
-    "lidar_odom.local_map.max_keyframes", 15);
-  lidar_local_map_min_points_ = declare_parameter<int>(
-    "lidar_odom.local_map.min_points", 200);
-  lidar_local_map_keyframe_min_interval_frames_ = declare_parameter<int>(
-    "lidar_odom.local_map.keyframe.min_interval_frames", 3);
-  lidar_local_map_keyframe_max_interval_frames_ = declare_parameter<int>(
-    "lidar_odom.local_map.keyframe.max_interval_frames", 20);
-  lidar_local_map_keyframe_min_translation_m_ = declare_parameter<double>(
-    "lidar_odom.local_map.keyframe.min_translation_m", 0.75);
-  lidar_local_map_keyframe_min_yaw_rad_ = declare_parameter<double>(
-    "lidar_odom.local_map.keyframe.min_yaw_rad", 0.15);
-  lidar_local_map_voxel_leaf_m_ = declare_parameter<double>(
-    "lidar_odom.local_map.voxel_leaf_m", 0.35);
-  lidar_local_map_max_points_ = declare_parameter<int>(
-    "lidar_odom.local_map.max_points", 200000);
-  lidar_local_map_max_corr_dist_m_ = declare_parameter<double>(
-    "lidar_odom.local_map.max_corr_dist_m", 1.0);
-  lidar_local_map_max_iterations_ = declare_parameter<int>(
-    "lidar_odom.local_map.max_iterations", 30);
-  lidar_local_map_max_fitness_ = declare_parameter<double>(
-    "lidar_odom.local_map.max_fitness", 1.0);
-  lidar_local_map_min_inlier_ratio_ = declare_parameter<double>(
-    "lidar_odom.local_map.min_inlier_ratio", 0.25);
-  lidar_local_map_max_correction_translation_m_ = declare_parameter<double>(
-    "lidar_odom.local_map.max_correction_translation_m", 0.50);
-  lidar_local_map_max_correction_yaw_rad_ = declare_parameter<double>(
-    "lidar_odom.local_map.max_correction_yaw_rad", 0.12);
-  lidar_local_map_max_correction_z_m_ = declare_parameter<double>(
-    "lidar_odom.local_map.max_correction_z_m", 0.25);
-  lidar_local_map_max_correction_roll_pitch_rad_ = declare_parameter<double>(
-    "lidar_odom.local_map.max_correction_roll_pitch_rad", 0.15);
-  lidar_local_map_factor_weight_xy_ = declare_parameter<double>(
-    "lidar_odom.local_map.factor_weight_xy", 6.0);
-  lidar_local_map_factor_weight_yaw_ = declare_parameter<double>(
-    "lidar_odom.local_map.factor_weight_yaw", 10.0);
-  lidar_local_map_fitness_sigma_ = declare_parameter<double>(
-    "lidar_odom.local_map.fitness_sigma", 0.50);
 
   external_submap_snapshot_enable_ = declare_parameter<bool>(
     "lidar_odom.external_submap_snapshot.enable", false);
@@ -583,6 +507,10 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
   external_submap_snapshot_publish_interval_frames_ = declare_parameter<int>(
     "lidar_odom.external_submap_snapshot.publish_interval_frames",
     external_submap_snapshot_publish_interval_frames_);
+  accepted_scan_odom_enable_ = declare_parameter<bool>(
+    "lidar_odom.accepted_scan_odom.enable", false);
+  accepted_scan_odom_topic_ = declare_parameter<std::string>(
+    "lidar_odom.accepted_scan_odom.topic", accepted_scan_odom_topic_);
   if (external_submap_snapshot_enable_) {
     external_submap_odom_session_id_ = static_cast<std::uint64_t>(
       std::chrono::steady_clock::now().time_since_epoch().count());
@@ -592,21 +520,9 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
     external_submap_odom_generation_ = 1;
   }
 
-  if (lidar_local_map_enable_ &&
-    lidar_tracking_mode_ == tracking::Mode::ScanToScan && !lidar_smoother_enable_)
-  {
-    RCLCPP_WARN(
-      get_logger(),
-      "lidar_odom.local_map.enable=true in scan_to_scan mode requires "
-      "lidar_odom.smoother.enable=true. Disabling the periodic submap factor.");
-    lidar_local_map_enable_ = false;
-  }
-
   validateParameters();
   RCLCPP_INFO(
-    get_logger(), "LiDAR tracking mode: %s (scan-to-scan fallback: %s)",
-    lidar_tracking_mode_name_.c_str(),
-    lidar_scan_to_submap_fallback_enable_ ? "enabled" : "disabled");
+    get_logger(), "LiDAR tracking mode: %s", lidar_tracking_mode_name_.c_str());
 
   if (wheel_observability_assist_enable_) {
     const bool backend_has_hessian =
@@ -636,6 +552,10 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
 
   // Publishers
   pub_odom_raw_ = create_publisher<nav_msgs::msg::Odometry>(out_odom_topic_, 10);
+  if (accepted_scan_odom_enable_) {
+    pub_accepted_scan_odom_ =
+      create_publisher<nav_msgs::msg::Odometry>(accepted_scan_odom_topic_, 10);
+  }
   if (external_submap_snapshot_enable_) {
     pub_external_submap_snapshot_ =
       create_publisher<pure_lidar_msgs::msg::SubmapScan>(
@@ -664,9 +584,20 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
       out_deskew_twist_topic_, rclcpp::SensorDataQoS());
 
   // Subscribers
-  sensor_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
-  rclcpp::SubscriptionOptions sensor_subscription_options;
-  sensor_subscription_options.callback_group = sensor_callback_group_;
+  // A GICP callback can take longer than one IMU period. Keep IMU delivery
+  // independent from registration, while preventing the multithreaded
+  // component executor from starting a second registration concurrently.
+  imu_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  lidar_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  auxiliary_sensor_callback_group_ =
+    create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+
+  rclcpp::SubscriptionOptions imu_subscription_options;
+  imu_subscription_options.callback_group = imu_callback_group_;
+  rclcpp::SubscriptionOptions lidar_subscription_options;
+  lidar_subscription_options.callback_group = lidar_callback_group_;
+  rclcpp::SubscriptionOptions auxiliary_subscription_options;
+  auxiliary_subscription_options.callback_group = auxiliary_sensor_callback_group_;
   rclcpp::SensorDataQoS imu_input_qos;
   // At 200 Hz, the default SensorDataQoS depth of five represents only 25 ms.
   // Keep enough IMU history queued while a GICP callback is using the CPU.
@@ -674,7 +605,7 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
   sub_imu_ = create_subscription<sensor_msgs::msg::Imu>(
     imu_topic_, imu_input_qos,
     std::bind(&GyroOdometerNode::onImu, this, std::placeholders::_1),
-    sensor_subscription_options);
+    imu_subscription_options);
 
   if (use_wheel_speed_) {
     if (wheel_speed_topic_.empty()) {
@@ -685,7 +616,7 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
       sub_wheel_twist_ = create_subscription<geometry_msgs::msg::TwistStamped>(
         wheel_speed_topic_, rclcpp::SensorDataQoS(),
         std::bind(&GyroOdometerNode::onWheelTwist, this, std::placeholders::_1),
-        sensor_subscription_options);
+        auxiliary_subscription_options);
     }
   }
 
@@ -697,7 +628,7 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
       sub_ref_pose_ = create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
         reference_pose_topic_, 10,
         std::bind(&GyroOdometerNode::onReferencePose, this, std::placeholders::_1),
-        sensor_subscription_options);
+        auxiliary_subscription_options);
     }
   }
 
@@ -705,7 +636,7 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
     sub_points_ = create_subscription<sensor_msgs::msg::PointCloud2>(
       points_topic_, rclcpp::SensorDataQoS(),
       std::bind(&GyroOdometerNode::onPoints, this, std::placeholders::_1),
-      sensor_subscription_options);
+      lidar_subscription_options);
     lidar_active_ = true;
   } else {
     lidar_active_ = false;
@@ -798,7 +729,8 @@ void GyroOdometerNode::onImu(const sensor_msgs::msg::Imu::SharedPtr msg)
   const Eigen::Vector3d acceleration_imu(
     msg->linear_acceleration.x, msg->linear_acceleration.y, msg->linear_acceleration.z);
   const Eigen::Vector3d gyro_base = R_base_imu * gyro_imu;
-  const Eigen::Vector3d acceleration_base = R_base_imu * acceleration_imu;
+  const Eigen::Vector3d acceleration_base = imu::transformLinearAcceleration(
+    R_base_imu, acceleration_imu, imu_linear_acceleration_scale_);
   if (!gyro_base.allFinite() || !acceleration_base.allFinite() ||
     std::fabs(gyro_base.z()) > imu_max_abs_yaw_rate_radps_)
   {
@@ -881,26 +813,6 @@ void GyroOdometerNode::onImu(const sensor_msgs::msg::Imu::SharedPtr msg)
 
   if (!imu_corrected_enable_ || !pub_imu_corrected_) return;
 
-  auto rotate_covariance = [&](const std::array<double, 9> & input) {
-      if (input[0] < 0.0) return input;
-      Eigen::Matrix3d covariance;
-      covariance <<
-        input[0], input[1], input[2],
-        input[3], input[4], input[5],
-        input[6], input[7], input[8];
-      if (!covariance.allFinite()) {
-        std::array<double, 9> unknown{};
-        unknown[0] = -1.0;
-        return unknown;
-      }
-      const Eigen::Matrix3d rotated = R_base_imu * covariance * R_base_imu.transpose();
-      std::array<double, 9> output{};
-      output[0] = rotated(0, 0); output[1] = rotated(0, 1); output[2] = rotated(0, 2);
-      output[3] = rotated(1, 0); output[4] = rotated(1, 1); output[5] = rotated(1, 2);
-      output[6] = rotated(2, 0); output[7] = rotated(2, 1); output[8] = rotated(2, 2);
-      return output;
-    };
-
   sensor_msgs::msg::Imu output;
   output.header = msg->header;
   output.header.frame_id = base_frame_;
@@ -910,8 +822,10 @@ void GyroOdometerNode::onImu(const sensor_msgs::msg::Imu::SharedPtr msg)
   output.linear_acceleration.x = acceleration_base.x();
   output.linear_acceleration.y = acceleration_base.y();
   output.linear_acceleration.z = acceleration_base.z();
-  output.angular_velocity_covariance = rotate_covariance(msg->angular_velocity_covariance);
-  output.linear_acceleration_covariance = rotate_covariance(msg->linear_acceleration_covariance);
+  output.angular_velocity_covariance = imu::rotateAndScaleCovariance(
+    msg->angular_velocity_covariance, R_base_imu);
+  output.linear_acceleration_covariance = imu::rotateAndScaleCovariance(
+    msg->linear_acceleration_covariance, R_base_imu, imu_linear_acceleration_scale_);
 
   const Eigen::Quaterniond orientation_input(
     static_cast<double>(msg->orientation.w),
@@ -925,7 +839,8 @@ void GyroOdometerNode::onImu(const sensor_msgs::msg::Imu::SharedPtr msg)
     if (imu_frame != base_frame_) {
       orientation = orientation * q_base_imu.inverse();
       orientation.normalize();
-      output.orientation_covariance = rotate_covariance(msg->orientation_covariance);
+      output.orientation_covariance = imu::rotateAndScaleCovariance(
+        msg->orientation_covariance, R_base_imu);
     } else {
       output.orientation_covariance = msg->orientation_covariance;
     }
@@ -1154,208 +1069,6 @@ bool GyroOdometerNode::updateMiniSmootherLocked(const ScanFactor & factor)
   return true;
 }
 
-void GyroOdometerNode::resetLocalMapLocked(const std::string & reason)
-{
-  local_map_keyframes_.clear();
-  local_map_cloud_.reset();
-  local_map_initialized_ = false;
-  local_map_odom_anchor_pose_ = se2::Pose{};
-  local_map_last_tracking_anchor_pose_ = se2::Pose{};
-  has_local_map_last_tracking_pose_ = false;
-  local_map_frame_sequence_ = 0;
-  local_map_frames_since_keyframe_ = 0;
-  local_map_consecutive_failures_ = 0;
-  last_local_map_observation_ = LocalMapObservation{};
-  local_map_reset_reason_ = reason;
-}
-
-bool GyroOdometerNode::localMapRequired() const
-{
-  return lidar_tracking_mode_ == tracking::Mode::ScanToSubmap || lidar_local_map_enable_;
-}
-
-bool GyroOdometerNode::localMapReadyLocked() const
-{
-  return local_map_initialized_ && has_local_map_last_tracking_pose_ &&
-         static_cast<int>(local_map_keyframes_.size()) >= lidar_local_map_min_keyframes_ &&
-         local_map_cloud_ &&
-         static_cast<int>(local_map_cloud_->size()) >= lidar_local_map_min_points_;
-}
-
-se2::Pose GyroOdometerNode::odomPoseToLocalMapAnchorLocked(
-  const se2::Pose & odom_base_pose) const
-{
-  if (!local_map_initialized_) return se2::Pose{};
-  const Eigen::Matrix4f T_anchor_base =
-    poseToMatrix(local_map_odom_anchor_pose_).inverse() * poseToMatrix(odom_base_pose);
-  return planarPoseFromMatrix(T_anchor_base);
-}
-
-void GyroOdometerNode::alignLocalMapAnchorToPoseLocked(
-  const se2::Pose & odom_base_pose, const se2::Pose & anchor_base_pose)
-{
-  if (!local_map_initialized_) return;
-  const Eigen::Matrix4f T_odom_anchor =
-    poseToMatrix(odom_base_pose) * poseToMatrix(anchor_base_pose).inverse();
-  if (T_odom_anchor.allFinite()) {
-    local_map_odom_anchor_pose_ = planarPoseFromMatrix(T_odom_anchor);
-  }
-}
-
-void GyroOdometerNode::repairLocalMapFromSmootherLocked(
-  std::uint64_t newest_pose_sequence)
-{
-  if (!local_map_initialized_ || !lidar_smoother_initialized_ ||
-    local_map_keyframes_.empty())
-  {
-    return;
-  }
-
-  const std::vector<se2::Pose> optimized_poses = lidar_smoother_.optimizedPoses();
-  if (optimized_poses.empty() ||
-    newest_pose_sequence + 1U < optimized_poses.size())
-  {
-    return;
-  }
-
-  const std::uint64_t oldest_pose_sequence =
-    newest_pose_sequence + 1U - optimized_poses.size();
-  bool changed = false;
-  for (auto & keyframe : local_map_keyframes_) {
-    if (keyframe.pose_sequence < oldest_pose_sequence ||
-      keyframe.pose_sequence > newest_pose_sequence)
-    {
-      continue;
-    }
-
-    const std::size_t index = static_cast<std::size_t>(
-      keyframe.pose_sequence - oldest_pose_sequence);
-    if (index >= optimized_poses.size()) continue;
-
-    const se2::Pose repaired_anchor_pose =
-      odomPoseToLocalMapAnchorLocked(optimized_poses[index]);
-    const double translation = std::hypot(
-      repaired_anchor_pose.x - keyframe.anchor_base_pose.x,
-      repaired_anchor_pose.y - keyframe.anchor_base_pose.y);
-    const double yaw = std::fabs(normalizeYaw(
-      repaired_anchor_pose.yaw - keyframe.anchor_base_pose.yaw));
-    if (translation > 1.0e-5 || yaw > 1.0e-6) {
-      keyframe.anchor_base_pose = repaired_anchor_pose;
-      changed = true;
-    }
-  }
-
-  if (changed) rebuildLocalMapLocked();
-}
-
-void GyroOdometerNode::rebuildLocalMapLocked()
-{
-  if (!local_map_initialized_ || !has_scan_extrinsic_ || local_map_keyframes_.empty()) {
-    local_map_cloud_.reset();
-    return;
-  }
-
-  auto map_cloud = pcl::PointCloud<pcl::PointXYZ>::Ptr(
-    new pcl::PointCloud<pcl::PointXYZ>());
-  map_cloud->reserve(static_cast<std::size_t>(std::max(1, lidar_local_map_max_points_)));
-
-  // Prefer recent keyframes when the point cap is reached. Points are rebuilt in
-  // the submap anchor frame whenever retained fixed-lag poses change, while a
-  // pure odom-frame correction moves the anchor rigidly without distorting it.
-  for (auto iterator = local_map_keyframes_.rbegin();
-    iterator != local_map_keyframes_.rend(); ++iterator)
-  {
-    if (!iterator->cloud || iterator->cloud->empty()) continue;
-    pcl::PointCloud<pcl::PointXYZ> transformed;
-    const Eigen::Matrix4f T_anchor_scan =
-      poseToMatrix(iterator->anchor_base_pose) * T_base_scan_;
-    pcl::transformPointCloud(*iterator->cloud, transformed, T_anchor_scan);
-    for (const auto & point : transformed.points) {
-      if (static_cast<int>(map_cloud->size()) >= lidar_local_map_max_points_) break;
-      if (std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z)) {
-        map_cloud->push_back(point);
-      }
-    }
-    if (static_cast<int>(map_cloud->size()) >= lidar_local_map_max_points_) break;
-  }
-
-  map_cloud->width = static_cast<std::uint32_t>(map_cloud->size());
-  map_cloud->height = 1;
-  map_cloud->is_dense = false;
-
-  if (lidar_local_map_voxel_leaf_m_ > 1.0e-6 && !map_cloud->empty()) {
-    pcl::VoxelGrid<pcl::PointXYZ> voxel_filter;
-    voxel_filter.setLeafSize(
-      static_cast<float>(lidar_local_map_voxel_leaf_m_),
-      static_cast<float>(lidar_local_map_voxel_leaf_m_),
-      static_cast<float>(lidar_local_map_voxel_leaf_m_));
-    voxel_filter.setInputCloud(map_cloud);
-    auto downsampled = pcl::PointCloud<pcl::PointXYZ>::Ptr(
-      new pcl::PointCloud<pcl::PointXYZ>());
-    voxel_filter.filter(*downsampled);
-    map_cloud = downsampled;
-  }
-
-  local_map_cloud_ = map_cloud;
-}
-
-void GyroOdometerNode::reanchorLocalMapLocked()
-{
-  if (!local_map_initialized_ || local_map_keyframes_.empty()) return;
-
-  // Rebase the active submap on the oldest retained keyframe. This keeps float
-  // coordinates bounded while preserving every relative keyframe transform.
-  const Eigen::Matrix4f T_old_anchor_new_anchor =
-    poseToMatrix(local_map_keyframes_.front().anchor_base_pose);
-  if (!T_old_anchor_new_anchor.allFinite()) {
-    resetLocalMapLocked("nonfinite_reanchor_transform");
-    return;
-  }
-  const Eigen::Matrix4f T_new_anchor_old_anchor = T_old_anchor_new_anchor.inverse();
-
-  for (auto & keyframe : local_map_keyframes_) {
-    const Eigen::Matrix4f T_new_anchor_base =
-      T_new_anchor_old_anchor * poseToMatrix(keyframe.anchor_base_pose);
-    keyframe.anchor_base_pose = planarPoseFromMatrix(T_new_anchor_base);
-  }
-  if (has_local_map_last_tracking_pose_) {
-    local_map_last_tracking_anchor_pose_ = planarPoseFromMatrix(
-      T_new_anchor_old_anchor * poseToMatrix(local_map_last_tracking_anchor_pose_));
-  }
-
-  const Eigen::Matrix4f T_odom_new_anchor =
-    poseToMatrix(local_map_odom_anchor_pose_) * T_old_anchor_new_anchor;
-  local_map_odom_anchor_pose_ = planarPoseFromMatrix(T_odom_new_anchor);
-  local_map_reset_reason_ = "rolling_reanchor";
-}
-
-void GyroOdometerNode::initializeLocalMapLocked(
-  const pcl::PointCloud<pcl::PointXYZ>::ConstPtr & cloud,
-  const rclcpp::Time & stamp, const se2::Pose & odom_base_pose,
-  std::uint64_t pose_sequence)
-{
-  if (!localMapRequired() || !cloud ||
-    static_cast<int>(cloud->size()) < lidar_local_map_min_points_)
-  {
-    return;
-  }
-
-  resetLocalMapLocked("initialized");
-  local_map_initialized_ = true;
-  local_map_odom_anchor_pose_ = odom_base_pose;
-  local_map_last_tracking_anchor_pose_ = se2::Pose{};
-  has_local_map_last_tracking_pose_ = true;
-
-  LocalMapKeyframe keyframe;
-  keyframe.stamp = stamp;
-  keyframe.anchor_base_pose = se2::Pose{};
-  keyframe.pose_sequence = pose_sequence;
-  keyframe.cloud = pcl::PointCloud<pcl::PointXYZ>::Ptr(
-    new pcl::PointCloud<pcl::PointXYZ>(*cloud));
-  local_map_keyframes_.push_back(std::move(keyframe));
-  rebuildLocalMapLocked();
-}
-
 void GyroOdometerNode::resetLidarTrackingLocked()
 {
   prev_cloud_.reset();
@@ -1369,7 +1082,6 @@ void GyroOdometerNode::resetLidarTrackingLocked()
   if (has_odom_pose_) {
     lidar_smoother_.reset(se2::Pose{odom_x_, odom_y_, odom_yaw_});
   }
-  resetLocalMapLocked("tracking_reset");
   if (external_submap_snapshot_enable_) {
     ++external_submap_odom_generation_;
     if (external_submap_odom_generation_ == 0) {
@@ -1396,6 +1108,8 @@ void GyroOdometerNode::validateParameters() const
     throw std::invalid_argument("base_frame and odom_frame must be non-empty");
   }
   require_positive(publish_rate_hz_, "publish_rate_hz");
+  require_positive(
+    imu_linear_acceleration_scale_, "imu_corrected.linear_acceleration_scale");
   require_positive(imu_max_abs_yaw_rate_radps_, "imu_corrected.max_abs_yaw_rate_radps");
   require_positive(imu_max_sample_gap_sec_, "imu_corrected.max_sample_gap_sec");
   require_non_negative(imu_max_boundary_gap_sec_, "imu_corrected.max_boundary_gap_sec");
@@ -1425,11 +1139,20 @@ void GyroOdometerNode::validateParameters() const
             "lidar_odom.external_submap_snapshot.topic must be non-empty when enabled");
   }
   if (external_submap_snapshot_enable_ &&
-    (!lidar_odom_enable_ || !lidar_pose_se2_enable_ ||
-    lidar_tracking_mode_ != tracking::Mode::ScanToScan))
+    (!lidar_odom_enable_ || !lidar_pose_se2_enable_))
   {
     throw std::invalid_argument(
             "external_submap_snapshot requires enabled SE2 LiDAR in scan_to_scan mode");
+  }
+  if (accepted_scan_odom_enable_ && accepted_scan_odom_topic_.empty()) {
+    throw std::invalid_argument(
+            "lidar_odom.accepted_scan_odom.topic must be non-empty when enabled");
+  }
+  if (accepted_scan_odom_enable_ &&
+    (!lidar_odom_enable_ || !lidar_pose_se2_enable_))
+  {
+    throw std::invalid_argument(
+            "accepted_scan_odom requires enabled SE2 LiDAR odometry");
   }
   require_positive(
     lidar_smoother_max_position_correction_m_,
@@ -1466,297 +1189,6 @@ void GyroOdometerNode::validateParameters() const
     throw std::invalid_argument(
             "odom_covariance.observability_max_scale must be finite and >= 1");
   }
-  if (lidar_scan_to_submap_match_interval_frames_ < 1 ||
-    lidar_scan_to_submap_max_consecutive_failures_ < 1)
-  {
-    throw std::invalid_argument(
-            "lidar_odom.scan_to_submap intervals and failure limits must be >= 1");
-  }
-  require_non_negative(
-    lidar_scan_to_submap_max_scan_disagreement_translation_m_,
-    "lidar_odom.scan_to_submap.max_scan_to_scan_disagreement_translation_m");
-  require_non_negative(
-    lidar_scan_to_submap_max_scan_disagreement_yaw_rad_,
-    "lidar_odom.scan_to_submap.max_scan_to_scan_disagreement_yaw_rad");
-  if (lidar_tracking_mode_ == tracking::Mode::ScanToSubmap && !lidar_pose_se2_enable_) {
-    throw std::invalid_argument(
-            "lidar_odom.tracking_mode=scan_to_submap requires lidar_odom.pose_se2.enable=true");
-  }
-  if (lidar_tracking_mode_ == tracking::Mode::ScanToSubmap && !lidar_smoother_enable_) {
-    throw std::invalid_argument(
-            "lidar_odom.tracking_mode=scan_to_submap requires lidar_odom.smoother.enable=true");
-  }
-  if (lidar_local_map_match_interval_frames_ < 1 || lidar_local_map_min_keyframes_ < 1 ||
-    lidar_local_map_max_keyframes_ < lidar_local_map_min_keyframes_ ||
-    lidar_local_map_min_points_ < 50 || lidar_local_map_max_points_ < lidar_local_map_min_points_ ||
-    lidar_local_map_keyframe_min_interval_frames_ < 1 ||
-    lidar_local_map_keyframe_max_interval_frames_ < lidar_local_map_keyframe_min_interval_frames_ ||
-    lidar_local_map_max_iterations_ < 1)
-  {
-    throw std::invalid_argument("invalid lidar_odom.local_map frame/keyframe/point limits");
-  }
-  require_non_negative(
-    lidar_local_map_keyframe_min_translation_m_,
-    "lidar_odom.local_map.keyframe.min_translation_m");
-  require_non_negative(
-    lidar_local_map_keyframe_min_yaw_rad_,
-    "lidar_odom.local_map.keyframe.min_yaw_rad");
-  require_positive(lidar_local_map_voxel_leaf_m_, "lidar_odom.local_map.voxel_leaf_m");
-  require_positive(
-    lidar_local_map_max_corr_dist_m_, "lidar_odom.local_map.max_corr_dist_m");
-  require_positive(lidar_local_map_max_fitness_, "lidar_odom.local_map.max_fitness");
-  if (!std::isfinite(lidar_local_map_min_inlier_ratio_) ||
-    lidar_local_map_min_inlier_ratio_ < 0.0 || lidar_local_map_min_inlier_ratio_ > 1.0)
-  {
-    throw std::invalid_argument("lidar_odom.local_map.min_inlier_ratio must be in [0, 1]");
-  }
-  require_non_negative(
-    lidar_local_map_max_correction_translation_m_,
-    "lidar_odom.local_map.max_correction_translation_m");
-  require_non_negative(
-    lidar_local_map_max_correction_yaw_rad_,
-    "lidar_odom.local_map.max_correction_yaw_rad");
-  require_non_negative(
-    lidar_local_map_max_correction_z_m_,
-    "lidar_odom.local_map.max_correction_z_m");
-  require_non_negative(
-    lidar_local_map_max_correction_roll_pitch_rad_,
-    "lidar_odom.local_map.max_correction_roll_pitch_rad");
-  require_positive(
-    lidar_local_map_factor_weight_xy_,
-    "lidar_odom.local_map.factor_weight_xy");
-  require_positive(
-    lidar_local_map_factor_weight_yaw_,
-    "lidar_odom.local_map.factor_weight_yaw");
-  require_positive(
-    lidar_local_map_fitness_sigma_,
-    "lidar_odom.local_map.fitness_sigma");
-}
-
-
-GyroOdometerNode::LocalMapObservation GyroOdometerNode::matchAgainstLocalMap(
-  const pcl::PointCloud<pcl::PointXYZ>::ConstPtr & cloud,
-  const Eigen::Matrix4f & T_base_scan, const Eigen::Matrix4f & T_scan_base,
-  const se2::Pose & predicted_odom_base_pose, int frame_sequence,
-  bool primary_tracking_attempt)
-{
-  LocalMapObservation observation;
-  if (!localMapRequired()) {
-    observation.reason = "disabled";
-    return observation;
-  }
-  if (!primary_tracking_attempt && !lidar_local_map_enable_) {
-    observation.reason = "periodic_factor_disabled";
-    return observation;
-  }
-  if (!cloud || static_cast<int>(cloud->size()) < lidar_local_map_min_points_) {
-    observation.reason = "insufficient_source_points";
-    return observation;
-  }
-
-  pcl::PointCloud<pcl::PointXYZ>::Ptr map_cloud;
-  se2::Pose odom_anchor_pose;
-  se2::Pose previous_anchor_base_pose;
-  {
-    std::lock_guard<std::mutex> lock(mtx_);
-    observation.ready = localMapReadyLocked();
-    if (!observation.ready) {
-      observation.reason = "submap_not_ready";
-      return observation;
-    }
-    map_cloud = local_map_cloud_;
-    odom_anchor_pose = local_map_odom_anchor_pose_;
-    previous_anchor_base_pose = local_map_last_tracking_anchor_pose_;
-  }
-
-  const int interval = primary_tracking_attempt ?
-    std::max(1, lidar_scan_to_submap_match_interval_frames_) :
-    std::max(1, lidar_local_map_match_interval_frames_);
-  if (frame_sequence % interval != 0) {
-    observation.reason = "interval_skip";
-    return observation;
-  }
-
-  if (!map_cloud || static_cast<int>(map_cloud->size()) < lidar_local_map_min_points_) {
-    observation.reason = "insufficient_map_points";
-    return observation;
-  }
-
-  observation.attempted = true;
-  try {
-    const Eigen::Matrix4f T_anchor_base_guess =
-      poseToMatrix(odom_anchor_pose).inverse() * poseToMatrix(predicted_odom_base_pose);
-    const Eigen::Matrix4f T_anchor_scan_guess = T_anchor_base_guess * T_base_scan;
-    if (!T_anchor_scan_guess.allFinite()) {
-      observation.reason = "nonfinite_initial_guess";
-      return observation;
-    }
-
-    pcl::PointCloud<pcl::PointXYZ> aligned;
-    small_gicp::RegistrationPCL<pcl::PointXYZ, pcl::PointXYZ> registration;
-    registration.setNumThreads(lidar_num_threads_);
-    registration.setRegistrationType(lidar_registration_type_);
-    registration.setMaxCorrespondenceDistance(lidar_local_map_max_corr_dist_m_);
-    registration.setMaximumIterations(lidar_local_map_max_iterations_);
-    registration.setTransformationEpsilon(gicp_trans_eps_);
-    registration.setRotationEpsilon(gicp_rot_eps_);
-    registration.setCorrespondenceRandomness(gicp_corr_randomness_);
-    registration.setVoxelResolution(gicp_voxel_resolution_);
-    registration.setInputTarget(map_cloud);
-    registration.setInputSource(cloud);
-    registration.align(aligned, T_anchor_scan_guess);
-
-    const auto & result = registration.getRegistrationResult();
-    const bool converged = registration.hasConverged() && result.converged;
-    const Eigen::Matrix4f T_anchor_curr_scan =
-      result.T_target_source.matrix().cast<float>();
-    observation.fitness = registration.getFitnessScore(lidar_local_map_max_corr_dist_m_);
-    observation.inlier_ratio = cloud->empty() ? 0.0 : clamp01(
-      static_cast<double>(result.num_inliers) / static_cast<double>(cloud->size()));
-    observation.hessian_scan = result.H;
-    observation.has_hessian = result.H.allFinite();
-
-    if (!converged || !T_anchor_curr_scan.allFinite()) {
-      observation.reason = "not_converged";
-      return observation;
-    }
-    if (!std::isfinite(observation.fitness) ||
-      observation.fitness > lidar_local_map_max_fitness_)
-    {
-      observation.reason = "fitness_gate";
-      return observation;
-    }
-    if (!std::isfinite(observation.inlier_ratio) ||
-      observation.inlier_ratio < lidar_local_map_min_inlier_ratio_)
-    {
-      observation.reason = "inlier_ratio_gate";
-      return observation;
-    }
-
-    const Eigen::Matrix4f T_anchor_curr_base = T_anchor_curr_scan * T_scan_base;
-    const Eigen::Matrix4f correction = T_anchor_base_guess.inverse() * T_anchor_curr_base;
-    if (!T_anchor_curr_base.allFinite() || !correction.allFinite()) {
-      observation.reason = "nonfinite_result";
-      return observation;
-    }
-
-    observation.correction_translation_m = std::hypot(
-      static_cast<double>(correction(0, 3)), static_cast<double>(correction(1, 3)));
-    observation.correction_z_m = std::fabs(static_cast<double>(correction(2, 3)));
-
-    tf2::Matrix3x3 correction_rotation(
-      correction(0, 0), correction(0, 1), correction(0, 2),
-      correction(1, 0), correction(1, 1), correction(1, 2),
-      correction(2, 0), correction(2, 1), correction(2, 2));
-    double correction_roll = 0.0;
-    double correction_pitch = 0.0;
-    double correction_yaw = 0.0;
-    correction_rotation.getRPY(correction_roll, correction_pitch, correction_yaw);
-    observation.correction_roll_rad = std::fabs(correction_roll);
-    observation.correction_pitch_rad = std::fabs(correction_pitch);
-    observation.correction_yaw_rad = std::fabs(normalizeYaw(correction_yaw));
-
-    if (observation.correction_translation_m >
-      lidar_local_map_max_correction_translation_m_)
-    {
-      observation.reason = "translation_correction_gate";
-      return observation;
-    }
-    if (observation.correction_yaw_rad > lidar_local_map_max_correction_yaw_rad_) {
-      observation.reason = "yaw_correction_gate";
-      return observation;
-    }
-    if (observation.correction_z_m > lidar_local_map_max_correction_z_m_ ||
-      observation.correction_roll_rad > lidar_local_map_max_correction_roll_pitch_rad_ ||
-      observation.correction_pitch_rad > lidar_local_map_max_correction_roll_pitch_rad_)
-    {
-      observation.reason = "non_planar_correction_gate";
-      return observation;
-    }
-
-    observation.anchor_base_pose = planarPoseFromMatrix(T_anchor_curr_base);
-    observation.odom_base_pose = planarPoseFromMatrix(
-      poseToMatrix(odom_anchor_pose) * T_anchor_curr_base);
-
-    const Eigen::Matrix4f T_prev_curr_base =
-      poseToMatrix(previous_anchor_base_pose).inverse() * T_anchor_curr_base;
-    observation.T_prev_curr_scan = T_scan_base * T_prev_curr_base * T_base_scan;
-    if (!observation.T_prev_curr_scan.allFinite()) {
-      observation.reason = "nonfinite_relative_transform";
-      return observation;
-    }
-
-    const double sigma = std::max(1.0e-6, lidar_local_map_fitness_sigma_);
-    const double quality = clamp01(
-      std::exp(-std::max(0.0, observation.fitness) / sigma) *
-      std::sqrt(clamp01(observation.inlier_ratio)));
-    observation.factor_weight_xy = lidar_local_map_factor_weight_xy_ * quality;
-    observation.factor_weight_yaw = lidar_local_map_factor_weight_yaw_ * quality;
-    if (!(observation.factor_weight_xy > 0.0) ||
-      !(observation.factor_weight_yaw > 0.0))
-    {
-      observation.reason = "zero_factor_weight";
-      return observation;
-    }
-
-    observation.accepted = true;
-    observation.reason = "accepted";
-    return observation;
-  } catch (const std::exception & exception) {
-    observation.reason = std::string("registration_exception:") + exception.what();
-    return observation;
-  }
-}
-
-void GyroOdometerNode::maybeAddLocalMapKeyframeLocked(
-  const pcl::PointCloud<pcl::PointXYZ>::ConstPtr & cloud,
-  const rclcpp::Time & stamp, const se2::Pose & anchor_base_pose,
-  std::uint64_t pose_sequence)
-{
-  if (!localMapRequired() || !local_map_initialized_ || !cloud ||
-    static_cast<int>(cloud->size()) < lidar_local_map_min_points_)
-  {
-    return;
-  }
-
-  ++local_map_frames_since_keyframe_;
-  bool add_keyframe = local_map_keyframes_.empty();
-  if (!add_keyframe) {
-    const auto & previous = local_map_keyframes_.back();
-    const double translation = std::hypot(
-      anchor_base_pose.x - previous.anchor_base_pose.x,
-      anchor_base_pose.y - previous.anchor_base_pose.y);
-    const double yaw = std::fabs(normalizeYaw(
-      anchor_base_pose.yaw - previous.anchor_base_pose.yaw));
-    const bool minimum_interval_reached =
-      local_map_frames_since_keyframe_ >= lidar_local_map_keyframe_min_interval_frames_;
-    add_keyframe =
-      (minimum_interval_reached &&
-      (translation >= lidar_local_map_keyframe_min_translation_m_ ||
-      yaw >= lidar_local_map_keyframe_min_yaw_rad_)) ||
-      local_map_frames_since_keyframe_ >= lidar_local_map_keyframe_max_interval_frames_;
-  }
-  if (!add_keyframe) return;
-
-  LocalMapKeyframe keyframe;
-  keyframe.stamp = stamp;
-  keyframe.anchor_base_pose = anchor_base_pose;
-  keyframe.pose_sequence = pose_sequence;
-  keyframe.cloud = pcl::PointCloud<pcl::PointXYZ>::Ptr(
-    new pcl::PointCloud<pcl::PointXYZ>(*cloud));
-  local_map_keyframes_.push_back(std::move(keyframe));
-
-  bool removed_oldest = false;
-  while (static_cast<int>(local_map_keyframes_.size()) > lidar_local_map_max_keyframes_) {
-    local_map_keyframes_.pop_front();
-    removed_oldest = true;
-  }
-  if (removed_oldest && !local_map_keyframes_.empty()) {
-    reanchorLocalMapLocked();
-  }
-
-  local_map_frames_since_keyframe_ = 0;
-  rebuildLocalMapLocked();
 }
 
 void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
@@ -1873,7 +1305,7 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 2000,
       "[pure_gyro_odometer] Rejecting filtered point cloud with %zu points; "
-      "the previous accepted scan/submap state is retained.",
+      "the previous accepted scan state is retained.",
       cloud ? cloud->size() : 0U);
     return;
   }
@@ -1900,9 +1332,6 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
         odom_yaw_ = yaw_imu_;
         has_odom_pose_ = true;
       }
-      initializeLocalMapLocked(
-        cloud, stamp, se2::Pose{odom_x_, odom_y_, odom_yaw_},
-        lidar_pose_sequence_);
       last_registration_source_ = "initialization";
       return;
     }
@@ -1921,7 +1350,7 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 2000,
         "[pure_gyro_odometer] LiDAR gap %.6f s exceeds timeout %.6f s; "
-        "reinitializing scan and submap tracking.",
+        "reinitializing scan-to-scan tracking.",
         scan_gap, lidar_timeout_sec_);
       resetLidarTrackingLocked();
       prev_cloud_ = cloud;
@@ -1933,9 +1362,6 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
         odom_yaw_ = yaw_imu_;
         has_odom_pose_ = true;
       }
-      initializeLocalMapLocked(
-        cloud, stamp, se2::Pose{odom_x_, odom_y_, odom_yaw_},
-        lidar_pose_sequence_);
       last_registration_source_ = "reinitialized_after_gap";
       return;
     }
@@ -1984,9 +1410,6 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
     prev_cloud_stamp_ = stamp;
     last_lidar_.stamp = stamp;
     last_lidar_.registration_source = "reinitialized_invalid_previous_scan";
-    initializeLocalMapLocked(
-      cloud, stamp, se2::Pose{odom_x_, odom_y_, odom_yaw_},
-      lidar_pose_sequence_);
     last_registration_source_ = "reinitialized_invalid_previous_scan";
     return;
   }
@@ -1994,8 +1417,7 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
   double dt = (stamp - previous_lidar_stamp).seconds();
   if (!std::isfinite(dt) || dt <= 1.0e-6) dt = 0.0;
 
-  // scan-to-scan is always evaluated. In scan_to_submap mode it provides the
-  // initialization, a consistency monitor, and the configured fallback path.
+  // Internal LiDAR odometry is scan-to-scan only.
   pcl::PointCloud<pcl::PointXYZ> scan_to_scan_aligned;
   bool scan_to_scan_converged = false;
   double scan_to_scan_fitness = std::numeric_limits<double>::infinity();
@@ -2037,150 +1459,13 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
     scan_to_scan_has_hessian = false;
   }
 
-  const Eigen::Matrix4f T_prev_curr_base_scan =
-    T_base_scan * T_prev_curr_scan_scan * T_scan_base;
-  const bool scan_to_scan_valid =
-    scan_to_scan_converged && std::isfinite(scan_to_scan_fitness) &&
-    scan_to_scan_fitness <= gicp_fitness_max_ && dt > 0.0 &&
-    T_prev_curr_base_scan.allFinite();
+  const bool converged = scan_to_scan_converged;
+  const double fitness = scan_to_scan_fitness;
+  const double inlier_ratio = scan_to_scan_inlier_ratio;
+  const Eigen::Matrix4f T_prev_curr_scan = T_prev_curr_scan_scan;
+  const Matrix6d hessian_scan = scan_to_scan_hessian;
+  const bool has_hessian = scan_to_scan_has_hessian;
 
-  Eigen::Vector3d prediction_delta = Eigen::Vector3d::Zero();
-  if (scan_to_scan_valid) {
-    const Eigen::Matrix3d rotation =
-      T_prev_curr_base_scan.block<3, 3>(0, 0).cast<double>();
-    prediction_delta = Eigen::Vector3d(
-      static_cast<double>(T_prev_curr_base_scan(0, 3)),
-      static_cast<double>(T_prev_curr_base_scan(1, 3)),
-      yawFromRot(rotation));
-  } else if (has_current_wheel_imu_prior) {
-    prediction_delta = wheel_imu_prior;
-  } else {
-    const Eigen::Matrix4f T_prev_curr_base_guess =
-      T_base_scan * scan_to_scan_guess * T_scan_base;
-    if (T_prev_curr_base_guess.allFinite()) {
-      prediction_delta = Eigen::Vector3d(
-        static_cast<double>(T_prev_curr_base_guess(0, 3)),
-        static_cast<double>(T_prev_curr_base_guess(1, 3)),
-        yawFromRot(T_prev_curr_base_guess.block<3, 3>(0, 0).cast<double>()));
-    }
-  }
-  if (has_imu_delta_yaw) {
-    const double scan_weight = clamp01(lidar_yaw_blend_imu_);
-    prediction_delta.z() = normalizeYaw(
-      (1.0 - scan_weight) * imu_delta_yaw_measurement +
-      scan_weight * prediction_delta.z());
-  }
-
-  se2::Pose predicted_odom_base_pose;
-  int local_map_frame_sequence = 0;
-  bool local_map_ready_snapshot = false;
-  {
-    std::lock_guard<std::mutex> lock(mtx_);
-    const double base_yaw = has_odom_pose_ ? odom_yaw_ : yaw_imu_;
-    predicted_odom_base_pose = se2::Pose{odom_x_, odom_y_, base_yaw};
-    if (lidar_pose_se2_enable_) {
-      const double yaw_mid = base_yaw + 0.5 * prediction_delta.z();
-      predicted_odom_base_pose.x +=
-        std::cos(yaw_mid) * prediction_delta.x() -
-        std::sin(yaw_mid) * prediction_delta.y();
-      predicted_odom_base_pose.y +=
-        std::sin(yaw_mid) * prediction_delta.x() +
-        std::cos(yaw_mid) * prediction_delta.y();
-      predicted_odom_base_pose.yaw = normalizeYaw(
-        base_yaw + prediction_delta.z());
-    }
-    local_map_frame_sequence = local_map_frame_sequence_ + 1;
-    local_map_ready_snapshot = localMapReadyLocked();
-  }
-
-  LocalMapObservation local_map_observation;
-  if (lidar_tracking_mode_ == tracking::Mode::ScanToSubmap) {
-    local_map_observation = matchAgainstLocalMap(
-      cloud, T_base_scan, T_scan_base, predicted_odom_base_pose,
-      local_map_frame_sequence, true);
-  } else if (lidar_local_map_enable_ && scan_to_scan_valid &&
-    lidar_pose_se2_enable_ && lidar_smoother_enable_)
-  {
-    local_map_observation = matchAgainstLocalMap(
-      cloud, T_base_scan, T_scan_base, predicted_odom_base_pose,
-      local_map_frame_sequence, false);
-  } else if (!lidar_local_map_enable_) {
-    local_map_observation.reason = "disabled";
-  } else if (!scan_to_scan_valid) {
-    local_map_observation.reason = "invalid_scan";
-  } else if (!lidar_pose_se2_enable_) {
-    local_map_observation.reason = "pose_integration_disabled";
-  } else {
-    local_map_observation.reason = "smoother_disabled";
-  }
-
-  if (lidar_tracking_mode_ == tracking::Mode::ScanToSubmap &&
-    local_map_observation.accepted && scan_to_scan_valid)
-  {
-    const Eigen::Matrix4f T_prev_curr_base_submap =
-      T_base_scan * local_map_observation.T_prev_curr_scan * T_scan_base;
-    const Eigen::Matrix4f disagreement =
-      T_prev_curr_base_scan.inverse() * T_prev_curr_base_submap;
-    if (!disagreement.allFinite()) {
-      local_map_observation.accepted = false;
-      local_map_observation.reason = "nonfinite_scan_to_scan_disagreement";
-    } else {
-      local_map_observation.scan_disagreement_translation_m = std::hypot(
-        static_cast<double>(disagreement(0, 3)),
-        static_cast<double>(disagreement(1, 3)));
-      local_map_observation.scan_disagreement_yaw_rad = std::fabs(yawFromRot(
-        disagreement.block<3, 3>(0, 0).cast<double>()));
-      const bool translation_gate_enabled =
-        lidar_scan_to_submap_max_scan_disagreement_translation_m_ > 0.0;
-      const bool yaw_gate_enabled =
-        lidar_scan_to_submap_max_scan_disagreement_yaw_rad_ > 0.0;
-      if ((translation_gate_enabled &&
-        local_map_observation.scan_disagreement_translation_m >
-        lidar_scan_to_submap_max_scan_disagreement_translation_m_) ||
-        (yaw_gate_enabled &&
-        local_map_observation.scan_disagreement_yaw_rad >
-        lidar_scan_to_submap_max_scan_disagreement_yaw_rad_))
-      {
-        local_map_observation.accepted = false;
-        local_map_observation.reason = "scan_to_scan_disagreement_gate";
-      }
-    }
-  }
-
-  const tracking::RegistrationPath registration_path =
-    tracking::selectRegistrationPath(
-      lidar_tracking_mode_,
-      local_map_observation.ready || local_map_ready_snapshot,
-      local_map_observation.attempted,
-      local_map_observation.accepted,
-      scan_to_scan_valid,
-      lidar_scan_to_submap_fallback_enable_);
-
-  bool converged = false;
-  double fitness = std::numeric_limits<double>::infinity();
-  double inlier_ratio = 0.0;
-  Eigen::Matrix4f T_prev_curr_scan = Eigen::Matrix4f::Identity();
-  Matrix6d hessian_scan = Matrix6d::Zero();
-  bool has_hessian = false;
-  if (tracking::usesSubmapMeasurement(registration_path)) {
-    converged = true;
-    fitness = local_map_observation.fitness;
-    inlier_ratio = local_map_observation.inlier_ratio;
-    T_prev_curr_scan = local_map_observation.T_prev_curr_scan;
-    hessian_scan = local_map_observation.hessian_scan;
-    has_hessian = local_map_observation.has_hessian;
-  } else if (tracking::usesScanToScanMeasurement(registration_path)) {
-    converged = scan_to_scan_converged;
-    fitness = scan_to_scan_fitness;
-    inlier_ratio = scan_to_scan_inlier_ratio;
-    T_prev_curr_scan = T_prev_curr_scan_scan;
-    hessian_scan = scan_to_scan_hessian;
-    has_hessian = scan_to_scan_has_hessian;
-  }
-
-  // The selected registration always yields the same current-in-previous
-  // relative transform, regardless of whether the target was one scan or the
-  // active submap.
   const Eigen::Matrix4f T_prev_curr_base =
     T_base_scan * T_prev_curr_scan * T_scan_base;
   const Eigen::Matrix3d rotation =
@@ -2279,18 +1564,12 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
     }
   }
 
-  const double selected_fitness_threshold =
-    tracking::usesSubmapMeasurement(registration_path) ?
-    lidar_local_map_max_fitness_ : gicp_fitness_max_;
-
   std::string rejection_reason{"accepted"};
-  if (registration_path == tracking::RegistrationPath::None) {
-    rejection_reason = "no_registration_path";
-  } else if (!converged) {
+  if (!converged) {
     rejection_reason = "not_converged";
   } else if (!std::isfinite(fitness)) {
     rejection_reason = "nonfinite_fitness";
-  } else if (fitness > selected_fitness_threshold) {
+  } else if (fitness > gicp_fitness_max_) {
     rejection_reason = "fitness_gate";
   } else if (dt <= 0.0) {
     rejection_reason = "invalid_dt";
@@ -2364,10 +1643,7 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
   output.converged = converged;
   output.fitness = fitness;
   output.inlier_ratio = inlier_ratio;
-  output.registration_source = tracking::toString(registration_path);
-  output.used_submap = tracking::usesSubmapMeasurement(registration_path);
-  output.used_scan_to_scan_fallback =
-    registration_path == tracking::RegistrationPath::ScanToScanFallback;
+  output.registration_source = "scan_to_scan";
   output.rejection_reason = rejection_reason;
   output.raw_dx = raw_dx;
   output.raw_dy = raw_dy;
@@ -2406,6 +1682,8 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
 
   bool publish_external_submap_snapshot = false;
   pure_lidar_msgs::msg::SubmapScan external_submap_snapshot;
+  bool publish_accepted_scan_odom = false;
+  nav_msgs::msg::Odometry accepted_scan_odom;
 
   {
     std::lock_guard<std::mutex> lock(mtx_);
@@ -2416,7 +1694,6 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
     updateStopState(stamp);
 
     bool pose_updated = false;
-    bool smoother_update_succeeded = false;
     if (output.valid && lidar_pose_se2_enable_) {
       if (lidar_smoother_enable_) {
         ScanFactor factor;
@@ -2433,18 +1710,7 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
         factor.has_scan_information = has_smoother_scan_information;
         factor.scan_information = smoother_scan_information;
 
-        const bool use_periodic_local_pose_factor =
-          lidar_tracking_mode_ == tracking::Mode::ScanToScan &&
-          local_map_observation.accepted;
-        if (use_periodic_local_pose_factor) {
-          factor.has_local_pose = true;
-          factor.local_pose = local_map_observation.odom_base_pose;
-          factor.local_weight_xy = local_map_observation.factor_weight_xy;
-          factor.local_weight_yaw = local_map_observation.factor_weight_yaw;
-        }
-
-        smoother_update_succeeded = updateMiniSmootherLocked(factor);
-        pose_updated = smoother_update_succeeded;
+        pose_updated = updateMiniSmootherLocked(factor);
         if (!pose_updated) {
           const double yaw_mid = odom_yaw_ + 0.5 * fused_delta_yaw;
           odom_x_ +=
@@ -2457,11 +1723,6 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
           lidar_smoother_.reset(se2::Pose{odom_x_, odom_y_, odom_yaw_});
           lidar_smoother_initialized_ = true;
           pose_updated = true;
-
-          if (use_periodic_local_pose_factor) {
-            local_map_observation.accepted = false;
-            local_map_observation.reason = "factor_graph_rejected";
-          }
         }
       } else {
         const double yaw_mid = odom_yaw_ + 0.5 * fused_delta_yaw;
@@ -2479,108 +1740,8 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
     const bool accepted_pose = output.valid && pose_updated;
     if (accepted_pose) {
       ++lidar_pose_sequence_;
-      ++local_map_frame_sequence_;
-      switch (registration_path) {
-        case tracking::RegistrationPath::ScanToSubmap:
-          ++scan_to_submap_primary_count_;
-          break;
-        case tracking::RegistrationPath::ScanToScanInterim:
-          ++scan_to_scan_interim_count_;
-          break;
-        case tracking::RegistrationPath::ScanToScanFallback:
-          ++scan_to_scan_fallback_count_;
-          break;
-        case tracking::RegistrationPath::ScanToScanWarmup:
-          ++scan_to_scan_warmup_count_;
-          break;
-        default:
-          break;
-      }
     }
 
-    if (local_map_observation.attempted) {
-      if (local_map_observation.accepted) {
-        ++local_map_match_accepted_count_;
-      } else {
-        ++local_map_match_rejected_count_;
-      }
-    }
-
-    bool submap_reset_due_to_failures = false;
-    if (lidar_tracking_mode_ == tracking::Mode::ScanToSubmap) {
-      if (local_map_observation.attempted) {
-        if (registration_path == tracking::RegistrationPath::ScanToSubmap &&
-          local_map_observation.accepted)
-        {
-          local_map_consecutive_failures_ = 0;
-        } else {
-          ++local_map_consecutive_failures_;
-        }
-      } else if (!local_map_observation.ready) {
-        local_map_consecutive_failures_ = 0;
-      }
-
-      if (local_map_consecutive_failures_ >=
-        lidar_scan_to_submap_max_consecutive_failures_)
-      {
-        resetLocalMapLocked("consecutive_scan_to_submap_failures");
-        submap_reset_due_to_failures = true;
-        if (accepted_pose) {
-          initializeLocalMapLocked(
-            cloud, stamp, se2::Pose{odom_x_, odom_y_, odom_yaw_},
-            lidar_pose_sequence_);
-        }
-      }
-    }
-
-    if (localMapRequired() && accepted_pose && !submap_reset_due_to_failures) {
-      if (!local_map_initialized_) {
-        initializeLocalMapLocked(
-          cloud, stamp, se2::Pose{odom_x_, odom_y_, odom_yaw_},
-          lidar_pose_sequence_);
-      } else {
-        const bool submap_pose_was_primary =
-          registration_path == tracking::RegistrationPath::ScanToSubmap &&
-          local_map_observation.accepted;
-        const bool periodic_pose_was_used =
-          lidar_tracking_mode_ == tracking::Mode::ScanToScan &&
-          local_map_observation.accepted;
-        const bool has_anchor_observation =
-          submap_pose_was_primary || periodic_pose_was_used;
-
-        if (has_anchor_observation) {
-          alignLocalMapAnchorToPoseLocked(
-            se2::Pose{odom_x_, odom_y_, odom_yaw_},
-            local_map_observation.anchor_base_pose);
-        }
-        if (smoother_update_succeeded) {
-          repairLocalMapFromSmootherLocked(lidar_pose_sequence_);
-        }
-
-        const se2::Pose current_anchor_pose = has_anchor_observation ?
-          local_map_observation.anchor_base_pose :
-          odomPoseToLocalMapAnchorLocked(
-          se2::Pose{odom_x_, odom_y_, odom_yaw_});
-        local_map_last_tracking_anchor_pose_ = current_anchor_pose;
-        has_local_map_last_tracking_pose_ = true;
-
-        bool insert_keyframe = false;
-        if (lidar_tracking_mode_ == tracking::Mode::ScanToScan) {
-          insert_keyframe = lidar_local_map_enable_;
-        } else {
-          insert_keyframe =
-            registration_path == tracking::RegistrationPath::ScanToScanWarmup ||
-            registration_path == tracking::RegistrationPath::ScanToScanInterim ||
-            registration_path == tracking::RegistrationPath::ScanToSubmap;
-        }
-        if (insert_keyframe) {
-          maybeAddLocalMapKeyframeLocked(
-            cloud, stamp, current_anchor_pose, lidar_pose_sequence_);
-        }
-      }
-    }
-
-    last_local_map_observation_ = local_map_observation;
     last_registration_source_ = output.registration_source;
 
     const double motion_distance = std::hypot(output.dx, output.dy);
@@ -2613,6 +1774,24 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
     } else {
       odom_cov_total_xy_ += std::max(0.0, odom_cov_invalid_xy_step_);
       odom_cov_total_yaw_ += std::max(0.0, odom_cov_invalid_yaw_step_);
+    }
+
+    if (accepted_pose && pub_accepted_scan_odom_) {
+      publish_accepted_scan_odom = true;
+      const bool has_twist = std::isfinite(output.dt) && output.dt > 1.0e-6;
+      AcceptedScanOdometryState state;
+      state.x = odom_x_;
+      state.y = odom_y_;
+      state.yaw = odom_yaw_;
+      state.vx = output.vx;
+      state.vy = output.vy;
+      state.yaw_rate = has_twist ? fused_delta_yaw / output.dt : 0.0;
+      state.covariance_xy = odom_cov_total_xy_;
+      state.covariance_yaw = odom_cov_total_yaw_;
+      state.has_twist = has_twist;
+      accepted_scan_odom = makeAcceptedScanOdometry(
+        msg->header.stamp, odom_frame_, base_frame_, state);
+      ++accepted_scan_odom_published_count_;
     }
 
     if (accepted_pose && pub_external_submap_snapshot_ &&
@@ -2653,13 +1832,16 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
     next_icp_guess_mode_ = next_guess_mode;
 
     if (output.valid) {
-      // Both primary modes keep the accepted scan for monitoring/fallback. A
-      // rejected scan is never promoted, so one bad match cannot cascade.
+      // A rejected scan is never promoted, so one bad match cannot cascade.
       prev_cloud_ = cloud;
       has_prev_cloud_ = true;
       prev_cloud_stamp_ = stamp;
       last_gicp_guess_ = next_scan_to_scan_guess;
     }
+  }
+
+  if (publish_accepted_scan_odom && pub_accepted_scan_odom_) {
+    pub_accepted_scan_odom_->publish(accepted_scan_odom);
   }
 
   if (publish_external_submap_snapshot && pub_external_submap_snapshot_) {
@@ -2846,19 +2028,7 @@ void GyroOdometerNode::onPublishTimer()
   double odom_cov_xy_total = 0.0;
   double odom_cov_yaw_total = 0.0;
   LidarOdomSample lidar = {};
-  LocalMapObservation local_map_observation;
-  std::size_t local_map_keyframe_count = 0;
-  std::size_t local_map_point_count = 0;
-  bool local_map_ready = false;
-  int local_map_consecutive_failures = 0;
-  std::uint64_t local_map_accepted_count = 0;
-  std::uint64_t local_map_rejected_count = 0;
-  std::uint64_t scan_to_submap_primary_count = 0;
-  std::uint64_t scan_to_scan_interim_count = 0;
-  std::uint64_t scan_to_scan_fallback_count = 0;
-  std::uint64_t scan_to_scan_warmup_count = 0;
   std::string last_registration_source;
-  std::string local_map_reset_reason;
   std::string speed_source{"none"};
   std::string last_icp_guess_mode;
   std::string next_icp_guess_mode;
@@ -2866,6 +2036,7 @@ void GyroOdometerNode::onPublishTimer()
   std::uint64_t external_snapshot_generation = 0;
   std::uint64_t external_snapshot_sequence = 0;
   std::uint64_t external_snapshot_published_count = 0;
+  std::uint64_t accepted_scan_odom_published_count = 0;
   double external_snapshot_conversion_last_ms = 0.0;
   double external_snapshot_conversion_sum_ms = 0.0;
   double external_snapshot_conversion_max_ms = 0.0;
@@ -2901,25 +2072,14 @@ void GyroOdometerNode::onPublishTimer()
     }
 
     lidar = last_lidar_;
-    local_map_observation = last_local_map_observation_;
-    local_map_keyframe_count = local_map_keyframes_.size();
-    local_map_point_count = local_map_cloud_ ? local_map_cloud_->size() : 0U;
-    local_map_ready = localMapReadyLocked();
-    local_map_consecutive_failures = local_map_consecutive_failures_;
-    local_map_accepted_count = local_map_match_accepted_count_;
-    local_map_rejected_count = local_map_match_rejected_count_;
-    scan_to_submap_primary_count = scan_to_submap_primary_count_;
-    scan_to_scan_interim_count = scan_to_scan_interim_count_;
-    scan_to_scan_fallback_count = scan_to_scan_fallback_count_;
-    scan_to_scan_warmup_count = scan_to_scan_warmup_count_;
     last_registration_source = last_registration_source_;
-    local_map_reset_reason = local_map_reset_reason_;
     last_icp_guess_mode = last_icp_guess_mode_;
     next_icp_guess_mode = next_icp_guess_mode_;
     external_snapshot_session = external_submap_odom_session_id_;
     external_snapshot_generation = external_submap_odom_generation_;
     external_snapshot_sequence = lidar_pose_sequence_;
     external_snapshot_published_count = external_submap_snapshot_published_count_;
+    accepted_scan_odom_published_count = accepted_scan_odom_published_count_;
     external_snapshot_conversion_last_ms = external_submap_snapshot_conversion_last_ms_;
     external_snapshot_conversion_sum_ms = external_submap_snapshot_conversion_sum_ms_;
     external_snapshot_conversion_max_ms = external_submap_snapshot_conversion_max_ms_;
@@ -3134,20 +2294,11 @@ void GyroOdometerNode::onPublishTimer()
     if (lidar_odom_enable_ && !has_lidar) {
       status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
     }
-    if (lidar.used_scan_to_scan_fallback) {
-      status.level = std::max<uint8_t>(
-        status.level, diagnostic_msgs::msg::DiagnosticStatus::WARN);
-    }
-
     status.name = "localization/gyro_odometer";
     if (!lidar.valid && lidar.rejection_reason != "not_evaluated") {
       status.message = stopped_now ?
         "registration unavailable while stationary; holding last accepted pose" :
         "registration unavailable; holding last accepted pose";
-    } else if (lidar.used_scan_to_scan_fallback) {
-      status.message = "scan-to-submap unavailable; running on scan-to-scan fallback";
-    } else if (lidar.registration_source == "scan_to_scan_warmup") {
-      status.message = "building active submap with scan-to-scan warmup";
     } else if (stopped_now) {
       status.message = "stopped";
     } else if (lidar_odom_enable_ && !has_lidar) {
@@ -3181,6 +2332,14 @@ void GyroOdometerNode::onPublishTimer()
     add("odom_cov_xy_total", std::to_string(odom_cov_xy_total));
     add("odom_cov_yaw_total", std::to_string(odom_cov_yaw_total));
     add("raw_odom_topic", out_odom_topic_);
+    add("accepted_scan_odom_enabled", boolString(accepted_scan_odom_enable_));
+    add(
+      "accepted_scan_odom_topic",
+      accepted_scan_odom_enable_ ? accepted_scan_odom_topic_ : std::string("disabled"));
+    add(
+      "accepted_scan_odom_published_count",
+      std::to_string(accepted_scan_odom_published_count));
+    add("accepted_scan_odom_stamp_contract", "accepted_input_scan_header_stamp");
     add("external_submap_snapshot_enabled", boolString(external_submap_snapshot_enable_));
     add("external_submap_snapshot_topic", external_submap_snapshot_topic_);
     add("external_submap_snapshot_exact_key_contract",
@@ -3204,6 +2363,9 @@ void GyroOdometerNode::onPublishTimer()
 
     add("imu_corrected.enable", boolString(imu_corrected_enable_));
     add("imu_corrected.apply_tf", boolString(imu_corrected_apply_tf_));
+    add(
+      "imu_corrected.linear_acceleration_scale",
+      std::to_string(imu_linear_acceleration_scale_));
     add("imu_extrinsic_cached", boolString(imu_extrinsic_cached));
     add("imu_frame", imu_extrinsic_cached ? imu_frame_id : std::string(""));
 
@@ -3234,10 +2396,6 @@ void GyroOdometerNode::onPublishTimer()
       add("lidar_tracking_mode", lidar_tracking_mode_name_);
       add("lidar_registration_source", lidar.registration_source);
       add("lidar_last_registration_source", last_registration_source);
-      add("lidar_used_submap", boolString(lidar.used_submap));
-      add(
-        "lidar_used_scan_to_scan_fallback",
-        boolString(lidar.used_scan_to_scan_fallback));
       add("lidar_dx", std::to_string(lidar.dx));
       add("lidar_dy", std::to_string(lidar.dy));
       add("lidar_dyaw", std::to_string(lidar.dyaw));
@@ -3297,48 +2455,6 @@ void GyroOdometerNode::onPublishTimer()
         "speed_difference_mps",
         std::to_string(lidar.observability.speed_difference_mps));
 
-      add("local_map_required", boolString(localMapRequired()));
-      add(
-        "local_map_periodic_factor_enabled",
-        boolString(lidar_local_map_enable_));
-      add("local_map_ready", boolString(local_map_ready));
-      add("local_map_keyframes", std::to_string(local_map_keyframe_count));
-      add("local_map_points", std::to_string(local_map_point_count));
-      add(
-        "local_map_consecutive_failures",
-        std::to_string(local_map_consecutive_failures));
-      add(
-        "local_map_last_attempted",
-        boolString(local_map_observation.attempted));
-      add(
-        "local_map_last_accepted",
-        boolString(local_map_observation.accepted));
-      add("local_map_last_reason", local_map_observation.reason);
-      add("local_map_last_fitness", std::to_string(local_map_observation.fitness));
-      add(
-        "local_map_last_inlier_ratio",
-        std::to_string(local_map_observation.inlier_ratio));
-      add(
-        "local_map_last_scan_disagreement_translation_m",
-        std::to_string(local_map_observation.scan_disagreement_translation_m));
-      add(
-        "local_map_last_scan_disagreement_yaw_rad",
-        std::to_string(local_map_observation.scan_disagreement_yaw_rad));
-      add("local_map_accepted_count", std::to_string(local_map_accepted_count));
-      add("local_map_rejected_count", std::to_string(local_map_rejected_count));
-      add(
-        "scan_to_submap_primary_count",
-        std::to_string(scan_to_submap_primary_count));
-      add(
-        "scan_to_scan_interim_count",
-        std::to_string(scan_to_scan_interim_count));
-      add(
-        "scan_to_scan_fallback_count",
-        std::to_string(scan_to_scan_fallback_count));
-      add(
-        "scan_to_scan_warmup_count",
-        std::to_string(scan_to_scan_warmup_count));
-      add("local_map_reset_reason", local_map_reset_reason);
     }
 
     arr.status.push_back(status);
@@ -3363,9 +2479,6 @@ void GyroOdometerNode::publishObservabilityDebug(
   stream << "registration_source: " << sample.registration_source << "\n";
   stream << "registration_valid: " << boolString(sample.valid) << "\n";
   stream << "rejection_reason: " << sample.rejection_reason << "\n";
-  stream << "used_submap: " << boolString(sample.used_submap) << "\n";
-  stream << "used_scan_to_scan_fallback: " <<
-    boolString(sample.used_scan_to_scan_fallback) << "\n";
   stream << "converged: " << boolString(sample.converged) << "\n";
   stream << "fitness: " << formatDouble(sample.fitness) << "\n";
   stream << "inlier_ratio: " << formatDouble(sample.inlier_ratio) << "\n";

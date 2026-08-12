@@ -22,50 +22,6 @@ void require(bool condition, const std::string & message)
   }
 }
 
-Pose runBiasedTrack(bool use_local_factors)
-{
-  Config config;
-  config.window_size = 25;
-  config.max_iterations = 8;
-  config.scan_weight = 8.0;
-  config.imu_weight = 20.0;
-  config.smoothness_weight = 0.05;
-  config.local_huber_delta_xy_m = 0.50;
-  config.local_huber_delta_yaw_rad = 0.15;
-
-  FixedLagSmoother smoother(config);
-  smoother.reset(Pose{});
-  Pose output{};
-  for (int step = 1; step <= 100; ++step) {
-    RelativeFactor factor;
-    factor.dx = 1.01;  // 1% scan-scale bias
-    factor.dy = 0.002;
-    factor.dyaw_scan = 0.0005;
-    factor.dyaw_imu = 0.0;
-    factor.fitness = 0.05;
-    factor.converged = true;
-    if (use_local_factors && step % 10 == 0) {
-      factor.has_local_pose = true;
-      factor.local_pose = Pose{static_cast<double>(step), 0.0, 0.0};
-      factor.local_weight_xy = 20.0;
-      factor.local_weight_yaw = 20.0;
-    }
-    require(smoother.addFactor(factor, output), "biased-track factor must optimize");
-    require(smoother.factorCount() <= 25U, "fixed-lag window must remain bounded");
-  }
-  return output;
-}
-
-void testLocalFactorReducesDrift()
-{
-  const Pose without_local = runBiasedTrack(false);
-  const Pose with_local = runBiasedTrack(true);
-  const double error_without = std::hypot(without_local.x - 100.0, without_local.y);
-  const double error_with = std::hypot(with_local.x - 100.0, with_local.y);
-  require(error_without > 0.5, "synthetic scan bias must create measurable drift");
-  require(error_with < 0.45 * error_without, "local pose factors must reduce endpoint drift");
-}
-
 void testRejectsNonFiniteFactorWithoutStateCorruption()
 {
   Config config;
@@ -120,84 +76,6 @@ void testZuptSuppressesStationaryDrift()
   require(std::fabs(output.yaw) < 0.01, "ZUPT must suppress stationary yaw drift");
 }
 
-Pose runCompetingLateralObservation(double lateral_information)
-{
-  Config config;
-  config.scan_weight = 10.0;
-  config.imu_weight = 10.0;
-  config.smoothness_weight = 0.0;
-  config.local_huber_delta_xy_m = 10.0;
-  config.max_solution_position_correction_m = 5.0;
-  FixedLagSmoother smoother(config);
-  smoother.reset(Pose{});
-
-  RelativeFactor factor;
-  factor.dx = 1.0;
-  factor.dy = 1.0;
-  factor.dyaw_scan = 0.0;
-  factor.dyaw_imu = 0.0;
-  factor.fitness = 0.0;
-  factor.converged = true;
-  factor.has_scan_information = true;
-  factor.scan_information = {{
-    1.0, 0.0, 0.0,
-    0.0, lateral_information, 0.0,
-    0.0, 0.0, 1.0}};
-  factor.has_local_pose = true;
-  factor.local_pose = Pose{1.0, 0.0, 0.0};
-  factor.local_weight_xy = 4.0;
-  factor.local_weight_yaw = 4.0;
-
-  Pose output{};
-  require(smoother.addFactor(factor, output), "competing observation must optimize");
-  return output;
-}
-
-void testAnisotropicInformationDoesNotOvertrustWeakDirection()
-{
-  const Pose isotropic = runCompetingLateralObservation(1.0);
-  const Pose weak_lateral = runCompetingLateralObservation(0.01);
-  require(
-    std::fabs(weak_lateral.y) < 0.35 * std::fabs(isotropic.y),
-    "weak Hessian direction must yield more strongly to the local-map observation");
-}
-
-
-void testOptimizedPoseWindowIsChronologicalAndBounded()
-{
-  Config config;
-  config.window_size = 3;
-  config.smoothness_weight = 0.0;
-  FixedLagSmoother smoother(config);
-  smoother.reset(Pose{2.0, -1.0, 0.1});
-
-  RelativeFactor factor;
-  factor.dx = 1.0;
-  factor.dy = 0.0;
-  factor.dyaw_scan = 0.0;
-  factor.dyaw_imu = 0.0;
-  factor.has_imu_yaw = true;
-  factor.fitness = 0.0;
-  factor.converged = true;
-
-  Pose output{};
-  for (int step = 0; step < 6; ++step) {
-    require(smoother.addFactor(factor, output), "window factor must optimize");
-    const auto poses = smoother.optimizedPoses();
-    require(!poses.empty(), "optimized pose window must be available");
-    require(poses.size() == smoother.factorCount() + 1, "pose/factor count mismatch");
-    require(poses.size() <= 4U, "fixed-lag pose window must remain bounded");
-    require(
-      std::fabs(poses.back().x - smoother.pose().x) < 1.0e-12 &&
-      std::fabs(poses.back().y - smoother.pose().y) < 1.0e-12 &&
-      std::fabs(poses.back().yaw - smoother.pose().yaw) < 1.0e-12,
-      "last optimized pose must equal smoother output");
-    for (std::size_t index = 1; index < poses.size(); ++index) {
-      require(poses[index].x > poses[index - 1].x, "pose window must be chronological");
-    }
-  }
-}
-
 void testRejectsIndefiniteInformationWithoutStateCorruption()
 {
   FixedLagSmoother smoother(Config{});
@@ -228,11 +106,8 @@ void testRejectsIndefiniteInformationWithoutStateCorruption()
 
 int main()
 {
-  testLocalFactorReducesDrift();
   testRejectsNonFiniteFactorWithoutStateCorruption();
   testZuptSuppressesStationaryDrift();
-  testAnisotropicInformationDoesNotOvertrustWeakDirection();
-  testOptimizedPoseWindowIsChronologicalAndBounded();
   testRejectsIndefiniteInformationWithoutStateCorruption();
   std::cout << "PASS test_se2_fixed_lag_smoother\n";
   return 0;

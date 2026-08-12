@@ -1,5 +1,9 @@
 # Rosbag and Autoware Logging-Simulation Evaluation
 
+> Canonical result tables and publication status are indexed at
+> [docs/evaluation](evaluation/README.md). This page defines the reusable
+> execution workflow; dated result summaries live under that evaluation index.
+
 This workflow deliberately uses the same estimator configuration in two stages:
 
 1. validate the localization stack by itself against a recorded bag;
@@ -83,30 +87,36 @@ ros2 launch pure_odometry_bringup odometry_standalone.launch.py \
 
 Do not enable the point-order timing fallback for a quantitative comparison.
 
-### 2.2 Repeat with scan-to-submap
+### 2.2 Add the isolated precision overlay
 
-Change only the odometer YAML:
+Keep the odometer in `scan_to_scan`, load the accepted-scan snapshot override,
+and launch the precision processes separately:
 
 ```bash
 ros2 launch pure_odometry_bringup odometry_standalone.launch.py \
   use_sim_time:=true \
   use_gnss:=false \
   use_map_odom_fusion:=false \
-  odom_param:=$(ros2 pkg prefix pure_lidar_gyro_odometer)/share/pure_lidar_gyro_odometer/param/param_scan_to_submap.yaml
+  odom_override_param:=$(ros2 pkg prefix pure_precision_bringup)/share/pure_precision_bringup/config/submap_snapshot_override.yaml
+
+ros2 launch pure_precision_bringup precision_overlay.launch.py \
+  use_sim_time:=true
 ```
 
-Use the identical bag, replay rate, input remaps, TFs, voxel settings, and output
-metric code for both modes. Compare at least:
+Use the identical bag, replay rate, input remaps, TFs, baseline odometer YAML,
+and metric code for both runs. Compare at least:
 
 - relative pose error and endpoint error;
 - yaw error, especially after turns and long corridors;
 - registration rejection count;
-- scan-to-submap fallback/reset counts;
+- accepted-snapshot key coverage and baseline non-intrusion;
+- external matcher acceptance, robust commits, and recovery rebuilds;
 - real-time factor and callback latency;
 - CPU and memory use.
 
-A submap result is not automatically better. Keep scan-to-scan as the retained
-baseline until representative bags show an improvement.
+The external matcher publishes only separate precision topics and no TF. A
+submap result is not automatically better; retain baseline output until
+representative bags pass both accuracy and non-intrusion gates.
 
 ### 2.3 Add GNSS only after LiDAR-IMU odometry is stable
 
@@ -159,7 +169,7 @@ From the repository root:
 
 ```bash
 ./script/run_autoware_lsim_docker.sh \
-  --bag /absolute/path/to/bag \
+  --bag <bag_path> \
   --points /sensing/lidar/top/pointcloud_raw \
   --imu /sensing/imu/tamagawa/imu_raw
 ```
@@ -184,26 +194,28 @@ docker_output/<bag>_<tracking-mode>_<date>/
 It contains launch/replay/record logs, the resolved run settings, input bag
 information, and a `localization_output` rosbag.
 
-### 3.2 Compare scan-to-scan and scan-to-submap
+### 3.2 Compare baseline and isolated precision
 
-Run the same bag twice and change only the mode:
+Run the same bag twice and change only the localization mode. The production
+odometer remains scan-to-scan in both runs; precision mode enables its output-only
+snapshot bridge and starts the external matcher/global overlay:
 
 ```bash
 ./script/run_autoware_lsim_docker.sh \
-  --bag /absolute/path/to/bag \
+  --bag <bag_path> \
   --points /sensing/lidar/top/pointcloud_raw \
   --imu /sensing/imu/tamagawa/imu_raw \
   --tracking-mode scan_to_scan \
-  --run-name lsim_scan_to_scan
+  --run-name lsim_baseline
 ```
 
 ```bash
 ./script/run_autoware_lsim_docker.sh \
-  --bag /absolute/path/to/bag \
+  --bag <bag_path> \
   --points /sensing/lidar/top/pointcloud_raw \
   --imu /sensing/imu/tamagawa/imu_raw \
   --tracking-mode scan_to_submap \
-  --run-name lsim_scan_to_submap
+  --run-name lsim_precision
 ```
 
 The image build is cached. Add `--no-build` after the first successful build to
@@ -215,7 +227,7 @@ Providing the primary NMEA topic enables the GNSS frontend:
 
 ```bash
 ./script/run_autoware_lsim_docker.sh \
-  --bag /absolute/path/to/bag \
+  --bag <bag_path> \
   --points /sensing/lidar/top/pointcloud_raw \
   --imu /sensing/imu/tamagawa/imu_raw \
   --nmea /sensing/gnss/nmea_sentence \
@@ -234,7 +246,7 @@ valid per-point time field, bypass the internal deskewer:
 
 ```bash
 ./script/run_autoware_lsim_docker.sh \
-  --bag /absolute/path/to/bag \
+  --bag <bag_path> \
   --points <deskewed_pointcloud_topic> \
   --imu <imu_topic> \
   --already-deskewed
@@ -259,7 +271,7 @@ recorded installation:
 
 ```bash
 ./script/run_autoware_lsim_docker.sh \
-  --bag /absolute/path/to/bag \
+  --bag <bag_path> \
   --points <pointcloud_topic> \
   --imu <imu_topic> \
   --launch-vehicle \
@@ -349,11 +361,12 @@ so metric code can consume both reference and newly computed results in one
 output bag. Confirm reference topic and frame semantics before treating any
 recorded estimator result as ground truth.
 
-For each mode compare at least:
+For baseline and precision runs compare at least:
 
 - relative pose error and endpoint/outage error;
 - yaw error after turns and in corridors;
-- registration rejection and submap fallback/reset counts;
+- baseline registration rejection and accepted-snapshot non-intrusion;
+- external matcher acceptance, commit, and rebuild counts;
 - GNSS recovery convergence, peak correction rate, and post-return error;
 - CPU, memory, callback latency, and real-time factor.
 

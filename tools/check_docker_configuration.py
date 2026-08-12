@@ -171,7 +171,8 @@ def check_container_runner() -> None:
         "ros2 topic echo --once /localization/gyro_lidar_odom",
         "ros2 topic pub --once /initialpose",
         "param_xt_lidar_imu_only.yaml",
-        "hesai_rosbag23_nmea_override.yaml",
+        "config/evaluation/lidar_imu_gnss/hesai_32line_rtk/accepted/nmea_site_origin.yaml",
+        "config/evaluation/lidar_imu_gnss/hesai_32line_rtk/accepted/gnss_fusion_single_antenna.yaml",
         "--clock-frequency",
         "autoware_lsim_output_recorder",
         "first_kinematic_state.yaml",
@@ -198,9 +199,37 @@ def check_container_runner() -> None:
         "final_nodes.txt",
         "FIRST_STATE_WAIT_SEC",
         "DRAIN_WAIT_SEC",
+        "effective_configurations.tsv",
+        "sha256sum",
     ):
         if token not in text:
             fail(f"container runner required behavior missing: {token}")
+
+    # Docker retains the historical scan_to_submap UI token as the precision
+    # selector. It must start the external overlay while the odometer itself
+    # stays on its scan-to-scan parameter file plus the output-only snapshot
+    # override.
+    for token in (
+        'scan_to_submap) ODOM_OVERRIDE_PARAM="$SUBMAP_SNAPSHOT_OVERRIDE_PARAM"',
+        'if [[ "$TRACKING_MODE" == scan_to_submap ]]; then',
+        "ros2 launch pure_precision_bringup precision_overlay.launch.py",
+        "--tracking-mode scan_to_scan",
+    ):
+        if token not in text:
+            fail(f"container precision-isolation contract missing: {token}")
+    for retired in ("param_scan_to_submap.yaml", "scan_to_submap_override.yaml"):
+        if retired in text:
+            fail(f"container runner still references retired internal submap path: {retired}")
+
+    override_path = (
+        ROOT / "src/pure_precision_bringup/config/submap_snapshot_override.yaml"
+    )
+    override = load_yaml(override_path)
+    parameters = override.get("/**", {}).get("ros__parameters", {})
+    if parameters.get("lidar_odom.tracking_mode") != "scan_to_scan":
+        fail("Docker precision snapshot override must keep odometer scan_to_scan")
+    if parameters.get("lidar_odom.external_submap_snapshot.enable") is not True:
+        fail("Docker precision snapshot override must enable accepted-scan output")
 
 
 def check_host_wrapper() -> None:

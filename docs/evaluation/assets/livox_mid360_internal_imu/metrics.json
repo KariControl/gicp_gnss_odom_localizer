@@ -1,0 +1,95 @@
+{
+  "alignment": {
+    "position_and_yaw_share_transform": true,
+    "scale_applied": false,
+    "type": "single shared exact first-common-pose SE(2)"
+  },
+  "dataset_label": "Livox MID-360 + Internal IMU \u2014 LiDAR/IMU-Only (No GNSS)",
+  "publication_status": "scan-to-scan accepted for reporting; scan-to-submap rejected and excluded from figures",
+  "reference": {
+    "independent_ground_truth": false,
+    "method": "GLIM trajectory"
+  },
+  "rejected_scan_to_submap_summary": {
+    "included_in_figures": false,
+    "overall_ab_passed": false,
+    "position_rmse_m": 1.433026886477897,
+    "reason": "The external scan-to-submap branch regressed XY and translation RPE on this dataset.",
+    "yaw_rmse_deg": 1.931178774152231
+  },
+  "scan_to_scan": {
+    "duration_sec": 294.09915724800004,
+    "endpoint_position_error_m": 0.18300955360480217,
+    "endpoint_yaw_error_deg": 3.790421954397571,
+    "estimate_path_m": 93.73973323915786,
+    "path_ratio_estimate_over_reference": 1.0281451554972272,
+    "position_error_m": {
+      "count": 2835,
+      "maximum": 1.473743651778642,
+      "mean": 0.6679031018367069,
+      "median": 0.5842566134496924,
+      "p95": 1.2743870777657846,
+      "p99": 1.4355894881017708,
+      "rmse": 0.7794711670576386
+    },
+    "reference_path_m": 91.1736370472162,
+    "rpe": {
+      "10": {
+        "count": 2544,
+        "translation_error_m": {
+          "count": 2544,
+          "maximum": 0.9140795853022965,
+          "mean": 0.4008359880307335,
+          "median": 0.35695504934654965,
+          "p95": 0.8100789233609796,
+          "p99": 0.879203454974959,
+          "rmse": 0.4470632437745316
+        },
+        "yaw_error_deg": {
+          "count": 2544,
+          "maximum": 3.1588052076637476,
+          "mean": 0.6708125646887455,
+          "median": 0.2965350720235797,
+          "p95": 2.7728727049890853,
+          "p99": 2.919436464210571,
+          "rmse": 1.1280322903725797
+        }
+      },
+      "100": {
+        "count": 0
+      },
+      "50": {
+        "count": 1533,
+        "translation_error_m": {
+          "count": 1533,
+          "maximum": 1.4892398921966754,
+          "mean": 0.7910989239889826,
+          "median": 0.7401170972760934,
+          "p95": 1.308450098379411,
+          "p99": 1.3920292417476745,
+          "rmse": 0.8671808843050757
+        },
+        "yaw_error_deg": {
+          "count": 1533,
+          "maximum": 3.3933173717816567,
+          "mean": 1.2958034237304674,
+          "median": 0.7576680419857074,
+          "p95": 3.081024368642902,
+          "p99": 3.1412286637546027,
+          "rmse": 1.6478338557853969
+        }
+      }
+    },
+    "samples": 2835,
+    "yaw_error_deg": {
+      "count": 2835,
+      "maximum": 4.12074018955261,
+      "mean": 2.692734625010494,
+      "median": 3.015597999187675,
+      "p95": 3.7395528876249675,
+      "p99": 3.811524575258791,
+      "rmse": 2.905670409275133
+    }
+  },
+  "schema_version": 1
+}

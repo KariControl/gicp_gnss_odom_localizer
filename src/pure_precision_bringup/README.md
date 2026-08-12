@@ -45,22 +45,42 @@ This is a one-way observation of the existing global result. Neither the
 dedicated anchor nor either precision output is subscribed by the existing
 odometer or GNSS fusion, so there is no feedback into the production path.
 
-For the Hesai runner, select the branch with
-`--tracking-mode scan_to_submap`; `scan_to_scan` starts no precision process and
-does not publish or record precision topics. Both modes use the requested bag
-playback rate, normally `--rate 1.0`.
+For the Hesai bag runner, select the branch with
+`--localization-mode precision`; `baseline` starts no precision process and
+does not publish or record precision topics. The odometer remains explicitly
+configured for `scan_to_scan` in both modes. Both modes use the requested bag
+playback rate, normally `--rate 1.0`. The former
+`--tracking-mode scan_to_scan|scan_to_submap` interface remains temporarily as
+a warning-producing compatibility alias for `baseline|precision`.
+
+The LiDAR/IMU-only GLIM runner can exercise the same isolated local branch
+without starting GNSS or global fusion:
+
+```bash
+script/run_lidar_imu_glim_bag.sh \
+  --sensor velodyne --localization-mode precision --snapshot-interval 2 \
+  --output /path/to/result
+```
+
+It feeds the compositor from the accepted-scan odometry topic, records no
+precision-global output, and runs `validate_lidar_imu_submap_run.py` before
+accepting a result. `evaluate_lidar_imu_submap_ab.py` performs the corresponding
+physical-stamp GLIM A/B against a baseline run. The 2026-08-12 Velodyne and
+MID360 evaluation did not pass the accuracy adoption gates, so this command is
+an evaluation path and does not enable precision-local as the production
+LiDAR/IMU output.
 
 Raw non-intrusion is evaluated with an additional instrumented control run:
 
 ```bash
-script/run_vehicle_localizer_hesai_nmea_gnss_no_snow_lp.sh \
-  --tracking-mode scan_to_scan --accepted-scan-control \
+script/run_hesai_localization_bag.sh \
+  --localization-mode baseline --accepted-scan-control \
   --bag /path/to/input_bag --rate 1.0 --output /path/to/control_result
 ```
 
 This uses the same accepted-scan snapshot publisher and recorder load as the
 precision run, but starts neither precision node. It is an evaluation-only
-control; normal `scan_to_scan` remains free of snapshot conversion/publishing.
+control; normal `baseline` remains free of snapshot conversion/publishing.
 
 The precision recorder is checked with:
 
@@ -84,6 +104,13 @@ bag on physical ROS header stamps. It freezes the speed-run calibration for
 both trajectories, reports fixed-frame and independently aligned shape ATE,
 yaw, 10/50/100 m RPE, outage behavior, and treats 50 Hz timer-to-timer
 differences as reference warnings rather than raw non-intrusion gates.
+With optional `--plot-directory /path/to/plots`, it also writes local/global
+three-panel PNGs (trajectory, absolute XY error, and absolute yaw error) and
+the aligned samples as CSV. These artifacts use the same frozen shared
+speed-baseline SE(2) and separate circular yaw offsets as the fixed-frame JSON
+metrics; CSV readback RMSE is checked against those metrics before the
+evaluation report is accepted. Calibration and common GNSS-outage intervals
+are shaded in the error panels.
 
 The raw non-intrusion check preserves the exact-common pose/increment gates and
 adds interval-policy counts, at least 99.8% `(generation, sequence)` coverage,

@@ -42,6 +42,22 @@ The corrected-IMU buffer rejects zero, non-finite, over-range, reordered samples
 
 ## Output semantics
 
-`/localization/gnss_fusion_input` is authoritative. Use `heading_valid`, `position_is_base_link`, and `observation_point_valid`; never inspect a placeholder quaternion to infer validity.
+`/localization/gnss_fusion_input` is authoritative. Use `heading_valid`,
+`position_is_base_link`, and `observation_point_valid`; never inspect a
+placeholder quaternion to infer validity.
 
-Legacy pose outputs are base-link poses and are withheld until both yaw and required antenna geometry are valid. Position-only GGA is still usable by the fusion input.
+A valid GGA fix without a valid yaw remains a usable position observation. It
+is published with `heading_valid=false` and `position_is_base_link=false`. When
+the calibrated antenna transform is available,
+`observation_point_in_base` contains the antenna lever arm and
+`observation_point_valid=true`, allowing fusion to model the antenna position
+without pretending that it is the vehicle origin.
+
+The generic configuration keeps `allow_parameter_antenna_fallback=false`.
+A calibrated TF is therefore required unless a deployment explicitly opts into
+and validates parameter-based antenna geometry.
+
+Legacy global-pose, pose-with-covariance, and GNSS-odometry outputs represent
+`base_link` and are withheld until both yaw and required antenna geometry are
+valid. This prevents an antenna coordinate with an identity placeholder
+quaternion from being mislabeled as a `base_link` pose.

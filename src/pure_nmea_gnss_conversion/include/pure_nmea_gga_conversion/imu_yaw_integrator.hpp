@@ -126,11 +126,8 @@ inline ImuYawIntegrationResult integrateYawRate(
   }
   knots.push_back({end_sec, end_rate});
 
-  if (knots.size() < 2) {
-    out.reason = "not_enough_knots";
-    return out;
-  }
-
+  // The validated interval has distinct boundaries and both are always
+  // inserted, so the integration loop necessarily has at least one segment.
   double max_gap = 0.0;
   double integral = 0.0;
   double absolute_integral = 0.0;

@@ -20,7 +20,7 @@ From the repository root:
 
 ```bash
 ./script/run_autoware_lsim_docker.sh \
-  --bag /absolute/path/to/bag \
+  --bag <bag_path> \
   --points /sensing/lidar/top/pointcloud_raw \
   --imu /sensing/imu/tamagawa/imu_raw
 ```
@@ -33,24 +33,25 @@ down when playback ends.
 
 Results are written below `docker_output/` unless `--output` is supplied.
 
-## Included Hesai ROSBAG2/3
+## Private Hesai Course 1/2 profile
 
-The `hesai-rosbag23` profile is required for the repository's
-`rosbag/output_pointcloud2` and `rosbag/output_pointcloud3`. It supplies their
-three calibrated sensor transforms, exact source topics, Hesai XT parameters,
-GNSS, and a shared site-local origin. Do not combine it with
-`--launch-vehicle` or `--already-deskewed`.
+The `hesai-rosbag23` profile is used for the private recordings identified in
+the evaluation documentation as **Hesai 32-Line + IMU + RTK GNSS — Course 1**
+and **Hesai 32-Line + IMU + RTK GNSS — Course 2**. The recordings are not
+distributed on GitHub. The profile supplies three calibrated sensor transforms,
+the source topics, Hesai XT parameters, GNSS, and a shared site-local origin.
+Do not combine it with `--launch-vehicle` or `--already-deskewed`.
 
 ```bash
 ROS_DOMAIN_ID=82 ./script/run_autoware_lsim_docker.sh \
-  --bag "$PWD/rosbag/output_pointcloud2" \
+  --bag <hesai_course_1_bag> \
   --profile hesai-rosbag23 \
-  --run-name rosbag2_lsim
+  --run-name hesai_course_1_lsim
 
 ROS_DOMAIN_ID=83 ./script/run_autoware_lsim_docker.sh \
-  --bag "$PWD/rosbag/output_pointcloud3" \
+  --bag <hesai_course_2_bag> \
   --profile hesai-rosbag23 \
-  --run-name rosbag3_lsim \
+  --run-name hesai_course_2_lsim \
   --no-build
 ```
 
@@ -58,14 +59,21 @@ The profile replays only PointCloud2, IMU, and NMEA, generates `/clock` at
 100 Hz, waits for recorder discovery, and records estimator diagnostics and
 the Autoware localization interface. The recorded bag is acceptance-checked
 automatically and the report is saved as `validation.log`. See the
-[detailed Japanese runbook](../../docs/autoware_lsim_rosbag2_rosbag3.md) for
-preflight checks, acceptance criteria, output analysis, and limitations.
+[reusable evaluation workflow](../../docs/rosbag_and_autoware_lsim_evaluation.md)
+for preflight checks and execution details, and the
+[curated evaluation results](../../docs/evaluation/autoware_lsim.md) for measured
+outcomes and limitations.
 
-## Scan-to-submap
+## Isolated precision overlay
+
+The Docker wrapper temporarily retains `scan_to_submap` as its compatibility UI
+token. It does not enable an internal odometer tracking path: the odometer stays
+on `scan_to_scan`, publishes accepted-scan snapshots, and the separate precision
+overlay performs rolling-submap matching.
 
 ```bash
 ./script/run_autoware_lsim_docker.sh \
-  --bag /absolute/path/to/bag \
+  --bag <bag_path> \
   --points /sensing/lidar/top/pointcloud_raw \
   --imu /sensing/imu/tamagawa/imu_raw \
   --tracking-mode scan_to_submap
@@ -75,7 +83,7 @@ preflight checks, acceptance criteria, output analysis, and limitations.
 
 ```bash
 ./script/run_autoware_lsim_docker.sh \
-  --bag /absolute/path/to/bag \
+  --bag <bag_path> \
   --points /sensing/lidar/top/pointcloud_raw \
   --imu /sensing/imu/tamagawa/imu_raw \
   --nmea /sensing/gnss/nmea_sentence \

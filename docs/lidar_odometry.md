@@ -1,150 +1,54 @@
 # LiDAR–IMU odometry
 
-## Tracking-mode selection
+## Scan-to-scan contract
 
-The primary LiDAR registration path is selected at node startup:
+`pure_lidar_gyro_odometer` has one supported primary registration path:
 
 ```yaml
-lidar_odom.tracking_mode: scan_to_scan   # backward-compatible default
-# or
-lidar_odom.tracking_mode: scan_to_submap
+lidar_odom.tracking_mode: scan_to_scan
 ```
 
-`src/pure_lidar_gyro_odometer/param/param.yaml` selects `scan_to_scan` and
-`param_scan_to_submap.yaml` selects `scan_to_submap`. Both modes use the same
-odometry topic, covariance output, IMU input, and GNSS fusion interface.
-`scan_to_submap` requires `lidar_odom.pose_se2.enable: true` and
-`lidar_odom.smoother.enable: true` so keyframe placement can be repaired from
-the retained optimized pose window. Changing the mode does not require changing
-downstream consumers.
-
-The mode is not dynamically changed while the node is running. Restart the
-odometer after changing the YAML.
-
-## Scan-to-scan primary mode
+The parameter is retained for configuration compatibility and diagnostics, but
+any other value is rejected at startup. The former in-node scan-to-submap path,
+its rolling local map, and the optional periodic local-map factor have been
+retired. High-precision localization is provided by a separate process branch;
+it does not change the production odometer's registration source.
 
 Every accepted scan is downsampled and registered against the previous accepted
 scan using small_gicp GICP or VGICP. Corrected IMU yaw supplies the rotational
-initial guess when the full prior is not requested.
+initial guess when the full prior is not requested. Only a valid registration
+becomes the next target. A rejected or malformed scan is not promoted, so one
+bad match cannot directly poison the next scan pair. A gap longer than
+`lidar_odom.timeout_sec` resets the scan pair and smoother at the current
+accepted odometry pose.
 
-Only a valid registration becomes the next target. A rejected or malformed scan
-is not promoted, so one bad match cannot directly poison the next scan pair.
-A gap longer than `lidar_odom.timeout_sec` resets the scan pair, smoother anchor,
-and optional local map at the current accepted odometry pose.
+## Strict deskew input contract
 
-The optional legacy periodic local-map factor is controlled by:
+When IMU deskew is enabled, a point cloud is rejected rather than approximated
+if any of these conditions holds:
 
-```yaml
-lidar_odom.local_map.enable: true
-```
+- no supported per-point time field is present;
+- point times are non-finite, have no usable span, or disagree with the cloud
+  timestamp;
+- IMU samples do not cover the complete scan interval, or an internal IMU gap
+  exceeds the configured limit;
+- the required `base_link <- scan` or `base_link <- imu` static transform is
+  unavailable;
+- the `PointCloud2` field layout is malformed or the message is big-endian;
+- translation deskew is enabled but the selected speed source does not cover
+  the scan interval.
 
-This lower-rate factor exists only as an additional consistency observation in
-`scan_to_scan` mode. It is not needed to activate the submap in
-`scan_to_submap` mode.
-
-## Scan-to-submap primary mode
-
-### State sequence
-
-The submap path deliberately retains scan-to-scan instead of deleting it:
-
-```text
-startup / submap reset
-        |
-        v
-scan-to-scan warm-up ----> active submap ready
-                                  |
-                    +-------------+-------------+
-                    |                           |
-                    v                           v
-          scan-to-submap accepted       submap attempt rejected
-             primary measurement          scan-to-scan fallback
-                    |
-                    v
-       repaired rolling keyframe submap
-```
-
-When `lidar_odom.scan_to_submap.match_interval_frames` is greater than one,
-non-submap frames use `scan_to_scan_interim`. These scheduled interim frames are
-not counted as submap failures and are used even when failure fallback is
-disabled.
-
-### Primary observation
-
-Once the map contains at least `lidar_odom.local_map.min_keyframes` and
-`lidar_odom.local_map.min_points`, the current scan is registered against the
-rolling target. A candidate must pass all of the following before it is the
-primary factor:
-
-- small_gicp convergence;
-- finite transform and Hessian;
-- local-map fitness and inlier-ratio gates;
-- maximum planar translation and yaw correction from the motion prediction;
-- maximum vertical, roll, and pitch correction;
-- optional disagreement gates against the scan-to-scan monitor.
-
-The accepted absolute pose in the submap anchor is converted into a relative
-transform from the previous accepted vehicle pose. Only that selected relative
-measurement is inserted into the fixed-lag graph; the scan-to-scan result is not
-also inserted as a second independent factor for the same interval.
-
-### Motion prediction and monitor
-
-Scan-to-scan is evaluated in submap mode for three reasons:
-
-1. it bootstraps the submap;
-2. it supplies a close initial pose for local-map registration;
-3. it provides scheduled interim propagation and a configurable failure
-   fallback.
-
-A large scan-to-scan/submap disagreement can reject the submap candidate when
-the configured disagreement limit is positive. Set either limit to zero to
-disable that particular gate. This comparison is a safety gate, not a claim
-that scan-to-scan is statistically independent of the submap result.
-
-### Repairable submap representation
-
-Keyframe clouds are stored in an independent submap-anchor frame rather than
-being permanently transformed into `odom` at insertion time. Each keyframe also
-records the corresponding accepted-pose sequence number.
-
-After a successful fixed-lag solve:
-
-1. retained optimized poses are associated with recent keyframes;
-2. corrected keyframe poses are re-expressed in the active anchor frame;
-3. the local point cloud is rebuilt when a retained keyframe changed;
-4. the anchor-to-odom transform is adjusted as a rigid transform;
-5. when old keyframes leave the rolling window, the map is re-anchored on the
-   oldest retained keyframe.
-
-This prevents the previous failure mode in which scans were permanently baked
-with stale odometry poses, producing doubled walls and a progressively warped
-registration target.
-
-Only keyframes still represented by the fixed-lag window receive individual
-pose repair. Older retained keyframes move rigidly with the submap anchor. This
-is a local odometry mechanism, not global pose-graph SLAM.
-
-### Failure containment
-
-If a submap attempt fails and
-`lidar_odom.scan_to_submap.fallback_to_scan_to_scan` is true, a valid
-scan-to-scan result can propagate the pose for that interval. A failed-fallback
-scan is not inserted into an already-ready submap, which limits target
-contamination.
-
-After `lidar_odom.scan_to_submap.max_consecutive_failures` failed submap
-attempts, the active map is discarded and rebuilt from the current accepted
-pose. Tracking then returns to scan-to-scan warm-up. If failure fallback is
-disabled and neither path is valid, the estimator holds the last accepted pose.
+The compatibility parameters `allow_linear_time_fallback` and
+`allow_default_speed_fallback` remain `false` in the supplied configurations.
+Do not enable them to hide a timestamp, driver, TF, or speed-source defect in a
+quantitative evaluation.
 
 ## Fixed-lag SE(2) graph
 
 The graph contains poses `(x, y, yaw)` and relative factors for:
 
-- the selected LiDAR registration path;
+- scan-to-scan LiDAR registration;
 - corrected-IMU yaw increment;
-- optional periodic local-map pose in scan-to-scan mode;
 - optional stationary ZUPT;
 - optional non-holonomic lateral displacement;
 - weak smoothness regularization.
@@ -157,11 +61,11 @@ fallback pose.
 
 ## Continuous anisotropic registration information
 
-The selected registration Hessian is reduced from SE(3) to SE(2), metric-scaled,
-and eigendecomposed. Each normalized information ratio remains continuous in
-`[0, 1]`; the ratios are not thresholded into a `degenerate/normal` class.
-Directions with less information receive less weight in the fixed-lag graph,
-while a small configurable numerical floor keeps the linear system solvable:
+The registration Hessian is reduced from SE(3) to SE(2), metric-scaled, and
+eigendecomposed. Each normalized information ratio remains continuous in
+`[0, 1]`; it is not thresholded into a `degenerate/normal` class. Directions
+with less information receive less weight in the fixed-lag graph, while a small
+configurable floor keeps the linear system solvable:
 
 ```yaml
 lidar_odom.smoother.hessian_information.enable: true
@@ -170,15 +74,15 @@ lidar_odom.smoother.hessian_information.min_direction_ratio: 0.02
 odom_covariance.observability_max_scale: 2.0
 ```
 
-Low directional information alone does not reject a registration, change the
-tracking source, latch a critical state, or force a different next-frame guess.
+Low directional information alone does not reject a registration, switch its
+source, latch a critical state, or force a different next-frame guess.
 Registration acceptance remains based on convergence, finite output, valid
-timing, and the mode-specific fitness and submap gates.
+timing, and the scan-to-scan fitness gate.
 
 The published covariance increment is scaled smoothly from `1.0` to
 `odom_covariance.observability_max_scale` using the mean normalized information
-deficit. This is a conservative quality indicator, not a calibrated statistical
-covariance derived from independent observations.
+deficit. This is a conservative quality indicator, not a calibrated covariance
+derived from independent observations.
 
 Wheel speed is not required. When explicitly enabled, the optional continuous
 assist can blend only the lower-information Hessian directions toward a
@@ -194,32 +98,63 @@ wheel_speed.observability_assist.power: 2.0
 The public profiles keep this assist disabled. There is no threshold that turns
 it on automatically.
 
+## Isolated precision snapshot bridge
+
+The optional `lidar_odom.external_submap_snapshot.*` publisher is deliberately
+not a registration path. When enabled by
+`pure_precision_bringup/config/submap_snapshot_override.yaml`, it copies an
+accepted scan and its unmodified scan-to-scan pose to
+`/localization/submap_scan` at the configured accepted-pose interval.
+
+Each message contains an exact identity tuple:
+
+```text
+odom_session_id + odom_generation + sequence + accepted scan stamp
+```
+
+The first accepted pose in every odometer generation is always published. A
+tracking reset increments the generation, preventing the external consumer from
+mixing scans across discontinuous source streams. Cloud conversion and
+publication occur only when the bridge is enabled; every normal odometer profile
+keeps it disabled.
+
+`pure_lidar_submap_matcher` consumes these snapshots in a separate process. It
+builds its own rolling map, gates and robustly commits a persistent full-SE(2)
+`odom_precision <- odom` correction, and publishes
+`/localization/submap_correction`. `pure_precision_global_localizer` then emits
+the separate `/localization/precision_local_odom` and
+`/localization/precision_global_odom` outputs. Neither node publishes TF or feeds
+back into `/localization/gyro_lidar_odom` or the existing GNSS fusion.
+
+This isolation is a required safety property. Do not enable snapshots and then
+set the odometer tracking mode to anything other than `scan_to_scan`; startup
+validation rejects that combination.
+
 ## Diagnostics
 
 The odometer diagnostic status reports at least:
 
-- configured tracking mode, selected registration source, validity, and explicit
-  registration rejection reason;
-- `scan_to_submap`, warm-up, interim, and fallback counts;
-- local-map readiness, keyframe/point count, accepted/rejected attempts, and
-  consecutive failures;
-- last submap rejection reason, fitness, inlier ratio, and disagreement;
-- normalized minimum/middle/maximum directional information ratios and continuous
-  information deficit;
+- the configured `scan_to_scan` mode, registration validity, source, and an
+  explicit rejection reason;
+- normalized directional information ratios and the continuous information
+  deficit;
 - optional wheel-prior difference and continuous assist amount;
-- graph and pose health through the existing odometry status fields.
+- graph, pose, covariance, and next-guess health;
+- whether accepted-scan snapshots are enabled, their exact-key contract,
+  session/generation/sequence, publish count, and conversion cost.
 
 The former binary `/localization/lidar_degenerate` and
-`/localization/lidar_pose_mode` topics are removed. Continuous values are always
+`/localization/lidar_pose_mode` topics are removed. Continuous values are
 available in `/diagnostics`; an optional verbose string stream can be enabled at
 `/localization/lidar_observability_debug`.
 
-Use the actual `lidar_last_registration_source` rather than assuming that the
-configured mode succeeded on every frame.
+The external matcher and precision-global localizer publish their own
+diagnostics. Use those statuses for submap acceptance/rebuild and global-anchor
+health instead of expecting internal-submap counters from the odometer.
 
-## What scan-to-submap does not solve
+## Scope
 
-A rolling local map reduces short-horizon accumulation and makes registration
-less dependent on one immediately preceding scan. It does not provide a global
-absolute observation. Without GNSS, another external anchor, or loop closure,
-long-duration global drift remains possible.
+The baseline remains local scan-to-scan dead reckoning. The isolated rolling
+submap reduces short-horizon accumulation but supplies no global absolute
+observation. Without GNSS, another external anchor, or loop closure,
+long-duration global drift remains possible in both local outputs.

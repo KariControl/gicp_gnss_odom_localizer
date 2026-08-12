@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <deque>
-#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -107,46 +106,8 @@ private:
     double raw_yaw_rate{0.0};
     double inlier_ratio{0.0};
     std::string registration_source{"none"};
-    bool used_submap{false};
-    bool used_scan_to_scan_fallback{false};
     std::string rejection_reason{"not_evaluated"};
     ObservabilityInfo observability;
-  };
-
-  struct LocalMapKeyframe
-  {
-    rclcpp::Time stamp;
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud;
-    // Pose of base_link in the active submap anchor frame. The submap is never
-    // baked in odom coordinates, so a smoother correction moves the anchor as a
-    // whole instead of distorting already inserted keyframes.
-    se2::Pose anchor_base_pose;
-    std::uint64_t pose_sequence{0};
-  };
-
-  struct LocalMapObservation
-  {
-    bool ready{false};
-    bool attempted{false};
-    bool accepted{false};
-    se2::Pose anchor_base_pose;
-    se2::Pose odom_base_pose;
-    Eigen::Matrix4f T_prev_curr_scan{Eigen::Matrix4f::Identity()};
-    Eigen::Matrix<double, 6, 6> hessian_scan{
-      Eigen::Matrix<double, 6, 6>::Zero()};
-    bool has_hessian{false};
-    double fitness{std::numeric_limits<double>::infinity()};
-    double inlier_ratio{0.0};
-    double correction_translation_m{0.0};
-    double correction_yaw_rad{0.0};
-    double correction_z_m{0.0};
-    double correction_roll_rad{0.0};
-    double correction_pitch_rad{0.0};
-    double scan_disagreement_translation_m{0.0};
-    double scan_disagreement_yaw_rad{0.0};
-    double factor_weight_xy{0.0};
-    double factor_weight_yaw{0.0};
-    std::string reason{"not_attempted"};
   };
 
   using ScanFactor = se2::RelativeFactor;
@@ -173,28 +134,6 @@ private:
   bool updateMiniSmootherLocked(const ScanFactor & factor);
   void resetLidarTrackingLocked();
   void validateParameters() const;
-  LocalMapObservation matchAgainstLocalMap(
-    const pcl::PointCloud<pcl::PointXYZ>::ConstPtr & cloud,
-    const Eigen::Matrix4f & T_base_scan, const Eigen::Matrix4f & T_scan_base,
-    const se2::Pose & predicted_odom_base_pose, int frame_sequence,
-    bool primary_tracking_attempt);
-  void initializeLocalMapLocked(
-    const pcl::PointCloud<pcl::PointXYZ>::ConstPtr & cloud,
-    const rclcpp::Time & stamp, const se2::Pose & odom_base_pose,
-    std::uint64_t pose_sequence);
-  void maybeAddLocalMapKeyframeLocked(
-    const pcl::PointCloud<pcl::PointXYZ>::ConstPtr & cloud,
-    const rclcpp::Time & stamp, const se2::Pose & anchor_base_pose,
-    std::uint64_t pose_sequence);
-  void repairLocalMapFromSmootherLocked(std::uint64_t newest_pose_sequence);
-  void rebuildLocalMapLocked();
-  void reanchorLocalMapLocked();
-  bool localMapRequired() const;
-  bool localMapReadyLocked() const;
-  se2::Pose odomPoseToLocalMapAnchorLocked(const se2::Pose & odom_base_pose) const;
-  void alignLocalMapAnchorToPoseLocked(
-    const se2::Pose & odom_base_pose, const se2::Pose & anchor_base_pose);
-  void resetLocalMapLocked(const std::string & reason);
 
   // -------- Parameters --------
   std::string base_frame_;
@@ -214,6 +153,7 @@ private:
   bool imu_corrected_enable_{true};
   bool imu_corrected_apply_tf_{true};
   bool imu_corrected_transform_orientation_{false};
+  double imu_linear_acceleration_scale_{1.0};
   double imu_max_abs_yaw_rate_radps_{8.0};
   double imu_max_sample_gap_sec_{0.10};
   double imu_max_boundary_gap_sec_{0.03};
@@ -305,12 +245,6 @@ private:
   double lidar_yaw_blend_imu_{0.0};
   bool lidar_guess_use_imu_yaw_only_{true};
   std::string lidar_tracking_mode_name_{"scan_to_scan"};
-  tracking::Mode lidar_tracking_mode_{tracking::Mode::ScanToScan};
-  bool lidar_scan_to_submap_fallback_enable_{true};
-  int lidar_scan_to_submap_match_interval_frames_{1};
-  int lidar_scan_to_submap_max_consecutive_failures_{5};
-  double lidar_scan_to_submap_max_scan_disagreement_translation_m_{1.0};
-  double lidar_scan_to_submap_max_scan_disagreement_yaw_rad_{0.35};
 
   // Lightweight fixed-lag smoothing for local odometry
   bool lidar_smoother_enable_{true};
@@ -328,39 +262,11 @@ private:
   bool lidar_smoother_nhc_enable_{false};
   double lidar_smoother_nhc_w_lateral_{2.0};
   double lidar_smoother_nhc_huber_delta_m_{0.1};
-  double lidar_smoother_local_huber_delta_xy_m_{0.35};
-  double lidar_smoother_local_huber_delta_yaw_rad_{0.12};
   double lidar_smoother_max_position_correction_m_{2.0};
   double lidar_smoother_max_yaw_correction_rad_{0.35};
   bool lidar_smoother_hessian_enable_{true};
   double lidar_smoother_hessian_yaw_metric_m_{2.0};
   double lidar_smoother_hessian_min_direction_ratio_{1.0e-4};
-
-  // Active local submap. In scan_to_submap mode it is the primary registration
-  // target. In scan_to_scan mode, lidar_odom.local_map.enable retains the
-  // optional periodic consistency factor from 0.2.0-rc1.
-  bool lidar_local_map_enable_{false};
-  int lidar_local_map_match_interval_frames_{5};
-  int lidar_local_map_min_keyframes_{3};
-  int lidar_local_map_max_keyframes_{15};
-  int lidar_local_map_min_points_{200};
-  int lidar_local_map_keyframe_min_interval_frames_{3};
-  int lidar_local_map_keyframe_max_interval_frames_{20};
-  double lidar_local_map_keyframe_min_translation_m_{0.75};
-  double lidar_local_map_keyframe_min_yaw_rad_{0.15};
-  double lidar_local_map_voxel_leaf_m_{0.35};
-  int lidar_local_map_max_points_{200000};
-  double lidar_local_map_max_corr_dist_m_{1.0};
-  int lidar_local_map_max_iterations_{30};
-  double lidar_local_map_max_fitness_{1.0};
-  double lidar_local_map_min_inlier_ratio_{0.25};
-  double lidar_local_map_max_correction_translation_m_{0.50};
-  double lidar_local_map_max_correction_yaw_rad_{0.12};
-  double lidar_local_map_max_correction_z_m_{0.25};
-  double lidar_local_map_max_correction_roll_pitch_rad_{0.15};
-  double lidar_local_map_factor_weight_xy_{6.0};
-  double lidar_local_map_factor_weight_yaw_{10.0};
-  double lidar_local_map_fitness_sigma_{0.50};
 
   // Optional, output-only bridge to the isolated precision pipeline.  When
   // disabled (the default), no cloud conversion or publication is performed.
@@ -368,12 +274,19 @@ private:
   std::string external_submap_snapshot_topic_{"/localization/submap_scan"};
   int external_submap_snapshot_publish_interval_frames_{5};
 
+  // Optional audit/evaluation stream.  Unlike the timer-based raw odometry,
+  // this publishes exactly once per accepted scan using that scan's stamp.
+  bool accepted_scan_odom_enable_{false};
+  std::string accepted_scan_odom_topic_{"/localization/gyro_lidar_odom_scan"};
+
   // -------- ROS I/F --------
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
   rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr sub_wheel_twist_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr sub_ref_pose_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_points_;
-  rclcpp::CallbackGroup::SharedPtr sensor_callback_group_;
+  rclcpp::CallbackGroup::SharedPtr imu_callback_group_;
+  rclcpp::CallbackGroup::SharedPtr lidar_callback_group_;
+  rclcpp::CallbackGroup::SharedPtr auxiliary_sensor_callback_group_;
 
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_odom_raw_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_odom_filtered_;
@@ -381,6 +294,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr pub_imu_corrected_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr pub_diag_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_observability_debug_;
+  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_accepted_scan_odom_;
   rclcpp::Publisher<pure_lidar_msgs::msg::SubmapScan>::SharedPtr
     pub_external_submap_snapshot_;
 
@@ -471,31 +385,13 @@ private:
   double external_submap_snapshot_conversion_last_ms_{0.0};
   double external_submap_snapshot_conversion_sum_ms_{0.0};
   double external_submap_snapshot_conversion_max_ms_{0.0};
+  std::uint64_t accepted_scan_odom_published_count_{0};
 
   // Fixed-lag SE(2) factor graph (ROS/PCL independent and unit-tested).
   se2::FixedLagSmoother lidar_smoother_;
   bool lidar_smoother_initialized_{false};
 
-  // Active submap in its own anchor frame. The odom<-anchor transform is
-  // adjusted after smoothing; keyframe geometry stays in anchor coordinates.
-  std::deque<LocalMapKeyframe> local_map_keyframes_;
-  pcl::PointCloud<pcl::PointXYZ>::Ptr local_map_cloud_;
-  bool local_map_initialized_{false};
-  se2::Pose local_map_odom_anchor_pose_{};
-  se2::Pose local_map_last_tracking_anchor_pose_{};
-  bool has_local_map_last_tracking_pose_{false};
-  int local_map_frame_sequence_{0};
-  int local_map_frames_since_keyframe_{0};
-  int local_map_consecutive_failures_{0};
-  std::uint64_t local_map_match_accepted_count_{0};
-  std::uint64_t local_map_match_rejected_count_{0};
-  std::uint64_t scan_to_submap_primary_count_{0};
-  std::uint64_t scan_to_scan_interim_count_{0};
-  std::uint64_t scan_to_scan_fallback_count_{0};
-  std::uint64_t scan_to_scan_warmup_count_{0};
-  LocalMapObservation last_local_map_observation_;
   std::string last_registration_source_{"none"};
-  std::string local_map_reset_reason_{"startup"};
 
   // Stop state
   bool is_stopped_{false};

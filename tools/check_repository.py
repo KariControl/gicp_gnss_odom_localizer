@@ -376,6 +376,8 @@ def check_required_semantics() -> None:
         "hesai_imu_static_transform",
         "hesai_gnss_static_transform",
         "nmea_gnss_override_param",
+        "gnss_fusion_override_param",
+        "fusion_xy_only_recovery",
     ):
         if token not in lsim_launch:
             fail(f"Autoware LSim launch path missing: {token}")
@@ -389,6 +391,8 @@ def check_required_semantics() -> None:
         "points_input_topic",
         "odom_override_param",
         "nmea_gnss_override_param",
+        "gnss_fusion_override_param",
+        "fusion_xy_only_recovery",
     ):
         if token not in bringup_launch:
             fail(f"bag-replay launch argument missing: {token}")
@@ -477,7 +481,6 @@ def check_safe_defaults() -> None:
         "out_filtered_odom.enable": lidar,
         "lidar_odom.smoother.zupt.enable": lidar,
         "lidar_odom.smoother.nhc.enable": lidar,
-        "lidar_odom.local_map.enable": lidar,
         "allow_parameter_antenna_fallback": nmea,
         "gnss_allow_unknown_observation_point": fusion,
         "gnss_force_accept_allow_float": fusion,
@@ -503,52 +506,61 @@ def check_safe_defaults() -> None:
             fail(f"Autoware adapter safe/default interface must remain enabled: {key}")
 
 
-
-
-def check_lidar_tracking_modes() -> None:
-    generic_path = ROOT / "src/pure_lidar_gyro_odometer/param/param.yaml"
-    submap_path = ROOT / "src/pure_lidar_gyro_odometer/param/param_scan_to_submap.yaml"
-    generic = parameter_map(generic_path)
-    submap = parameter_map(submap_path)
-
-    if generic.get("lidar_odom.tracking_mode") != "scan_to_scan":
-        fail("backward-compatible generic LiDAR mode must remain scan_to_scan")
-    if submap.get("lidar_odom.tracking_mode") != "scan_to_submap":
-        fail("scan-to-submap profile must select scan_to_submap")
-
-    profile_differences = {
-        key
-        for key in set(generic) | set(submap)
-        if generic.get(key) != submap.get(key)
+def check_lidar_tracking_contract() -> None:
+    parameter_directory = ROOT / "src/pure_lidar_gyro_odometer/param"
+    public_profiles = {
+        path.name: parameter_map(path)
+        for path in sorted(parameter_directory.glob("*.yaml"))
     }
-    if profile_differences != {"lidar_odom.tracking_mode"}:
-        fail(
-            "scan-to-submap profile must differ from the generic profile only by "
-            f"lidar_odom.tracking_mode: {sorted(profile_differences)}"
-        )
+    if "param_scan_to_submap.yaml" in public_profiles:
+        fail("retired in-odometer scan-to-submap profile must not be installed")
 
-    for name, mapping in (("generic", generic), ("submap", submap)):
+    for name, mapping in public_profiles.items():
+        if mapping.get("lidar_odom.tracking_mode") != "scan_to_scan":
+            fail(f"{name} must select the only supported odometer mode: scan_to_scan")
         if mapping.get("wheel_speed.use") is not False:
-            fail(f"{name} LiDAR profile must not require wheel speed")
+            fail(f"{name} must not require wheel speed")
         if mapping.get("lidar_odom.smoother.hessian_information.enable") is not True:
-            fail(f"{name} LiDAR profile must keep directional Hessian weighting enabled")
+            fail(f"{name} must keep directional Hessian weighting enabled")
         if mapping.get("wheel_speed.observability_assist.enable") is not False:
-            fail(f"{name} LiDAR profile must keep optional wheel assist disabled")
+            fail(f"{name} must keep optional wheel assist disabled")
         if mapping.get("lidar_odom.smoother.enable") is not True:
-            fail(f"{name} LiDAR profile must keep the fixed-lag smoother enabled")
+            fail(f"{name} must keep the scan-to-scan fixed-lag smoother enabled")
+        retired = sorted(
+            key
+            for key in mapping
+            if key.startswith("lidar_odom.scan_to_submap.")
+            or key.startswith("lidar_odom.local_map.")
+        )
+        if retired:
+            fail(f"retired internal submap parameters remain in {name}: {retired}")
+
+    retired_override = (
+        ROOT / "src/pure_odometry_bringup/config/autoware_lsim/scan_to_submap_override.yaml"
+    )
+    if retired_override.exists():
+        fail("retired in-odometer scan-to-submap override must not remain")
+
+    precision_override = parameter_map(
+        ROOT / "src/pure_precision_bringup/config/submap_snapshot_override.yaml"
+    )
+    if precision_override.get("lidar_odom.tracking_mode") != "scan_to_scan":
+        fail("precision snapshot bridge must keep the odometer in scan_to_scan mode")
+    if precision_override.get("lidar_odom.external_submap_snapshot.enable") is not True:
+        fail("precision snapshot bridge must explicitly enable accepted-scan snapshots")
 
     selector = (
         ROOT
         / "src/pure_lidar_gyro_odometer/include/pure_lidar_gyro_odometer/tracking_mode.hpp"
     ).read_text(encoding="utf-8")
-    for token in (
-        "ScanToScanWarmup",
+    for retired_token in (
         "ScanToSubmap",
+        "ScanToScanWarmup",
         "ScanToScanInterim",
         "ScanToScanFallback",
     ):
-        if token not in selector:
-            fail(f"LiDAR tracking selector missing: {token}")
+        if retired_token in selector:
+            fail(f"retired in-odometer tracking selector remains: {retired_token}")
 
     odometer = (
         ROOT / "src/pure_lidar_gyro_odometer/src/gyro_odometer_node.cpp"
@@ -602,13 +614,25 @@ def check_lidar_tracking_modes() -> None:
     ):
         if required not in odometer:
             fail(f"continuous observability path missing: {required}")
-    for token in (
-        "repairLocalMapFromSmootherLocked",
-        "reanchorLocalMapLocked",
-        "consecutive_scan_to_submap_failures",
+    for retired_token in (
+        "LocalMapKeyframe",
+        "LocalMapObservation",
+        "matchAgainstLocalMap",
+        "lidar_scan_to_submap_",
+        "lidar_local_map_",
+        "local_map_keyframes_",
     ):
-        if token not in odometer:
-            fail(f"repairable scan-to-submap path missing: {token}")
+        if retired_token in odometer or retired_token in header:
+            fail(f"retired in-odometer submap implementation remains: {retired_token}")
+
+    for required in (
+        "external_submap_snapshot_enable_",
+        "snapshot_policy::due",
+        "pub_external_submap_snapshot_",
+        "pcl::toROSMsg",
+    ):
+        if required not in odometer and required not in header:
+            fail(f"isolated precision snapshot bridge missing: {required}")
 
 
 def check_gnss_message_access() -> None:
@@ -749,7 +773,7 @@ def main() -> int:
     check_required_semantics()
     check_parameter_files_match_nodes()
     check_safe_defaults()
-    check_lidar_tracking_modes()
+    check_lidar_tracking_contract()
     check_gnss_message_access()
     check_hygiene()
     check_shell()

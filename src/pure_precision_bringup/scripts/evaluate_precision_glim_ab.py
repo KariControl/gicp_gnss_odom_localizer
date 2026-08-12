@@ -16,7 +16,9 @@ from dataclasses import asdict
 import importlib.util
 import json
 import math
+import os
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
@@ -272,6 +274,409 @@ def common_fixed_metrics(
             for distance in RPE_DISTANCES
         },
     }
+
+
+def plot_prefix(label: str) -> str:
+    """Return a short, filesystem-safe plot prefix without bag-specific policy."""
+    pointcloud = re.search(r"pointcloud[_-]?(\d+)", label.lower())
+    if pointcloud:
+        return f"pc{pointcloud.group(1)}"
+    normalized = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")
+    return normalized or "precision"
+
+
+def fixed_shared_series(
+    canonical: Any,
+    reference: Any,
+    trajectories: dict[str, Any],
+    alignment: Any,
+    yaw_offset: float,
+) -> dict[str, dict[str, np.ndarray]]:
+    """Build the exact fixed/shared-alignment arrays used by the A/B metrics."""
+    result: dict[str, dict[str, np.ndarray]] = {}
+    for name, trajectory in trajectories.items():
+        if not np.array_equal(trajectory.stamp_ns, reference.stamp_ns):
+            raise RuntimeError(f"plot trajectory stamps differ from GLIM for {name}")
+        aligned = canonical.apply_alignment(trajectory, alignment)
+        aligned_yaw = np.asarray(wrap(trajectory.yaw + yaw_offset), dtype=float)
+        xy_error = np.linalg.norm(aligned.xy - reference.xy, axis=1)
+        yaw_error = np.degrees(np.abs(wrap(aligned_yaw - reference.yaw)))
+        result[name] = {
+            "xy": np.asarray(aligned.xy, dtype=float),
+            "yaw": aligned_yaw,
+            "xy_error_m": np.asarray(xy_error, dtype=float),
+            "yaw_error_deg": np.asarray(yaw_error, dtype=float),
+        }
+    return result
+
+
+def write_fixed_shared_csv(
+    path: Path,
+    reference: Any,
+    series: dict[str, dict[str, np.ndarray]],
+    evaluations: dict[str, Any],
+    calibration_interval_ns: tuple[int, int] | None = None,
+    outage_interval_ns: tuple[int, int] | None = None,
+    tolerance: float = 1.0e-6,
+) -> dict[str, dict[str, float]]:
+    """Write auditable plot samples and verify their RMSE against JSON metrics."""
+    names = list(series)
+    if not np.all(np.isfinite(reference.xy)) or not np.all(np.isfinite(reference.yaw)):
+        raise RuntimeError("plot reference contains non-finite values")
+    if np.any(np.diff(reference.stamp_ns) <= 0):
+        raise RuntimeError("plot reference stamps are not strictly increasing")
+    cumulative_distance = np.concatenate(
+        (
+            np.asarray([0.0]),
+            np.cumsum(np.linalg.norm(np.diff(reference.xy, axis=0), axis=1)),
+        )
+    )
+    if not np.all(np.isfinite(cumulative_distance)) or np.any(
+        np.diff(cumulative_distance) < 0.0
+    ):
+        raise RuntimeError("GLIM cumulative distance is not finite and monotonic")
+
+    def interval_mask(interval: tuple[int, int] | None) -> np.ndarray:
+        if interval is None:
+            return np.zeros(len(reference.stamp_ns), dtype=np.int64)
+        return (
+            (reference.stamp_ns >= interval[0])
+            & (reference.stamp_ns <= interval[1])
+        ).astype(np.int64)
+
+    header = [
+        "stamp_sec",
+        "time_from_common_start_sec",
+        "glim_cumulative_distance_m",
+        "calibration_mask",
+        "outage_mask",
+        "glim_x",
+        "glim_y",
+        "glim_yaw_rad",
+    ]
+    columns: list[np.ndarray] = [
+        reference.stamp_ns.astype(np.float64) * 1.0e-9,
+        (reference.stamp_ns - reference.stamp_ns[0]).astype(np.float64) * 1.0e-9,
+        cumulative_distance,
+        interval_mask(calibration_interval_ns),
+        interval_mask(outage_interval_ns),
+        reference.xy[:, 0],
+        reference.xy[:, 1],
+        reference.yaw,
+    ]
+    for name in names:
+        header.extend(
+            [
+                f"{name}_x",
+                f"{name}_y",
+                f"{name}_yaw_rad",
+                f"{name}_xy_error_m",
+                f"{name}_yaw_error_deg",
+            ]
+        )
+        columns.extend(
+            [
+                series[name]["xy"][:, 0],
+                series[name]["xy"][:, 1],
+                series[name]["yaw"],
+                series[name]["xy_error_m"],
+                series[name]["yaw_error_deg"],
+            ]
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    matrix = np.column_stack(columns)
+    if not np.all(np.isfinite(matrix)):
+        raise RuntimeError("plot CSV matrix contains non-finite values")
+    np.savetxt(
+        path,
+        matrix,
+        delimiter=",",
+        header=",".join(header),
+        comments="",
+        fmt="%.17g",
+    )
+
+    loaded = np.atleast_1d(np.genfromtxt(path, delimiter=",", names=True))
+    loaded_stamps = np.asarray(loaded["stamp_sec"], dtype=float)
+    loaded_distance = np.asarray(loaded["glim_cumulative_distance_m"], dtype=float)
+    if (
+        not np.all(np.isfinite(loaded_stamps))
+        or np.any(np.diff(loaded_stamps) <= 0.0)
+        or not np.all(np.isfinite(loaded_distance))
+        or np.any(np.diff(loaded_distance) < 0.0)
+    ):
+        raise RuntimeError("plot CSV stamp/distance integrity check failed")
+    verification: dict[str, dict[str, float]] = {}
+    for name in names:
+        xy_rmse = float(
+            np.sqrt(np.mean(np.asarray(loaded[f"{name}_xy_error_m"]) ** 2))
+        )
+        yaw_rmse = float(
+            np.sqrt(np.mean(np.asarray(loaded[f"{name}_yaw_error_deg"]) ** 2))
+        )
+        expected_xy = float(evaluations[name]["fixed_common_xy_error_m"]["rmse"])
+        expected_yaw = float(
+            evaluations[name]["common_yaw_offset_error_deg"]["rmse"]
+        )
+        xy_difference = abs(xy_rmse - expected_xy)
+        yaw_difference = abs(yaw_rmse - expected_yaw)
+        if xy_difference > tolerance or yaw_difference > tolerance:
+            raise RuntimeError(
+                f"CSV RMSE mismatch for {name}: xy {xy_rmse} vs {expected_xy}, "
+                f"yaw {yaw_rmse} vs {expected_yaw}"
+            )
+        verification[name] = {
+            "csv_xy_rmse_m": xy_rmse,
+            "json_xy_rmse_m": expected_xy,
+            "xy_absolute_difference_m": xy_difference,
+            "csv_yaw_rmse_deg": yaw_rmse,
+            "json_yaw_rmse_deg": expected_yaw,
+            "yaw_absolute_difference_deg": yaw_difference,
+        }
+    return verification
+
+
+def make_fixed_shared_plot(
+    path: Path,
+    label: str,
+    group: str,
+    reference: Any,
+    series: dict[str, dict[str, np.ndarray]],
+    display_names: dict[str, str],
+    speed_name: str,
+    old_name: str,
+    new_name: str,
+    calibration_interval_ns: tuple[int, int],
+    outage_interval_ns: tuple[int, int] | None,
+) -> None:
+    """Render trajectory, fixed-frame XY error, and fixed-yaw error together."""
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/precision_glim_ab_matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    styles = {
+        speed_name: {"color": "#e68613", "linestyle": "--", "linewidth": 1.2},
+        old_name: {"color": "#969696", "linestyle": "-", "linewidth": 1.1},
+        new_name: {"color": "#2764c4", "linestyle": "-", "linewidth": 1.4},
+    }
+    figure, axes = plt.subplots(1, 3, figsize=(21, 6.2))
+    trajectory_axis, xy_axis, yaw_axis = axes
+    trajectory_axis.plot(
+        reference.xy[:, 0],
+        reference.xy[:, 1],
+        color="black",
+        linewidth=2.0,
+        label="GLIM",
+        zorder=4,
+    )
+    for name in (speed_name, old_name, new_name):
+        trajectory_axis.plot(
+            series[name]["xy"][:, 0],
+            series[name]["xy"][:, 1],
+            label=display_names[name],
+            zorder=2 if name != new_name else 3,
+            **styles[name],
+        )
+    trajectory_axis.scatter(
+        reference.xy[0, 0], reference.xy[0, 1], color="#24933d", marker="o", s=36,
+        label="start", zorder=5,
+    )
+    trajectory_axis.scatter(
+        reference.xy[-1, 0], reference.xy[-1, 1], color="#c9342d", marker="x", s=48,
+        label="end", zorder=5,
+    )
+
+    def highlight_reference_interval(
+        interval: tuple[int, int] | None, color: str, interval_label: str
+    ) -> None:
+        if interval is None:
+            return
+        mask = (reference.stamp_ns >= interval[0]) & (
+            reference.stamp_ns <= interval[1]
+        )
+        if np.count_nonzero(mask) < 2:
+            return
+        trajectory_axis.plot(
+            reference.xy[mask, 0],
+            reference.xy[mask, 1],
+            color=color,
+            linewidth=7.0,
+            alpha=0.20,
+            label=interval_label,
+            zorder=1,
+        )
+
+    highlight_reference_interval(
+        calibration_interval_ns, "#49a65a", "calibration window"
+    )
+    highlight_reference_interval(
+        outage_interval_ns, "#d95f5f", "common GNSS outage"
+    )
+    trajectory_axis.set_title("Trajectory overlay")
+    trajectory_axis.set_xlabel("GLIM x [m]")
+    trajectory_axis.set_ylabel("GLIM y [m]")
+    trajectory_axis.axis("equal")
+    trajectory_axis.grid(True, alpha=0.25)
+    trajectory_axis.legend(fontsize=8)
+
+    time = (reference.stamp_ns - reference.stamp_ns[0]) * 1.0e-9
+
+    def shade_intervals(axis: Any) -> None:
+        reference_start = int(reference.stamp_ns[0])
+        reference_end = int(reference.stamp_ns[-1])
+        for interval, color, interval_label in (
+            (calibration_interval_ns, "#49a65a", "calibration window"),
+            (outage_interval_ns, "#d95f5f", "common GNSS outage"),
+        ):
+            if interval is None:
+                continue
+            begin = max(reference_start, interval[0])
+            end = min(reference_end, interval[1])
+            if end <= begin:
+                continue
+            axis.axvspan(
+                (begin - reference_start) * 1.0e-9,
+                (end - reference_start) * 1.0e-9,
+                color=color,
+                alpha=0.12,
+                label=interval_label,
+                zorder=0,
+            )
+
+    for axis, key, unit, title in (
+        (xy_axis, "xy_error_m", "m", "Absolute XY error"),
+        (yaw_axis, "yaw_error_deg", "deg", "Absolute yaw error"),
+    ):
+        for name in (speed_name, old_name, new_name):
+            values = series[name][key]
+            rmse = float(np.sqrt(np.mean(values * values)))
+            axis.plot(
+                time,
+                values,
+                label=f"{display_names[name]} (RMSE {rmse:.3f} {unit})",
+                zorder=2 if name != new_name else 3,
+                **styles[name],
+            )
+        shade_intervals(axis)
+        axis.set_title(
+            f"{title}: {float(np.sqrt(np.mean(series[old_name][key] ** 2))):.3f}"
+            f" -> {float(np.sqrt(np.mean(series[new_name][key] ** 2))):.3f} {unit}"
+        )
+        axis.set_xlabel("Time from common evaluation start [s]")
+        axis.set_ylabel(f"Error [{unit}]")
+        axis.grid(True, alpha=0.25)
+        axis.legend(fontsize=8)
+
+    figure.suptitle(
+        f"{label} {group}: frozen speed-baseline calibration (fixed/shared alignment)"
+    )
+    figure.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(path, dpi=160)
+    plt.close(figure)
+    if not path.is_file() or path.stat().st_size == 0:
+        raise RuntimeError(f"plot was not created or is empty: {path}")
+
+
+def generate_plot_artifacts(
+    args: argparse.Namespace,
+    canonical: Any,
+    local_reference: Any,
+    local: dict[str, Any],
+    local_alignment: Any,
+    local_yaw_offset: float,
+    global_reference: Any,
+    global_trajectories: dict[str, Any],
+    global_alignment: Any,
+    global_yaw_offset: float,
+    evaluations: dict[str, Any],
+    common_outage: tuple[int, int] | None,
+) -> dict[str, Any]:
+    output = args.plot_directory.expanduser().resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    prefix = plot_prefix(args.label)
+    calibration = (
+        int(round(args.calibration_start * 1.0e9)),
+        int(round(args.calibration_end * 1.0e9)),
+    )
+    groups = {
+        "local": {
+            "reference": local_reference,
+            "trajectories": local,
+            "alignment": local_alignment,
+            "yaw_offset": local_yaw_offset,
+            "speed": "speed_raw",
+            "old": "precision_raw",
+            "new": "precision_local",
+            "display": {
+                "speed_raw": "speed raw (calibration baseline)",
+                "precision_raw": "same-run raw",
+                "precision_local": "precision local",
+            },
+        },
+        "global": {
+            "reference": global_reference,
+            "trajectories": global_trajectories,
+            "alignment": global_alignment,
+            "yaw_offset": global_yaw_offset,
+            "speed": "speed_existing",
+            "old": "precision_existing",
+            "new": "precision_global",
+            "display": {
+                "speed_existing": "speed existing EKF (calibration baseline)",
+                "precision_existing": "same-run existing EKF",
+                "precision_global": "precision global",
+            },
+        },
+    }
+    artifacts: dict[str, Any] = {
+        "directory": str(output),
+        "alignment": (
+            "fixed/shared speed-baseline calibration; yaw uses the separate frozen "
+            "circular offset"
+        ),
+    }
+    for group, config in groups.items():
+        series = fixed_shared_series(
+            canonical,
+            config["reference"],
+            config["trajectories"],
+            config["alignment"],
+            config["yaw_offset"],
+        )
+        csv_path = output / f"{prefix}_{group}_glim.csv"
+        png_path = output / f"{prefix}_{group}_glim.png"
+        verification = write_fixed_shared_csv(
+            csv_path,
+            config["reference"],
+            series,
+            evaluations,
+            calibration_interval_ns=calibration,
+            outage_interval_ns=common_outage,
+        )
+        make_fixed_shared_plot(
+            png_path,
+            args.label,
+            group,
+            config["reference"],
+            series,
+            config["display"],
+            config["speed"],
+            config["old"],
+            config["new"],
+            calibration,
+            common_outage,
+        )
+        artifacts[group] = {
+            "png": str(png_path),
+            "csv": str(csv_path),
+            "samples": len(config["reference"].stamp_ns),
+            "csv_rmse_tolerance": 1.0e-6,
+            "csv_rmse_verification": verification,
+        }
+    return artifacts
 
 
 def comparison(old: float, new: float) -> dict[str, float]:
@@ -1105,6 +1510,21 @@ def evaluate_pair(args: argparse.Namespace) -> dict[str, Any]:
         "hard_gate_count": sum(item["category"] == "hard" for item in checks),
         "failed_hard_gate_count": len(failed),
     }
+    if getattr(args, "plot_directory", None) is not None:
+        result["plot_artifacts"] = generate_plot_artifacts(
+            args,
+            canonical,
+            local_reference,
+            local,
+            local_alignment,
+            local_yaw_offset,
+            global_reference,
+            global_trajectories,
+            global_alignment,
+            global_yaw_offset,
+            evaluations,
+            common_outage,
+        )
     return result
 
 
@@ -1137,6 +1557,33 @@ def write_markdown(path: Path, result: dict[str, Any]) -> None:
             f"- {distance} m: translation {format_change(item['translation_rmse_m'], 'm')}; "
             f"yaw {format_change(item['yaw_rmse_deg'], 'deg')}"
         )
+    artifacts = result.get("plot_artifacts")
+    if artifacts:
+        lines.extend(
+            [
+                "",
+                "## Fixed/shared-alignment plots",
+                "",
+                "The plots use the same frozen speed-baseline SE(2) and separate "
+                "circular yaw offsets as the fixed-frame metrics above.",
+                "",
+            ]
+        )
+        for group in ("local", "global"):
+            item = artifacts[group]
+            png = Path(os.path.relpath(item["png"], start=path.parent)).as_posix()
+            csv = Path(os.path.relpath(item["csv"], start=path.parent)).as_posix()
+            lines.extend(
+                [
+                    f"### {group.capitalize()}",
+                    "",
+                    f"![{result['label']} {group} trajectory and errors]({png})",
+                    "",
+                    f"- aligned samples: [{Path(csv).name}]({csv})",
+                    f"- samples: {item['samples']}",
+                    "",
+                ]
+            )
     lines.extend(["", "## Acceptance", ""])
     for item in result["checks"]:
         mark = "PASS" if item["passed"] else ("WARN" if item["category"] == "warn" else "FAIL")
@@ -1165,6 +1612,14 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--label", required=True)
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--output-markdown", type=Path, required=True)
+    parser.add_argument(
+        "--plot-directory",
+        type=Path,
+        help=(
+            "optional directory for local/global fixed/shared-alignment PNGs "
+            "and auditable aligned CSVs"
+        ),
+    )
     return parser
 
 

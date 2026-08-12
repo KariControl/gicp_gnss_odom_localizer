@@ -71,6 +71,7 @@ def generate_launch_description():
     nmea_gnss_param = LaunchConfiguration("nmea_gnss_param")
     nmea_gnss_override_param = LaunchConfiguration("nmea_gnss_override_param")
     gnss_fusion_param = LaunchConfiguration("gnss_fusion_param")
+    gnss_fusion_override_param = LaunchConfiguration("gnss_fusion_override_param")
     fusion_xy_only_recovery = LaunchConfiguration("fusion_xy_only_recovery")
     gnss_primary_gga_topic = LaunchConfiguration("gnss_primary_gga_topic")
     gnss_secondary_gga_topic = LaunchConfiguration("gnss_secondary_gga_topic")
@@ -132,6 +133,7 @@ def generate_launch_description():
             "nmea_gnss_override_param": nmea_gnss_override_param,
             "gnss_fusion_param": gnss_fusion_param,
             "fusion_xy_only_recovery": fusion_xy_only_recovery,
+            "gnss_fusion_override_param": gnss_fusion_override_param,
             "gnss_primary_gga_topic": gnss_primary_gga_topic,
             "gnss_secondary_gga_topic": gnss_secondary_gga_topic,
             "gnss_fix_velocity_topic": gnss_fix_velocity_topic,
@@ -263,7 +265,17 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "gnss_fusion_param", default_value=default_gnss_fusion_param
             ),
-            DeclareLaunchArgument("fusion_xy_only_recovery", default_value="false"),
+            DeclareLaunchArgument(
+                "gnss_fusion_override_param", default_value=default_empty_param
+            ),
+            DeclareLaunchArgument(
+                "fusion_xy_only_recovery",
+                default_value="false",
+                description=(
+                    "Deprecated compatibility switch. Prefer "
+                    "gnss_fusion_override_param for deployment profiles."
+                ),
+            ),
             DeclareLaunchArgument("gnss_primary_gga_topic", default_value="/nmea_sentence"),
             DeclareLaunchArgument(
                 "gnss_secondary_gga_topic", default_value="/nmea_sentence_secondary"

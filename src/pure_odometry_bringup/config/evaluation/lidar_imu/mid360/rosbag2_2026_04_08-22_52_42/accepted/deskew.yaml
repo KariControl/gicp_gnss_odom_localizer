@@ -1,0 +1,35 @@
+imu_undistorter:
+  ros__parameters:
+    base_frame: base_link
+    imu_frame: livox_frame
+    scan_frame: livox_frame
+
+    points_in_topic: /points_raw
+    points_out_topic: /localization/points_undistorted
+    imu_topic: /imu
+    twist_topic: ""
+
+    # The Livox timestamp field contains absolute nanoseconds and its first
+    # point agrees with the PointCloud2 header, which therefore marks start.
+    time_fields: [timestamp]
+    prefer_relative_time: false
+    time_scale: 1.0e-9
+    fallback_scan_period: 0.1
+    allow_linear_time_fallback: false
+    cloud_stamp_is_start: true
+    reference_time: start
+    point_time_tolerance_sec: 0.002
+
+    imu_buffer_sec: 2.0
+    max_imu_gap_sec: 0.02
+    max_imu_boundary_gap_sec: 0.02
+    max_time_offset_sec: 0.2
+    max_abs_gyro_radps: 20.0
+
+    use_translation: false
+    use_twist_speed: false
+    allow_default_speed_fallback: false
+    input_qos_best_effort: false
+    publish_diagnostics: true
+    diag_throttle_ms: 1000
+    max_pending_clouds: 4

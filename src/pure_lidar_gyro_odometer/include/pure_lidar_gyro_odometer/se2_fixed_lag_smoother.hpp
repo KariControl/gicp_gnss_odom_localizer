@@ -52,12 +52,6 @@ struct RelativeFactor
     0.0, 1.0, 0.0,
     0.0, 0.0, 1.0}};
 
-  // Optional local-map pose observation for the current state. This is intentionally
-  // a soft factor: local maps are built from past odometry and are not a global datum.
-  bool has_local_pose{false};
-  Pose local_pose{};
-  double local_weight_xy{0.0};
-  double local_weight_yaw{0.0};
 };
 
 struct Config
@@ -79,9 +73,6 @@ struct Config
   bool nhc_enable{false};
   double nhc_weight_lateral{2.0};
   double nhc_huber_delta_m{0.10};
-
-  double local_huber_delta_xy_m{0.35};
-  double local_huber_delta_yaw_rad{0.12};
 
   double prior_weight_position{1.0e6};
   double prior_weight_yaw{1.0e6};
@@ -106,10 +97,6 @@ inline bool finiteFactor(const RelativeFactor & factor)
   const bool relative_ok =
     std::isfinite(factor.dx) && std::isfinite(factor.dy) &&
     std::isfinite(factor.dyaw_scan) && std::isfinite(factor.dyaw_imu);
-  const bool local_ok = !factor.has_local_pose ||
-    (finitePose(factor.local_pose) && std::isfinite(factor.local_weight_xy) &&
-    std::isfinite(factor.local_weight_yaw) && factor.local_weight_xy >= 0.0 &&
-    factor.local_weight_yaw >= 0.0);
   bool scan_information_ok = true;
   if (factor.has_scan_information) {
     const auto & h = factor.scan_information;
@@ -141,7 +128,7 @@ inline bool finiteFactor(const RelativeFactor & factor)
       minor_xy >= -tolerance && minor_xyaw >= -tolerance &&
       minor_yyaw >= -tolerance && determinant >= -tolerance;
   }
-  return relative_ok && local_ok && scan_information_ok;
+  return relative_ok && scan_information_ok;
 }
 
 inline double huberScale(double residual, double delta)
@@ -387,29 +374,6 @@ public:
   std::size_t factorCount() const {return factors_.size();}
   const Pose & pose() const {return last_pose_;}
 
-  // Chronological optimized states currently retained by the fixed-lag window.
-  // The first pose is the marginalized base state and the last pose is pose().
-  // Exposing a copy keeps the smoother independent from ROS/PCL while allowing
-  // callers to repair active-submap keyframe poses after a graph update.
-  std::vector<Pose> optimizedPoses() const
-  {
-    const std::size_t expected_dimension = 3 * (factors_.size() + 1);
-    if (last_solution_.size() != expected_dimension || last_solution_.empty()) {
-      return initialized_ ? std::vector<Pose>{base_pose_} : std::vector<Pose>{};
-    }
-
-    std::vector<Pose> poses;
-    poses.reserve(factors_.size() + 1);
-    for (std::size_t index = 0; index < last_solution_.size(); index += 3) {
-      Pose pose{
-        last_solution_[index], last_solution_[index + 1],
-        normalizeYaw(last_solution_[index + 2])};
-      if (!detail::finitePose(pose)) return {};
-      poses.push_back(pose);
-    }
-    return poses;
-  }
-
   bool addFactor(const RelativeFactor & factor, Pose & output)
   {
     if (!initialized_ || !detail::finiteFactor(factor)) return false;
@@ -478,8 +442,6 @@ private:
     config.zupt_weight_yaw = std::max(0.0, config.zupt_weight_yaw);
     config.nhc_weight_lateral = std::max(0.0, config.nhc_weight_lateral);
     config.nhc_huber_delta_m = std::max(0.0, config.nhc_huber_delta_m);
-    config.local_huber_delta_xy_m = std::max(0.0, config.local_huber_delta_xy_m);
-    config.local_huber_delta_yaw_rad = std::max(0.0, config.local_huber_delta_yaw_rad);
     config.prior_weight_position = std::max(1.0, config.prior_weight_position);
     config.prior_weight_yaw = std::max(1.0, config.prior_weight_yaw);
     config.diagonal_regularization = std::max(0.0, config.diagonal_regularization);
@@ -672,27 +634,6 @@ private:
           dy_mid, weight);
       }
 
-      if (factor.has_local_pose) {
-        const double residual_x = xj - factor.local_pose.x;
-        const double residual_y = yj - factor.local_pose.y;
-        const double residual_yaw = normalizeYaw(yaw_j - factor.local_pose.yaw);
-        const double residual_xy_norm = std::hypot(residual_x, residual_y);
-        const double weight_xy = factor.local_weight_xy *
-          detail::huberScale(residual_xy_norm, config_.local_huber_delta_xy_m);
-        const double weight_yaw = factor.local_weight_yaw *
-          detail::huberScale(residual_yaw, config_.local_huber_delta_yaw_rad);
-
-        const double jacobian_x[3]{1.0, 0.0, 0.0};
-        const double jacobian_y[3]{0.0, 1.0, 0.0};
-        const double jacobian_yaw[3]{0.0, 0.0, 1.0};
-        const double unused[3]{0.0, 0.0, 0.0};
-        detail::addScalarResidual(
-          system, index_j, jacobian_x, 0, unused, false, residual_x, weight_xy);
-        detail::addScalarResidual(
-          system, index_j, jacobian_y, 0, unused, false, residual_y, weight_xy);
-        detail::addScalarResidual(
-          system, index_j, jacobian_yaw, 0, unused, false, residual_yaw, weight_yaw);
-      }
     }
 
     if (config_.smoothness_weight > 0.0 && state_count >= 3) {
@@ -792,16 +733,6 @@ private:
           robust_cost(dy_mid, config_.nhc_huber_delta_m);
       }
 
-      if (factor.has_local_pose) {
-        const double residual_x = state[index_j] - factor.local_pose.x;
-        const double residual_y = state[index_j + 1] - factor.local_pose.y;
-        const double residual_xy = std::hypot(residual_x, residual_y);
-        const double residual_yaw = normalizeYaw(state[index_j + 2] - factor.local_pose.yaw);
-        cost += factor.local_weight_xy *
-          robust_cost(residual_xy, config_.local_huber_delta_xy_m);
-        cost += factor.local_weight_yaw *
-          robust_cost(residual_yaw, config_.local_huber_delta_yaw_rad);
-      }
     }
 
     if (config_.smoothness_weight > 0.0 && state_count >= 3) {

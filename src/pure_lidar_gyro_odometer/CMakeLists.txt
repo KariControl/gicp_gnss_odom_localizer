@@ -94,6 +94,23 @@ if(BUILD_TESTING)
   target_compile_features(test_yaw_rate_integrator PRIVATE cxx_std_17)
   add_test(NAME test_yaw_rate_integrator COMMAND test_yaw_rate_integrator)
 
+  add_executable(
+    test_imu_linear_acceleration
+    test/test_imu_linear_acceleration.cpp)
+  target_include_directories(test_imu_linear_acceleration PRIVATE include)
+  target_compile_features(test_imu_linear_acceleration PRIVATE cxx_std_17)
+  target_link_libraries(test_imu_linear_acceleration Eigen3::Eigen)
+  add_test(
+    NAME test_imu_linear_acceleration
+    COMMAND test_imu_linear_acceleration)
+
+  add_executable(test_callback_groups test/test_callback_groups.cpp)
+  target_include_directories(test_callback_groups PRIVATE include)
+  target_compile_features(test_callback_groups PRIVATE cxx_std_17)
+  target_link_libraries(test_callback_groups ${PROJECT_NAME})
+  ament_target_dependencies(test_callback_groups rclcpp)
+  add_test(NAME test_callback_groups COMMAND test_callback_groups)
+
   add_executable(test_tracking_mode test/test_tracking_mode.cpp)
   target_include_directories(test_tracking_mode PRIVATE include)
   target_compile_features(test_tracking_mode PRIVATE cxx_std_17)
@@ -112,6 +129,16 @@ if(BUILD_TESTING)
   add_test(
     NAME test_accepted_scan_snapshot_policy
     COMMAND test_accepted_scan_snapshot_policy)
+
+  add_executable(
+    test_accepted_scan_odometry
+    test/test_accepted_scan_odometry.cpp)
+  target_include_directories(test_accepted_scan_odometry PRIVATE include)
+  target_compile_features(test_accepted_scan_odometry PRIVATE cxx_std_17)
+  ament_target_dependencies(test_accepted_scan_odometry nav_msgs)
+  add_test(
+    NAME test_accepted_scan_odometry
+    COMMAND test_accepted_scan_odometry)
 endif()
 
 ament_export_dependencies(

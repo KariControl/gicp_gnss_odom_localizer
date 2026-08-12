@@ -1,16 +1,15 @@
 #include "pure_nmea_gga_conversion/nmea_gga_conversion.hpp"
 #include "pure_nmea_gga_conversion/trajectory_heading_quality.hpp"
 
-#include <functional>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cctype>
+#include <functional>
 #include <iomanip>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
-#include <utility>
 
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <diagnostic_msgs/msg/key_value.hpp>
@@ -754,7 +753,6 @@ void NmeaGgaConversion::initializeProjection()
   S_bar_phi0_ *= m0_ * a_ / (1.0 + n);
 
   kt_ = 2.0 * std::sqrt(n) / (1.0 + n);
-  K_.setIdentity();
   R_ = Eigen::Rotation2Dd(-kPi / 2.0);
 }
 
@@ -787,13 +785,11 @@ void NmeaGgaConversion::primarySentenceCallback(const nmea_msgs::msg::Sentence::
     updateLatestInputStampLocked(measurement.stamp);
     observeTrajectoryHeadingMeasurementLocked(measurement);
 
-    if (!measurement.valid_fix) {
-      // No-fix still updates status, but it does not enter the synchronization buffer.
-      pruneBuffersLocked();
-    } else {
+    // No-fix still updates status, but it does not enter the synchronization buffer.
+    if (measurement.valid_fix) {
       bufferPrimaryMeasurementLocked(measurement);
-      pruneBuffersLocked();
     }
+    pruneBuffersLocked();
   }
 
   if (!measurement.valid_fix) {
@@ -828,7 +824,6 @@ void NmeaGgaConversion::secondarySentenceCallback(const nmea_msgs::msg::Sentence
   {
     std::lock_guard<std::mutex> lock(mutex_);
     has_last_secondary_ = true;
-    last_secondary_stamp_ = measurement.stamp;
     last_parse_error_ = "none";
     updateLatestInputStampLocked(measurement.stamp);
     bufferSecondaryMeasurementLocked(measurement);
@@ -897,7 +892,6 @@ void NmeaGgaConversion::dopplerCallback(
   {
     std::lock_guard<std::mutex> lock(mutex_);
     has_last_doppler_ = true;
-    last_doppler_stamp_ = doppler.stamp;
     last_speed_mps_ = doppler.speed;
     updateLatestInputStampLocked(doppler.stamp);
     bufferDopplerMeasurementLocked(doppler);
@@ -996,12 +990,12 @@ bool NmeaGgaConversion::parseGgaSentence(
   // sentences (RMC, VTG, GSV, …) are discarded immediately without running
   // the checksum or writing to last_parse_error_.
   std::string payload = sentence;
-  if (!payload.empty() && payload.front() == '$') {
+  if (payload.front() == '$') {
     payload.erase(payload.begin());
   }
   const auto star_pos = payload.find('*');
   if (star_pos != std::string::npos) {
-    payload = payload.substr(0, star_pos);
+    payload.resize(star_pos);
   }
 
   const std::vector<std::string> fields = split(payload, ',');
@@ -1031,18 +1025,11 @@ bool NmeaGgaConversion::parseGgaSentence(
     error = "zero_timestamp";
     return false;
   }
-  output.frame_id = msg.header.frame_id;
-  output.raw_sentence = sentence;
-
   int fix_quality = 0;
   (void)parseInt(fields[6], fix_quality);
   fix_quality = static_cast<int>(clamp(static_cast<double>(fix_quality), 0.0, 8.0));
   output.fix_quality = fix_quality;
   output.navsat_status = ggaQualityToNavSatStatus(fix_quality);
-
-  int num_satellites = 0;
-  (void)parseInt(fields[7], num_satellites);
-  output.num_satellites = num_satellites;
 
   double hdop = max_hdop_for_sigma_;
   (void)parseDouble(fields[8], hdop);
@@ -1100,9 +1087,6 @@ bool NmeaGgaConversion::parseGgaSentence(
     y -= min_y_;
   }
 
-  output.lat_deg = lat_deg;
-  output.lon_deg = lon_deg;
-  output.alt_m = altitude;
   output.x = x;
   output.y = y;
   output.z = altitude + offset_z_;
@@ -1220,7 +1204,7 @@ void NmeaGgaConversion::gaussKruger(double rad_phi, double rad_lambda, double & 
 
   p(0) = p(0) * A_bar_ - S_bar_phi0_;
   p(1) *= A_bar_;
-  p = K_ * R_ * p;
+  p = R_ * p;
 
   const double map_offset_x = use_legacy_projection_params_ ? p0_[0] : 0.0;
   const double map_offset_y = use_legacy_projection_params_ ? p0_[1] : 0.0;
@@ -1334,16 +1318,14 @@ void NmeaGgaConversion::onHeartbeat()
   bool has_last_doppler = false;
   bool has_last_output = false;
   rclcpp::Time last_primary_stamp(0, 0, RCL_ROS_TIME);
-  rclcpp::Time last_secondary_stamp(0, 0, RCL_ROS_TIME);
-  rclcpp::Time last_doppler_stamp(0, 0, RCL_ROS_TIME);
   rclcpp::Time last_output_stamp(0, 0, RCL_ROS_TIME);
   int last_primary_fix_quality = 0;
-  double last_primary_hdop = std::numeric_limits<double>::quiet_NaN();
-  double last_primary_differential_age = std::numeric_limits<double>::quiet_NaN();
+  double last_primary_hdop;
+  double last_primary_differential_age;
   float last_position_confidence = 0.0F;
-  double last_output_cov_xy = kUnknownVariance;
-  double last_output_cov_yaw = kUnknownVariance;
-  int8_t last_fix_status = sensor_msgs::msg::NavSatStatus::STATUS_NO_FIX;
+  double last_output_cov_xy;
+  double last_output_cov_yaw;
+  int8_t last_fix_status;
   double last_speed = 0.0;
   std::string last_heading_source;
   std::string last_note;
@@ -1355,10 +1337,10 @@ void NmeaGgaConversion::onHeartbeat()
   double last_imu_integration_max_gap = 0.0;
   std::size_t last_imu_integration_sample_count = 0U;
   std::string last_imu_integration_reason;
-  double last_trajectory_reference_age = std::numeric_limits<double>::quiet_NaN();
+  double last_trajectory_reference_age;
   double last_trajectory_baseline = 0.0;
-  double last_trajectory_turn_activity = std::numeric_limits<double>::quiet_NaN();
-  double last_trajectory_seed_innovation = std::numeric_limits<double>::quiet_NaN();
+  double last_trajectory_turn_activity;
+  double last_trajectory_seed_innovation;
   std::size_t trajectory_history_size = 0U;
   std::size_t trajectory_epoch = 0U;
   std::size_t trajectory_epoch_reset_count = 0U;
@@ -1373,8 +1355,6 @@ void NmeaGgaConversion::onHeartbeat()
     has_last_doppler = has_last_doppler_;
     has_last_output = has_last_output_;
     last_primary_stamp = last_primary_stamp_;
-    last_secondary_stamp = last_secondary_stamp_;
-    last_doppler_stamp = last_doppler_stamp_;
     last_output_stamp = last_output_stamp_;
     last_primary_fix_quality = last_primary_fix_quality_;
     last_primary_hdop = last_primary_hdop_;
@@ -1418,7 +1398,7 @@ void NmeaGgaConversion::onHeartbeat()
   } else if (primary_age > input_stale_timeout_sec_) {
     level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
     message = "primary GGA input is stale";
-  } else if (has_last_primary && !has_last_output && last_primary_fix_quality > 0) {
+  } else if (!has_last_output && last_primary_fix_quality > 0) {
     level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
     message = "received GGA but no pose output yet";
   } else if (has_last_output && output_age > input_stale_timeout_sec_) {
@@ -1536,25 +1516,6 @@ void NmeaGgaConversion::onHeartbeat()
   add("imu_heading.last_max_gap_sec", toStringWithPrecision(last_imu_integration_max_gap));
 
   array.status.push_back(status);
-  pub_diag_->publish(array);
-}
-
-void NmeaGgaConversion::publishDiagnostics(uint8_t level, const std::string & message)
-{
-  if (!publish_diagnostics_ || !pub_diag_) {
-    return;
-  }
-
-  diagnostic_msgs::msg::DiagnosticArray array;
-  array.header.stamp = this->now();
-
-  diagnostic_msgs::msg::DiagnosticStatus status;
-  status.level = level;
-  status.name = "localization/nmea_gga_conversion";
-  status.message = message;
-  status.hardware_id = "none";
-  array.status.push_back(status);
-
   pub_diag_->publish(array);
 }
 
@@ -1902,7 +1863,7 @@ void NmeaGgaConversion::applyTrajectoryHeadingEpochResetLocked(
 }
 
 bool NmeaGgaConversion::findClosestSecondaryMeasurementLocked(
-  const rclcpp::Time & stamp, std::size_t & index, int64_t & delta_ns) const
+  const rclcpp::Time & stamp, std::size_t & index) const
 {
   if (secondary_buffer_.empty()) {
     return false;
@@ -1928,12 +1889,11 @@ bool NmeaGgaConversion::findClosestSecondaryMeasurementLocked(
   }
 
   index = best_index;
-  delta_ns = best_dt;
   return true;
 }
 
 bool NmeaGgaConversion::findClosestDopplerMeasurementLocked(
-  const rclcpp::Time & stamp, std::size_t & index, int64_t & delta_ns) const
+  const rclcpp::Time & stamp, std::size_t & index) const
 {
   if (doppler_buffer_.empty()) {
     return false;
@@ -1959,7 +1919,6 @@ bool NmeaGgaConversion::findClosestDopplerMeasurementLocked(
   }
 
   index = best_index;
-  delta_ns = best_dt;
   return true;
 }
 
@@ -1991,8 +1950,7 @@ NmeaGgaConversion::collectReadyMatchesLocked(const rclcpp::Time & nowt)
 
     if (use_secondary_gga_) {
       std::size_t index = 0U;
-      int64_t delta_ns = 0;
-      if (findClosestSecondaryMeasurementLocked(matched.primary.stamp, index, delta_ns)) {
+      if (findClosestSecondaryMeasurementLocked(matched.primary.stamp, index)) {
         matched.has_secondary = true;
         matched.secondary = secondary_buffer_[index];
         secondary_buffer_.erase(secondary_buffer_.begin() + static_cast<std::ptrdiff_t>(index));
@@ -2001,8 +1959,7 @@ NmeaGgaConversion::collectReadyMatchesLocked(const rclcpp::Time & nowt)
 
     if (use_doppler_heading_) {
       std::size_t index = 0U;
-      int64_t delta_ns = 0;
-      if (findClosestDopplerMeasurementLocked(matched.primary.stamp, index, delta_ns)) {
+      if (findClosestDopplerMeasurementLocked(matched.primary.stamp, index)) {
         matched.has_doppler = true;
         matched.doppler = doppler_buffer_[index];
         doppler_buffer_.erase(doppler_buffer_.begin() + static_cast<std::ptrdiff_t>(index));
@@ -2067,10 +2024,6 @@ NmeaGgaConversion::OutputPose NmeaGgaConversion::buildOutputPose(
   output.stamp = matched.primary.stamp;
   output.fix_status = matched.primary.navsat_status;
   output.primary_fix_quality = matched.primary.fix_quality;
-  output.primary_hdop = matched.primary.hdop;
-  output.secondary_fix_quality = matched.has_secondary ? matched.secondary.fix_quality : 0;
-  output.secondary_hdop =
-    matched.has_secondary ? matched.secondary.hdop : std::numeric_limits<double>::quiet_NaN();
   output.position_confidence = static_cast<float>(matched.primary.position_confidence);
   output.speed = matched.has_doppler ? matched.doppler.speed : 0.0;
   output.speed_variance =
@@ -2084,10 +2037,9 @@ NmeaGgaConversion::OutputPose NmeaGgaConversion::buildOutputPose(
   output.cov_z = std::pow(vertical_sigma_scale_ * sigma_xy_primary, 2);
 
   Eigen::Vector3d primary_position_base = Eigen::Vector3d::Zero();
-  std::string primary_geom_status;
   const bool has_primary_geometry = resolveAntennaPosition(
     primary_antenna_frame_id_, primary_antenna_position_base_,
-    primary_position_base, primary_geom_status);
+    primary_position_base);
   output.position_is_base_link = false;
   output.observation_point_valid = has_primary_geometry;
   output.observation_point_in_base = primary_position_base;
@@ -2098,10 +2050,9 @@ NmeaGgaConversion::OutputPose NmeaGgaConversion::buildOutputPose(
   // geometries and the measured baseline pass consistency checks.
   if (matched.has_secondary) {
     Eigen::Vector3d secondary_position_base = Eigen::Vector3d::Zero();
-    std::string secondary_geom_status;
     const bool has_secondary_geometry = resolveAntennaPosition(
       secondary_antenna_frame_id_, secondary_antenna_position_base_,
-      secondary_position_base, secondary_geom_status);
+      secondary_position_base);
 
     if (has_primary_geometry && has_secondary_geometry) {
       const Eigen::Vector2d v_base =
@@ -2568,12 +2519,10 @@ NmeaGgaConversion::OutputPose NmeaGgaConversion::buildOutputPose(
   return output;
 }
 
-
 bool NmeaGgaConversion::resolveAntennaPosition(
   const std::string & antenna_frame_id,
   const std::vector<double> & fallback_position_base,
-  Eigen::Vector3d & antenna_position_base,
-  std::string & status) const
+  Eigen::Vector3d & antenna_position_base) const
 {
   if (use_tf_for_antenna_geometry_ && tf_buffer_) {
     try {
@@ -2583,13 +2532,11 @@ bool NmeaGgaConversion::resolveAntennaPosition(
         tf.transform.translation.x,
         tf.transform.translation.y,
         tf.transform.translation.z);
-      status = "tf";
       return true;
-    } catch (const tf2::TransformException & ex) {
-      status = ex.what();
+    } catch (const tf2::TransformException &) {
+      // Fall through to the explicitly enabled parameter fallback, if any.
     }
     if (!allow_parameter_antenna_fallback_) {
-      status = "tf_unavailable_and_parameter_fallback_disabled: " + status;
       return false;
     }
   }
@@ -2598,14 +2545,11 @@ bool NmeaGgaConversion::resolveAntennaPosition(
     antenna_position_base = Eigen::Vector3d(
       fallback_position_base[0], fallback_position_base[1], fallback_position_base[2]);
     if (!antenna_position_base.allFinite()) {
-      status = "non_finite_parameter_geometry";
       return false;
     }
-    status = "param";
     return true;
   }
 
-  status = "unavailable";
   return false;
 }
 

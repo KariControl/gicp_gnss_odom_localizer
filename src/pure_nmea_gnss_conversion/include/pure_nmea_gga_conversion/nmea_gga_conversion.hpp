@@ -40,14 +40,8 @@ private:
   struct GgaMeasurement
   {
     rclcpp::Time stamp{0, 0, RCL_ROS_TIME};
-    std::string frame_id;
-    std::string raw_sentence;
-    double lat_deg{0.0};
-    double lon_deg{0.0};
-    double alt_m{0.0};
     double hdop{std::numeric_limits<double>::quiet_NaN()};
     int fix_quality{0};
-    int num_satellites{0};
     double x{0.0};
     double y{0.0};
     double z{0.0};
@@ -93,9 +87,6 @@ private:
     float position_confidence{0.0F};
     int8_t fix_status{sensor_msgs::msg::NavSatStatus::STATUS_NO_FIX};
     int primary_fix_quality{0};
-    int secondary_fix_quality{0};
-    double primary_hdop{std::numeric_limits<double>::quiet_NaN()};
-    double secondary_hdop{std::numeric_limits<double>::quiet_NaN()};
     bool dual_antenna_used{false};
     bool heading_valid{false};
     bool position_is_base_link{false};
@@ -139,7 +130,6 @@ private:
 
   void onFlushTimer();
   void onHeartbeat();
-  void publishDiagnostics(uint8_t level, const std::string & message);
   void publishStatusOnly(const rclcpp::Time & stamp, int8_t fix_status, float confidence);
   void publishOutput(const OutputPose & output);
   void publishConfidence(float confidence);
@@ -153,17 +143,16 @@ private:
   void applyTrajectoryHeadingEpochResetLocked(
     const pure_nmea_gga_conversion::TrajectoryHeadingObservationResult & reset);
   bool findClosestSecondaryMeasurementLocked(
-    const rclcpp::Time & stamp, std::size_t & index, int64_t & delta_ns) const;
+    const rclcpp::Time & stamp, std::size_t & index) const;
   bool findClosestDopplerMeasurementLocked(
-    const rclcpp::Time & stamp, std::size_t & index, int64_t & delta_ns) const;
+    const rclcpp::Time & stamp, std::size_t & index) const;
   std::vector<MatchedMeasurement> collectReadyMatchesLocked(const rclcpp::Time & now);
 
   OutputPose buildOutputPose(const MatchedMeasurement & matched);
   bool resolveAntennaPosition(
     const std::string & antenna_frame_id,
     const std::vector<double> & fallback_position_base,
-    Eigen::Vector3d & antenna_position_base,
-    std::string & status) const;
+    Eigen::Vector3d & antenna_position_base) const;
 
   rclcpp::Time resolveStamp(const builtin_interfaces::msg::Time & stamp) const;
   int64_t syncToleranceNanoseconds() const;
@@ -314,7 +303,6 @@ private:
   double A_bar_{0.0};
   double S_bar_phi0_{0.0};
   double kt_{0.0};
-  Eigen::Matrix2d K_{Eigen::Matrix2d::Identity()};
   Eigen::Rotation2Dd R_{0.0};
 
   // Runtime state
@@ -342,8 +330,6 @@ private:
   pure_nmea_gga_conversion::TrajectoryHeadingHistory trajectory_heading_history_;
 
   rclcpp::Time last_primary_stamp_{0, 0, RCL_ROS_TIME};
-  rclcpp::Time last_secondary_stamp_{0, 0, RCL_ROS_TIME};
-  rclcpp::Time last_doppler_stamp_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_output_stamp_{0, 0, RCL_ROS_TIME};
 
   int last_primary_fix_quality_{0};

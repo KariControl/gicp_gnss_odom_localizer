@@ -218,11 +218,6 @@ class DiagnosticAudit:
                 )
                 if not self.tracking_outcomes or self.tracking_outcomes[-1] != outcome:
                     self.tracking_outcomes.append(outcome)
-                reset_reason = values.get("local_map_reset_reason", "")
-                if reset_reason == "tracking_reset":
-                    self.tracking_reset_evidence.append(
-                        f"local_map_reset_reason at {format_stamp(bag_timestamp_ns)}"
-                    )
                 for key in ("tracking_reset_count", "lidar_tracking_reset_count"):
                     if positive_integer(values.get(key)):
                         self.tracking_reset_evidence.append(
@@ -1057,11 +1052,11 @@ def check_tracking_diagnostic(
     else:
         report.failed(
             "LiDAR primary registration source",
-            f"no {expected_mode} attempt observed; warmup/interim/fallback alone is insufficient",
+            f"no {expected_mode} attempt observed",
         )
 
-    # A tracking reset is a failed estimator contract even when generic mode permits a
-    # different registration mode.
+    # A tracking reset is a failed estimator contract for the supported
+    # scan-to-scan odometer path.
     if details and audit.diagnostics.tracking_reset_evidence:
         report.failed(
             "LiDAR tracking reset",
@@ -1215,7 +1210,7 @@ def make_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--tracking-mode",
-        choices=("scan_to_scan", "scan_to_submap"),
+        choices=("scan_to_scan",),
         default="scan_to_scan",
         help="expected LiDAR registration mode (default: scan_to_scan)",
     )

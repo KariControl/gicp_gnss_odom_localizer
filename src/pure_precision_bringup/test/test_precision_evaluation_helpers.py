@@ -8,6 +8,7 @@ import importlib.util
 import math
 from pathlib import Path
 import sys
+import tempfile
 from types import SimpleNamespace
 
 import numpy as np
@@ -262,6 +263,64 @@ def test_outage_freeze_and_xy_recovery(evaluator) -> None:
     assert all(outage["anchor_serialization_exact"].values())
     assert all(value == 0.0 for value in outage["anchor_ranges"].values())
     assert outage["recovery_delay_sec"] == 0.5
+
+
+def test_fixed_shared_plot_csv_contract(evaluator) -> None:
+    stamps = np.asarray(
+        [1_000_000_000, 1_100_000_000, 1_200_000_000, 1_300_000_000],
+        dtype=np.int64,
+    )
+    reference = SimpleNamespace(
+        stamp_ns=stamps,
+        xy=np.asarray([[0.0, 0.0], [1.0, 0.0], [2.0, 0.1], [3.0, 0.1]]),
+        yaw=np.asarray([0.0, 0.0, 0.1, 0.1]),
+    )
+    trajectories = {
+        "speed_raw": SimpleNamespace(
+            stamp_ns=stamps,
+            xy=reference.xy + np.asarray([0.1, -0.1]),
+            yaw=reference.yaw + 0.02,
+        ),
+        "precision_raw": SimpleNamespace(
+            stamp_ns=stamps,
+            xy=reference.xy + np.asarray([0.2, -0.1]),
+            yaw=reference.yaw + 0.03,
+        ),
+        "precision_local": SimpleNamespace(
+            stamp_ns=stamps,
+            xy=reference.xy + np.asarray([0.02, -0.01]),
+            yaw=reference.yaw + 0.005,
+        ),
+    }
+    canonical = SimpleNamespace(
+        apply_alignment=lambda trajectory, alignment: trajectory,
+    )
+    series = evaluator.fixed_shared_series(
+        canonical, reference, trajectories, None, 0.0
+    )
+    evaluations = {}
+    for name, item in series.items():
+        xy_rmse = float(np.sqrt(np.mean(item["xy_error_m"] ** 2)))
+        yaw_rmse = float(np.sqrt(np.mean(item["yaw_error_deg"] ** 2)))
+        evaluations[name] = {
+            "fixed_common_xy_error_m": {"rmse": xy_rmse},
+            "common_yaw_offset_error_deg": {"rmse": yaw_rmse},
+        }
+    with tempfile.TemporaryDirectory(prefix="precision-plot-csv-") as directory:
+        path = Path(directory) / "pc2_local_glim.csv"
+        verification = evaluator.write_fixed_shared_csv(
+            path, reference, series, evaluations
+        )
+        assert path.is_file()
+        assert len(path.read_text(encoding="utf-8").splitlines()) == 5
+        assert set(verification) == set(trajectories)
+        assert all(
+            item["xy_absolute_difference_m"] <= 1.0e-12
+            and item["yaw_absolute_difference_deg"] <= 1.0e-12
+            for item in verification.values()
+        )
+    assert evaluator.plot_prefix("output_pointcloud2") == "pc2"
+    assert evaluator.plot_prefix("Special Example") == "special_example"
 
 
 def readiness_item(stamp: int, level: int, message: str, **overrides):
@@ -731,6 +790,7 @@ def main() -> None:
     test_existing_fusion_causal_accounting(validator)
     test_exact_key_protocol(evaluator)
     test_outage_freeze_and_xy_recovery(evaluator)
+    test_fixed_shared_plot_csv_contract(evaluator)
     test_startup_readiness_contract(validator, startup)
     test_accepted_scan_statistics(accepted_scan)
     test_accepted_scan_phase_contract(accepted_scan)

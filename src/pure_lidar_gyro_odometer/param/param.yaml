@@ -13,6 +13,7 @@
     imu_corrected.enable: true
     imu_corrected.apply_tf: true
     imu_corrected.transform_orientation: false
+    imu_corrected.linear_acceleration_scale: 1.0
     publish_rate_hz: 50.0
     out_filtered_odom.enable: false
     out_filtered_odom.zero_when_stopped: true
@@ -82,11 +83,8 @@
     lidar_odom.pose_se2.yaw_blend_imu: 0.0
     lidar_odom.pose_se2.guess_use_imu_yaw_only: true
     lidar_odom.tracking_mode: scan_to_scan
-    lidar_odom.scan_to_submap.fallback_to_scan_to_scan: true
-    lidar_odom.scan_to_submap.match_interval_frames: 1
-    lidar_odom.scan_to_submap.max_consecutive_failures: 5
-    lidar_odom.scan_to_submap.max_scan_to_scan_disagreement_translation_m: 1.0
-    lidar_odom.scan_to_submap.max_scan_to_scan_disagreement_yaw_rad: 0.35
+    lidar_odom.accepted_scan_odom.enable: false
+    lidar_odom.accepted_scan_odom.topic: /localization/gyro_lidar_odom_scan
     lidar_odom.smoother.enable: true
     lidar_odom.smoother.window_size: 25
     lidar_odom.smoother.max_iterations: 5
@@ -105,32 +103,8 @@
     imu_corrected.max_abs_yaw_rate_radps: 20.0
     imu_corrected.max_sample_gap_sec: 0.03
     imu_corrected.max_boundary_gap_sec: 0.02
-    lidar_odom.smoother.local_pose.huber_delta_xy_m: 0.35
-    lidar_odom.smoother.local_pose.huber_delta_yaw_rad: 0.12
     lidar_odom.smoother.max_solution_position_correction_m: 0.75
     lidar_odom.smoother.max_solution_yaw_correction_rad: 0.25
     lidar_odom.smoother.hessian_information.enable: true
     lidar_odom.smoother.hessian_information.yaw_metric_m: 2.0
     lidar_odom.smoother.hessian_information.min_direction_ratio: 0.02
-    lidar_odom.local_map.enable: false
-    lidar_odom.local_map.match_interval_frames: 5
-    lidar_odom.local_map.min_keyframes: 3
-    lidar_odom.local_map.max_keyframes: 15
-    lidar_odom.local_map.min_points: 200
-    lidar_odom.local_map.keyframe.min_interval_frames: 3
-    lidar_odom.local_map.keyframe.max_interval_frames: 20
-    lidar_odom.local_map.keyframe.min_translation_m: 0.75
-    lidar_odom.local_map.keyframe.min_yaw_rad: 0.15
-    lidar_odom.local_map.voxel_leaf_m: 0.35
-    lidar_odom.local_map.max_points: 200000
-    lidar_odom.local_map.max_corr_dist_m: 1.0
-    lidar_odom.local_map.max_iterations: 30
-    lidar_odom.local_map.max_fitness: 1.0
-    lidar_odom.local_map.min_inlier_ratio: 0.25
-    lidar_odom.local_map.max_correction_translation_m: 0.5
-    lidar_odom.local_map.max_correction_yaw_rad: 0.12
-    lidar_odom.local_map.max_correction_z_m: 0.25
-    lidar_odom.local_map.max_correction_roll_pitch_rad: 0.15
-    lidar_odom.local_map.factor_weight_xy: 6.0
-    lidar_odom.local_map.factor_weight_yaw: 10.0
-    lidar_odom.local_map.fitness_sigma: 0.5

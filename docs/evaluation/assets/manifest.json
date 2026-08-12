@@ -1,0 +1,228 @@
+{
+  "content_policy": "Compact plots and normalized JSON only; no bags, raw logs, or sample CSV files.",
+  "datasets": [
+    {
+      "dataset": "velodyne_32line_external_imu",
+      "files": [
+        {
+          "bytes": 11567,
+          "path": "velodyne_32line_external_imu/metrics.json",
+          "sha256": "7434ec45530b9d88c2ae5414496649224eab500c2515b9d4e86627bda14416aa"
+        },
+        {
+          "bytes": 78746,
+          "path": "velodyne_32line_external_imu/trajectory.png",
+          "sha256": "c42c53c26af13ff100ae5e8b727589daccd0b61c1d09eb8db22a9f9f7cf89749"
+        },
+        {
+          "bytes": 112357,
+          "path": "velodyne_32line_external_imu/xy_error.png",
+          "sha256": "55a9c72e97473867f62be52ad2fc02efc018f63b8195002ce8a0e5e294e7e5c1"
+        },
+        {
+          "bytes": 146822,
+          "path": "velodyne_32line_external_imu/yaw_error.png",
+          "sha256": "2708f980f46f3900f68c0d881f11db0b3160ccbc843f6a979e94baaaa41313ab"
+        }
+      ],
+      "provenance": {
+        "full_run_id": "velodyne_default_i2_full",
+        "source_run_id": "velodyne_pre_first_tracking_fatal_precision_i2"
+      },
+      "source_artifacts": [
+        {
+          "local_source_id": "clean_prefix_evaluation.json",
+          "sha256": "d02ffb5ad30a322566b52f2f6ab49a05498ad9a101bb04dc0f3315154ed689a5"
+        },
+        {
+          "local_source_id": "clean_prefix_aligned_samples.csv",
+          "sha256": "8ce9a023f8725d2d7173ec3b36a73967d32724e4b9160b143435427df7184023"
+        },
+        {
+          "local_source_id": "full_run_evaluation.json",
+          "sha256": "1d2e69d921b36d8550f3d2eb00197b1b8966de4cf3f821a95800dafce6649cce"
+        }
+      ]
+    },
+    {
+      "dataset": "livox_mid360_internal_imu",
+      "files": [
+        {
+          "bytes": 2939,
+          "path": "livox_mid360_internal_imu/metrics.json",
+          "sha256": "7a9a40fc96c25728436fb6bc5491fa1b2fe707bb2ce284d48033df1c5e0d05e4"
+        },
+        {
+          "bytes": 88573,
+          "path": "livox_mid360_internal_imu/trajectory.png",
+          "sha256": "8bc0be812aca6b47cd31f7e629015dec7a9174fd247c779405dc14225c674505"
+        },
+        {
+          "bytes": 95070,
+          "path": "livox_mid360_internal_imu/xy_error.png",
+          "sha256": "1800ff4a9c1cc03a792e40f532f15eeb5a6f4e8a9dbfb18bb5b4e6a943fa423d"
+        },
+        {
+          "bytes": 90564,
+          "path": "livox_mid360_internal_imu/yaw_error.png",
+          "sha256": "9e20483482e35240cbe30cbc076806b25839137d21816ddd41436a88d1e22634"
+        }
+      ],
+      "provenance": {
+        "source_run_id": "mid360_default_i2_full"
+      },
+      "source_artifacts": [
+        {
+          "local_source_id": "evaluation.json",
+          "sha256": "f6e576bd43b8adab8b9fa5b563e783e793f8b34de7425860fe015a0d47479b64"
+        },
+        {
+          "local_source_id": "aligned_samples.csv",
+          "sha256": "cf51ae9b5b1c34bf35c5978a0571ae2d2b67aad5b286620959a26210cab0eb9e"
+        }
+      ]
+    },
+    {
+      "dataset": "hesai_32line_imu_rtk_gnss_course_1",
+      "files": [
+        {
+          "bytes": 79490,
+          "path": "hesai_32line_imu_rtk_gnss_course_1/global_trajectory.png",
+          "sha256": "910dc614ff6ea8737dee76c1d58616c6b5923c413ce21ba151ac6aaa69dfb82a"
+        },
+        {
+          "bytes": 132823,
+          "path": "hesai_32line_imu_rtk_gnss_course_1/global_xy_error.png",
+          "sha256": "0b2729e1304280643cfae94dfad856427baf28d425b3f9f6da678d5cb90d28ce"
+        },
+        {
+          "bytes": 148289,
+          "path": "hesai_32line_imu_rtk_gnss_course_1/global_yaw_error.png",
+          "sha256": "e09368b4eb1f14cd5c6ae766064dae436c181db141903c110fa7f72d2413660f"
+        },
+        {
+          "bytes": 89535,
+          "path": "hesai_32line_imu_rtk_gnss_course_1/local_trajectory.png",
+          "sha256": "df5f64b2ad643665001165f72d888718f1adf4e07c3e3172593c0a468ad145d8"
+        },
+        {
+          "bytes": 119728,
+          "path": "hesai_32line_imu_rtk_gnss_course_1/local_xy_error.png",
+          "sha256": "b08e85038e4f3c5bbf30f23096f4ba0f9fb191196a71b8b7f70ba775bd9fb938"
+        },
+        {
+          "bytes": 167338,
+          "path": "hesai_32line_imu_rtk_gnss_course_1/local_yaw_error.png",
+          "sha256": "6e293af0068c163f01858035dfe0f2859021f03e64a6c0a9179e8c9850cde98e"
+        },
+        {
+          "bytes": 14050,
+          "path": "hesai_32line_imu_rtk_gnss_course_1/metrics.json",
+          "sha256": "e22c034d2a41a1d15e2e9533e79039729ef98c05dd06a40b6872fb629affa779"
+        }
+      ],
+      "provenance": {
+        "legacy_dataset_id": "pc2",
+        "source_result_set": "precision_legacy_anchor_20260812_final"
+      },
+      "source_artifacts": [
+        {
+          "local_source_id": "pc2_glim_ab.json",
+          "sha256": "00bba5451048e42f7411bebd34d2d7b43155938aa8aca9f4ed7d8d2190a51afb"
+        },
+        {
+          "local_source_id": "pc2_local_glim.csv",
+          "sha256": "0b7767de8cf24dfe1746e5c9b80b367fd37267640c85da9b57574844e7d54756"
+        },
+        {
+          "local_source_id": "pc2_global_glim.csv",
+          "sha256": "a798b3047194dea69ae1525e3530d21357cac392b79014d4a2626dcf0ba87fb9"
+        }
+      ]
+    },
+    {
+      "dataset": "hesai_32line_imu_rtk_gnss_course_2",
+      "files": [
+        {
+          "bytes": 87305,
+          "path": "hesai_32line_imu_rtk_gnss_course_2/global_trajectory.png",
+          "sha256": "b350de71afd52057c9dbd4996f02c30706e6d52f3c872826006ec827d9ca17cf"
+        },
+        {
+          "bytes": 126932,
+          "path": "hesai_32line_imu_rtk_gnss_course_2/global_xy_error.png",
+          "sha256": "5d27ca51d7fedf1a58420d780895493270d351216e97a249b1895bfbbed12de8"
+        },
+        {
+          "bytes": 164419,
+          "path": "hesai_32line_imu_rtk_gnss_course_2/global_yaw_error.png",
+          "sha256": "2fc5776eda66b440e378fc80532d03022a6dfa068b5b888723789827494aa670"
+        },
+        {
+          "bytes": 87522,
+          "path": "hesai_32line_imu_rtk_gnss_course_2/local_trajectory.png",
+          "sha256": "9d023e0ee434381ae2f2b03bb8bfab54af92b6f1c7bf8cae5143f9b55392880c"
+        },
+        {
+          "bytes": 118451,
+          "path": "hesai_32line_imu_rtk_gnss_course_2/local_xy_error.png",
+          "sha256": "bface78783ee7f8ea7b808152949580af8dc95641a95af7a2a3979bcc029d4ad"
+        },
+        {
+          "bytes": 167862,
+          "path": "hesai_32line_imu_rtk_gnss_course_2/local_yaw_error.png",
+          "sha256": "56ddd61960fdebd68f44b067dc51002288a7c17173b9e57e5798a08e4d5978d4"
+        },
+        {
+          "bytes": 14033,
+          "path": "hesai_32line_imu_rtk_gnss_course_2/metrics.json",
+          "sha256": "16cf6f8aa15f3bf354922aaf3432599b5a5a5e38b4d577efceba984cec75b256"
+        }
+      ],
+      "provenance": {
+        "legacy_dataset_id": "pc3",
+        "source_result_set": "precision_legacy_anchor_20260812_final"
+      },
+      "source_artifacts": [
+        {
+          "local_source_id": "pc3_glim_ab.json",
+          "sha256": "adbd4a83872166f7d9c6c85cbda55fceec3eb7c4d03440154408494b53ffac4f"
+        },
+        {
+          "local_source_id": "pc3_local_glim.csv",
+          "sha256": "fb67bfc3b77daacbc7f11228984f25793ba1ffb2a9829b747e2c4377cc7190cd"
+        },
+        {
+          "local_source_id": "pc3_global_glim.csv",
+          "sha256": "bdf042ecceb80461e306c75663e5ed719e5fd19841503ff989869cdeea07c4bd"
+        }
+      ]
+    },
+    {
+      "dataset": "autoware_lsim_hesai_course_1",
+      "files": [
+        {
+          "bytes": 960,
+          "path": "autoware_lsim_hesai_course_1/metrics.json",
+          "sha256": "dd3db75afedd460d0e7c44a26140b974572194698db95e67caa5d5ef96fc3d58"
+        },
+        {
+          "bytes": 212110,
+          "path": "autoware_lsim_hesai_course_1/rviz.png",
+          "sha256": "bda87685bb96c68558329791f0a5f5b1527ebb996df968b3c77a631477e73cf7"
+        }
+      ],
+      "provenance": {
+        "source_run_id": "rosbag2_docker_rviz_e2e_20260810_retry1"
+      },
+      "source_artifacts": [
+        {
+          "local_source_id": "rviz_window.png",
+          "sha256": "bda87685bb96c68558329791f0a5f5b1527ebb996df968b3c77a631477e73cf7"
+        }
+      ]
+    }
+  ],
+  "generated_by": "tools/evaluation/curate_publication_assets.py",
+  "schema_version": 1
+}

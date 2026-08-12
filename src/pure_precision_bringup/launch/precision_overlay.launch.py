@@ -27,10 +27,17 @@ def generate_launch_description():
         "param",
         "param.yaml",
     )
+    empty_param_default = os.path.join(
+        get_package_share_directory("pure_precision_bringup"),
+        "config",
+        "empty_params.yaml",
+    )
 
     use_sim_time = LaunchConfiguration("use_sim_time")
     matcher_param = LaunchConfiguration("matcher_param")
+    matcher_override_param = LaunchConfiguration("matcher_override_param")
     global_param = LaunchConfiguration("global_param")
+    global_override_param = LaunchConfiguration("global_override_param")
     log_level = LaunchConfiguration("log_level")
 
     matcher = Node(
@@ -38,7 +45,11 @@ def generate_launch_description():
         executable="pure_lidar_submap_matcher_node",
         name="submap_matcher",
         output="screen",
-        parameters=[matcher_param, {"use_sim_time": use_sim_time}],
+        parameters=[
+            matcher_param,
+            matcher_override_param,
+            {"use_sim_time": use_sim_time},
+        ],
         arguments=["--ros-args", "--log-level", log_level],
     )
     precision_global = Node(
@@ -46,7 +57,11 @@ def generate_launch_description():
         executable="pure_precision_global_localizer_node",
         name="precision_global_localizer",
         output="screen",
-        parameters=[global_param, {"use_sim_time": use_sim_time}],
+        parameters=[
+            global_param,
+            global_override_param,
+            {"use_sim_time": use_sim_time},
+        ],
         arguments=["--ros-args", "--log-level", log_level],
     )
 
@@ -54,7 +69,13 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             DeclareLaunchArgument("matcher_param", default_value=matcher_param_default),
+            DeclareLaunchArgument(
+                "matcher_override_param", default_value=empty_param_default
+            ),
             DeclareLaunchArgument("global_param", default_value=global_param_default),
+            DeclareLaunchArgument(
+                "global_override_param", default_value=empty_param_default
+            ),
             DeclareLaunchArgument("log_level", default_value="info"),
             matcher,
             precision_global,

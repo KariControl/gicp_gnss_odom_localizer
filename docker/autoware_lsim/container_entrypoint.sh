@@ -104,7 +104,11 @@ PRECISION_MATCHER_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_lidar_submap_match
 PRECISION_GLOBAL_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_precision_global_localizer/param/param.yaml"
 NMEA_GNSS_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_nmea_gnss_conversion/param/param.yaml"
 GNSS_FUSION_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_gnss_map_odom_fusion/param/param.yaml"
+DIAGNOSTIC_AGGREGATOR_PARAM="$BRINGUP_SHARE/config/diagnostic_aggregator.yaml"
+AUTOWARE_ADAPTER_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_autoware_localization_adapter/param/param.yaml"
 ODOM_OVERRIDE_PARAM="$EMPTY_PARAM"
+PRECISION_MATCHER_OVERRIDE_PARAM="$PRECISION_BRINGUP_SHARE/config/empty_params.yaml"
+PRECISION_GLOBAL_OVERRIDE_PARAM="$PRECISION_BRINGUP_SHARE/config/empty_params.yaml"
 
 case "$TRACKING_MODE" in
   scan_to_scan) ;;
@@ -118,7 +122,7 @@ case "$DATASET_PROFILE" in
     IMU_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_imu_undistortion/param/param.yaml"
     ODOM_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_lidar_gyro_odometer/param/param.yaml"
     NMEA_GNSS_OVERRIDE_PARAM="$EMPTY_PARAM"
-    FUSION_XY_ONLY_RECOVERY="false"
+    GNSS_FUSION_OVERRIDE_PARAM="$EMPTY_PARAM"
     ;;
   hesai_rosbag23)
     [[ "$POINTS_SOURCE_TOPIC" == /pandar_points_ex ]] ||
@@ -134,20 +138,25 @@ case "$DATASET_PROFILE" in
     SENSOR_PROFILE="hesai_rosbag23"
     IMU_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_imu_undistortion/param/param_xt.yaml"
     ODOM_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_lidar_gyro_odometer/param/param_xt_lidar_imu_only.yaml"
-    NMEA_GNSS_OVERRIDE_PARAM="$BRINGUP_SHARE/config/autoware_lsim/hesai_rosbag23_nmea_override.yaml"
-    FUSION_XY_ONLY_RECOVERY="true"
+    NMEA_GNSS_OVERRIDE_PARAM="$BRINGUP_SHARE/config/evaluation/lidar_imu_gnss/hesai_32line_rtk/accepted/nmea_site_origin.yaml"
+    GNSS_FUSION_OVERRIDE_PARAM="$BRINGUP_SHARE/config/evaluation/lidar_imu_gnss/hesai_32line_rtk/accepted/gnss_fusion_single_antenna.yaml"
     ;;
   *) fail "DATASET_PROFILE must be generic or hesai_rosbag23: $DATASET_PROFILE" ;;
 esac
 
 for parameter_file in \
   "$EMPTY_PARAM" "$IMU_PARAM" "$ODOM_PARAM" "$ODOM_OVERRIDE_PARAM" \
-  "$NMEA_GNSS_PARAM" "$NMEA_GNSS_OVERRIDE_PARAM" "$GNSS_FUSION_PARAM"
+  "$NMEA_GNSS_PARAM" "$NMEA_GNSS_OVERRIDE_PARAM" "$GNSS_FUSION_PARAM" \
+  "$GNSS_FUSION_OVERRIDE_PARAM" "$DIAGNOSTIC_AGGREGATOR_PARAM" \
+  "$AUTOWARE_ADAPTER_PARAM"
 do
   [[ -f "$parameter_file" ]] || fail "parameter file does not exist: $parameter_file"
 done
 if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
-  for parameter_file in "$PRECISION_MATCHER_PARAM" "$PRECISION_GLOBAL_PARAM"; do
+  for parameter_file in \
+    "$PRECISION_MATCHER_PARAM" "$PRECISION_MATCHER_OVERRIDE_PARAM" \
+    "$PRECISION_GLOBAL_PARAM" "$PRECISION_GLOBAL_OVERRIDE_PARAM"
+  do
     [[ -f "$parameter_file" ]] || fail "parameter file does not exist: $parameter_file"
   done
 fi
@@ -242,7 +251,11 @@ write_manifest() {
     printf 'NMEA_GNSS_PARAM=%q\n' "$NMEA_GNSS_PARAM"
     printf 'NMEA_GNSS_OVERRIDE_PARAM=%q\n' "$NMEA_GNSS_OVERRIDE_PARAM"
     printf 'GNSS_FUSION_PARAM=%q\n' "$GNSS_FUSION_PARAM"
-    printf 'FUSION_XY_ONLY_RECOVERY=%q\n' "$FUSION_XY_ONLY_RECOVERY"
+    printf 'GNSS_FUSION_OVERRIDE_PARAM=%q\n' "$GNSS_FUSION_OVERRIDE_PARAM"
+    printf 'DIAGNOSTIC_AGGREGATOR_PARAM=%q\n' "$DIAGNOSTIC_AGGREGATOR_PARAM"
+    printf 'AUTOWARE_ADAPTER_PARAM=%q\n' "$AUTOWARE_ADAPTER_PARAM"
+    printf 'PRECISION_MATCHER_OVERRIDE_PARAM=%q\n' "$PRECISION_MATCHER_OVERRIDE_PARAM"
+    printf 'PRECISION_GLOBAL_OVERRIDE_PARAM=%q\n' "$PRECISION_GLOBAL_OVERRIDE_PARAM"
     printf 'USE_GNSS=%q\n' "$USE_GNSS"
     printf 'USE_IMU_DESKEW=%q\n' "$USE_IMU_DESKEW"
     printf 'LAUNCH_VEHICLE=%q\n' "$LAUNCH_VEHICLE"
@@ -268,6 +281,48 @@ write_manifest() {
     printf 'ros_distro=%s\n' "${ROS_DISTRO:-jazzy}"
   } > "$run_directory/docker_runtime.txt"
   ros2 bag info "$BAG_PATH" > "$run_directory/input_bag_info.txt" 2>&1 || true
+}
+
+copy_effective_configurations() {
+  local artifact_directory="$run_directory/artifacts"
+  mkdir -p "$artifact_directory"
+  printf 'role\tsource_path\tsha256\tartifact\n' \
+    > "$artifact_directory/effective_configurations.tsv"
+
+  local role source_path artifact_name digest
+  while IFS=$'\t' read -r role source_path artifact_name; do
+    digest="$(sha256sum "$source_path" | awk '{print $1}')"
+    install -m 0644 "$source_path" "$artifact_directory/$artifact_name"
+    printf '%s\t%s\t%s\t%s\n' \
+      "$role" "$source_path" "$digest" "$artifact_name" \
+      >> "$artifact_directory/effective_configurations.tsv"
+  done <<EOF
+imu_base	$IMU_PARAM	imu_param.yaml
+odometry_base	$ODOM_PARAM	odom_param.yaml
+odometry_override	$ODOM_OVERRIDE_PARAM	odom_override_param.yaml
+nmea_base	$NMEA_GNSS_PARAM	nmea_gnss_param.yaml
+nmea_site_override	$NMEA_GNSS_OVERRIDE_PARAM	nmea_site_origin.yaml
+gnss_fusion_base	$GNSS_FUSION_PARAM	gnss_fusion_param.yaml
+gnss_fusion_override	$GNSS_FUSION_OVERRIDE_PARAM	gnss_fusion_override_param.yaml
+diagnostic_aggregator	$DIAGNOSTIC_AGGREGATOR_PARAM	diagnostic_aggregator.yaml
+autoware_adapter_base	$AUTOWARE_ADAPTER_PARAM	autoware_adapter_param.yaml
+EOF
+
+  if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
+    for role_path_name in \
+      "precision_matcher_base|$PRECISION_MATCHER_PARAM|precision_matcher_param.yaml" \
+      "precision_matcher_override|$PRECISION_MATCHER_OVERRIDE_PARAM|precision_matcher_override_param.yaml" \
+      "precision_global_base|$PRECISION_GLOBAL_PARAM|precision_global_param.yaml" \
+      "precision_global_override|$PRECISION_GLOBAL_OVERRIDE_PARAM|precision_global_override_param.yaml"
+    do
+      IFS='|' read -r role source_path artifact_name <<< "$role_path_name"
+      digest="$(sha256sum "$source_path" | awk '{print $1}')"
+      install -m 0644 "$source_path" "$artifact_directory/$artifact_name"
+      printf '%s\t%s\t%s\t%s\n' \
+        "$role" "$source_path" "$digest" "$artifact_name" \
+        >> "$artifact_directory/effective_configurations.tsv"
+    done
+  fi
 }
 
 wait_for_node() {
@@ -404,6 +459,7 @@ PY
 }
 
 write_manifest
+copy_effective_configurations
 
 launch_command=(
   ros2 launch pure_odometry_bringup autoware_lsim_localization.launch.py
@@ -425,7 +481,7 @@ launch_command=(
   nmea_gnss_param:="$NMEA_GNSS_PARAM"
   nmea_gnss_override_param:="$NMEA_GNSS_OVERRIDE_PARAM"
   gnss_fusion_param:="$GNSS_FUSION_PARAM"
-  fusion_xy_only_recovery:="$FUSION_XY_ONLY_RECOVERY"
+  gnss_fusion_override_param:="$GNSS_FUSION_OVERRIDE_PARAM"
   log_level:="$LOG_LEVEL"
 )
 if [[ -n "$TWIST_SOURCE_TOPIC" ]]; then
@@ -445,7 +501,9 @@ if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
     ros2 launch pure_precision_bringup precision_overlay.launch.py
     use_sim_time:=true
     matcher_param:="$PRECISION_MATCHER_PARAM"
+    matcher_override_param:="$PRECISION_MATCHER_OVERRIDE_PARAM"
     global_param:="$PRECISION_GLOBAL_PARAM"
+    global_override_param:="$PRECISION_GLOBAL_OVERRIDE_PARAM"
     log_level:="$LOG_LEVEL"
   )
   printf '[autoware-lsim] precision overlay:'

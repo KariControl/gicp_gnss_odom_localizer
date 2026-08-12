@@ -4,10 +4,19 @@
 
 ### Added
 
-- Added the `hesai-rosbag23` Autoware lSIM profile for the included ROSBAG2/3,
-  including calibrated LiDAR/IMU/GNSS static transforms, XT parameters, a
-  shared site-local GNSS origin, 100 Hz simulation clock, input topic
-  allowlisting, and detailed Japanese operating instructions.
+- Added a canonical evaluation index with separate LiDAR/IMU-only,
+  LiDAR/IMU/GNSS, and Autoware LSim result pages, including explicit alignment,
+  artifact, CPU-measurement, and RViz-video publication requirements.
+- Added sensor- and recording-scoped LiDAR/IMU evaluation profiles, separated
+  into canonical `accepted` inputs and retained `experimental` inputs.
+- Added shared Hesai 32-Line + IMU + RTK GNSS evaluation overrides and
+  descriptive private Course 1/2 manifests under
+  `config/evaluation/lidar_imu_gnss`; component parameter defaults remain in
+  their owning packages.
+- Added the `hesai-rosbag23` Autoware Logging Simulation profile for the private
+  Hesai 32-Line + IMU + RTK GNSS Course 1/2 recordings, including calibrated
+  static transforms, XT parameters, a shared site-local GNSS origin, a 100 Hz
+  simulation clock, input-topic allowlisting, and English operating guidance.
 - Added an Autoware localization-interface output bag analyzer and a native
   `--lsim-interface-test` path for environments where the official Autoware
   Docker image cannot be started.
@@ -22,6 +31,24 @@
 
 ### Changed
 
+- The LiDAR/IMU evaluation runner now selects the canonical interval-2 external
+  snapshot profile by default in precision mode. For its canonical MID360 bag
+  it selects the fixed-bias direct diagnostic profile; an overridden MID360 bag
+  requires an explicit yaw policy because that bias is bag-specific.
+- Refactored `pure_nmea_gnss_conversion` by removing write-only state,
+  uncalled private APIs, unused output parameters, an identity projection
+  multiply, an unreachable IMU-integration branch, and duplicate buffer
+  maintenance without changing its topics, parameters, or numerical output.
+- Removed the legacy in-odometer scan-to-submap/local-map registration path,
+  its periodic local-pose factor, parameters, profile, override, diagnostics,
+  and tests. `pure_lidar_gyro_odometer` now accepts only `scan_to_scan` while
+  retaining its fixed-lag smoother and the output-only accepted-scan snapshot
+  bridge required by the isolated precision packages.
+- Renamed the host Hesai bag runner from
+  `run_vehicle_localizer_hesai_nmea_gnss_no_snow_lp.sh` to
+  `run_hesai_localization_bag.sh`. Its primary selector is now
+  `--localization-mode baseline|precision`; the former `--tracking-mode`
+  values remain warning-emitting argument aliases only.
 - Autoware lSIM now waits for recorder discovery and the first valid
   kinematic-state message, records GNSS/deskew/fusion diagnostics, preserves
   the selected sensor profile when switching tracking mode, and restores
@@ -46,9 +73,28 @@
   stale request that would make output timestamps move backwards.
 - The ROS-bag single-antenna runner explicitly enables XY-only recovery while
   the generic fusion and launch defaults remain disabled.
+- LiDAR/IMU evaluation configuration now uses `config/evaluation/lidar_imu`
+  rather than encoding the reference provider in the directory name.
+
+### Migration
+
+- Update external automation to invoke `script/run_hesai_localization_bag.sh`;
+  the old script path has been removed.
+- Replace runner arguments `--tracking-mode scan_to_scan` and
+  `--tracking-mode scan_to_submap` with `--localization-mode baseline` and
+  `--localization-mode precision`, respectively.
+- Remove downstream uses of `param_scan_to_submap.yaml`,
+  `scan_to_submap_override.yaml`, `lidar_odom.scan_to_submap.*`,
+  `lidar_odom.local_map.*`, and `lidar_odom.smoother.local_pose.*`.
+- Keep the odometer parameter `lidar_odom.tracking_mode` set to
+  `scan_to_scan`; isolated precision mode is selected by its bringup overlay,
+  not by changing the odometer registration mode.
 
 ### Fixed
 
+- Fixed the native Hesai evaluation runner to pass its validated NMEA site
+  origin override to the launch. Historical results produced before this fix
+  remain provisional until they are rerun; this change does not claim a rerun.
 - Fixed the Autoware overlay image to use colcon's global `--log-base` syntax
   and a merged install tree, and made ROS setup sourcing safe with strict shell
   mode enabled.

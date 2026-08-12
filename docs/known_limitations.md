@@ -4,22 +4,20 @@
   inertial navigation system.
 - There is no accelerometer bias/state propagation, gravity alignment, velocity
   state, or full IMU preintegration factor.
-- There is no global loop closure or persistent map. Scan-to-submap uses a
-  rolling local target and cannot eliminate unlimited long-duration drift.
-- The submap and scan-to-scan observations are derived from overlapping LiDAR
-  data and are statistically correlated. The implementation selects one primary
-  relative factor per interval rather than treating both as independent, but it
-  does not model all temporal map correlations.
-- Only keyframes still represented in the fixed-lag optimized-pose window are
-  individually repaired. Older retained keyframes move rigidly with the submap
-  anchor.
-- The active submap does not perform semantic or dynamic-object removal. Moving
-  people, vehicles, doors, vegetation, rain, or snow can corrupt registration.
-- Scan-to-submap currently evaluates scan-to-scan for prediction and fallback,
-  so CPU cost can approach two registrations per frame. Target hardware timing
-  has not been measured in this environment.
-- Tracking mode is selected at startup; there is no validated live dynamic mode
-  transition.
+- There is no global loop closure or persistent map. The isolated precision
+  matcher uses a rolling local target and cannot eliminate unlimited
+  long-duration drift.
+- The external submap is built from accepted scan-to-scan snapshots, so its
+  observations remain temporally correlated with the raw local trajectory. The
+  robust commit gates outliers but does not model all map correlations.
+- The external submap does not perform semantic or dynamic-object removal.
+  Moving people, vehicles, doors, vegetation, rain, or snow can corrupt its
+  registration.
+- Precision mode adds accepted-cloud serialization/transport and another
+  registration process. Target-hardware timing and scheduling interference must
+  be measured even though the estimator states are isolated.
+- `pure_lidar_gyro_odometer` supports only scan-to-scan registration. Precision
+  mode is selected by bringup and is not a validated live transition.
 - GNSS covariance is modeled from configurable GGA quality/HDOP tables; GGA
   itself does not carry a full covariance matrix.
 - Trajectory heading estimates direction of motion. Side slip, reverse motion,
@@ -50,5 +48,5 @@
 
 Before field deployment, perform a clean ROS build, unit tests, launch smoke
 tests, malformed-input tests, and bag validation using the exact sensor drivers
-and parameter files. Compare `scan_to_scan` and `scan_to_submap` on the same
-reference trajectories before choosing a production default.
+and parameter files. Compare baseline and isolated precision outputs on the same
+reference trajectories, including the accepted-scan non-intrusion gates.

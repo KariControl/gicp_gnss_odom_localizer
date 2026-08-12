@@ -202,18 +202,18 @@ def read_result_trajectories(
     evaluation_start_ns: int,
     evaluation_end_ns: int,
     duplicate_policy: str,
+    topics: tuple[str, ...] = (LOCAL_TOPIC, EKF_TOPIC),
 ) -> tuple[dict[str, Trajectory], dict[str, DuplicateStats]]:
     reader = open_bag(resolve_bag(bag_path))
     topic_types = {item.name: item.type for item in reader.get_all_topics_and_types()}
-    for topic in (LOCAL_TOPIC, EKF_TOPIC):
+    for topic in topics:
         if topic_types.get(topic) != EXPECTED_TYPE:
             raise RuntimeError(
                 f"missing {topic} with type {EXPECTED_TYPE}; found {topic_types.get(topic)!r}"
             )
     message_class = get_message(EXPECTED_TYPE)
     groups: dict[str, dict[int, list[tuple[int, float, float, float]]]] = {
-        LOCAL_TOPIC: defaultdict(list),
-        EKF_TOPIC: defaultdict(list),
+        topic: defaultdict(list) for topic in topics
     }
     while reader.has_next():
         topic, serialized, record_stamp_ns = reader.read_next()
@@ -504,6 +504,21 @@ def common_samples(
     return reference.subset(np.isin(reference.stamp_ns, final_stamps)), interpolated
 
 
+def samples_at_local_estimate_stamps(
+    reference: Trajectory,
+    estimate: Trajectory,
+    maximum_gap_sec: float,
+) -> tuple[Trajectory, dict[str, Trajectory]]:
+    """Interpolate only GLIM at each exact local-estimate header stamp."""
+    interpolated_reference, valid = interpolate_trajectory(
+        reference, estimate.stamp_ns, maximum_gap_sec
+    )
+    selected_estimate = estimate.subset(valid)
+    if not np.array_equal(interpolated_reference.stamp_ns, selected_estimate.stamp_ns):
+        raise RuntimeError("reference/estimate timestamp association is inconsistent")
+    return interpolated_reference, {"local": selected_estimate}
+
+
 def evaluate_glim_internal_consistency(glim_directory: Path) -> dict[str, Any] | None:
     optimized_path = glim_directory / "traj_lidar.txt"
     odometry_path = glim_directory / "odom_lidar.txt"
@@ -525,29 +540,47 @@ def write_csv(
     position_errors: dict[str, np.ndarray],
     yaw_errors: dict[str, np.ndarray],
 ) -> None:
-    header = (
-        "stamp_sec,time_from_start_sec,glim_x,glim_y,glim_yaw_rad,"
-        "local_x,local_y,local_yaw_rad,local_position_error_m,local_yaw_error_deg,"
-        "ekf_x,ekf_y,ekf_yaw_rad,ekf_position_error_m,ekf_yaw_error_deg"
-    )
-    time = (reference.stamp_ns - reference.stamp_ns[0]) * 1.0e-9
-    matrix = np.column_stack(
-        (
-            reference.stamp_ns * 1.0e-9,
-            time,
-            reference.xy,
-            reference.yaw,
-            aligned["local"].xy,
-            aligned["local"].yaw,
-            position_errors["local"],
-            yaw_errors["local"],
-            aligned["ekf"].xy,
-            aligned["ekf"].yaw,
-            position_errors["ekf"],
-            yaw_errors["ekf"],
+    names = tuple(aligned)
+    header_columns = [
+        "stamp_sec",
+        "time_from_start_sec",
+        "glim_x",
+        "glim_y",
+        "glim_yaw_rad",
+    ]
+    columns: list[np.ndarray] = [
+        reference.stamp_ns * 1.0e-9,
+        (reference.stamp_ns - reference.stamp_ns[0]) * 1.0e-9,
+        reference.xy,
+        reference.yaw,
+    ]
+    for name in names:
+        header_columns.extend(
+            [
+                f"{name}_x",
+                f"{name}_y",
+                f"{name}_yaw_rad",
+                f"{name}_position_error_m",
+                f"{name}_yaw_error_deg",
+            ]
         )
+        columns.extend(
+            [
+                aligned[name].xy,
+                aligned[name].yaw,
+                position_errors[name],
+                yaw_errors[name],
+            ]
+        )
+    matrix = np.column_stack(columns)
+    np.savetxt(
+        path,
+        matrix,
+        delimiter=",",
+        header=",".join(header_columns),
+        comments="",
+        fmt="%.9f",
     )
-    np.savetxt(path, matrix, delimiter=",", header=header, comments="", fmt="%.9f")
 
 
 def make_plots(
@@ -570,7 +603,7 @@ def make_plots(
     labels = {"local": "gyro_lidar_odom", "ekf": "ekf_odom"}
     figure, axis = plt.subplots(figsize=(10, 8))
     axis.plot(reference.xy[:, 0], reference.xy[:, 1], color="black", linewidth=2.0, label="GLIM")
-    for name in ("local", "ekf"):
+    for name in aligned:
         axis.plot(
             aligned[name].xy[:, 0],
             aligned[name].xy[:, 1],
@@ -592,7 +625,7 @@ def make_plots(
 
     time = (reference.stamp_ns - reference.stamp_ns[0]) * 1.0e-9
     figure, axis = plt.subplots(figsize=(11, 5))
-    for name in ("local", "ekf"):
+    for name in aligned:
         axis.plot(
             time,
             position_errors[name],
@@ -610,7 +643,7 @@ def make_plots(
     plt.close(figure)
 
     figure, axis = plt.subplots(figsize=(11, 5))
-    for name in ("local", "ekf"):
+    for name in aligned:
         axis.plot(
             time,
             yaw_errors[name],
@@ -636,6 +669,16 @@ def format_stats_line(item: dict[str, Any], unit: str) -> str:
 
 
 def write_report(path: Path, label: str, metrics: dict[str, Any]) -> None:
+    names = tuple(
+        name for name in ("local", "ekf") if name in metrics["common"]
+    )
+    local_topic = metrics["inputs"].get("local_topic", LOCAL_TOPIC)
+    frame_description = (
+        "- frame: GLIMは`traj_lidar`、推定値はlocal odometryのbase frame。"
+        "LiDAR/IMU-only評価ではbase frameを評価対象LiDAR frameへ一致させる"
+        if names == ("local",)
+        else "- frame: `traj_lidar`を使用（このrigでは`base_link -> lidar/0`がidentity）"
+    )
     lines = [
         f"# {label} GLIM疑似真値評価",
         "",
@@ -644,7 +687,7 @@ def write_report(path: Path, label: str, metrics: dict[str, Any]) -> None:
         f"- GLIM: `{metrics['inputs']['glim_trajectory']}`",
         f"- result bag: `{metrics['inputs']['result_bag']}`",
         "- 対応: GLIM/ROS messageのsensor `header.stamp`で補間",
-        "- frame: `traj_lidar`を使用（このrigでは`base_link -> lidar/0`がidentity）",
+        frame_description,
         "- 座標合わせ: スケール固定のSE(2)。Sim(2) scale補正は不使用",
         f"- 共通評価sample: {metrics['common']['samples']}",
         "",
@@ -653,7 +696,15 @@ def write_report(path: Path, label: str, metrics: dict[str, Any]) -> None:
         "| 出力 | XY RMSE | XY median | XY p95 | XY max | yaw RMSE | yaw p95 | path比 |",
         "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
-    for name in ("local", "ekf"):
+    if local_topic != LOCAL_TOPIC:
+        lines.insert(7, f"- local trajectory topic: `{local_topic}`")
+    if metrics["inputs"].get("sample_at_estimate_stamps", False):
+        sampling_line = (
+            "- sample基準: local estimateの各`header.stamp`をそのまま使用し、"
+            "GLIMだけを各stampへ補間"
+        )
+        lines.insert(8 if local_topic != LOCAL_TOPIC else 7, sampling_line)
+    for name in names:
         item = metrics["common"][name]["full_alignment"]
         position = item["position_error_m"]
         yaw = item["yaw_error_deg"]
@@ -674,7 +725,7 @@ def write_report(path: Path, label: str, metrics: dict[str, Any]) -> None:
             "|---|---:|---:|---:|---:|---:|",
         ]
     )
-    for name in ("local", "ekf"):
+    for name in names:
         item = metrics["common"][name]["initial_distance_alignment"]
         position = item["position_error_m"]
         lines.append(
@@ -694,7 +745,7 @@ def write_report(path: Path, label: str, metrics: dict[str, Any]) -> None:
                 "|---|---:|---:|---:|---:|---:|---:|",
             ]
         )
-        for name in ("local", "ekf"):
+        for name in names:
             item = metrics["common"][name]["calibration_window_alignment"]
             position = item["position_error_m"]
             lines.append(
@@ -706,7 +757,7 @@ def write_report(path: Path, label: str, metrics: dict[str, Any]) -> None:
     lines.extend(["", "## Relative Pose Error", ""])
     lines.append("| 出力 | 区間 | translation RMSE | p95 | yaw RMSE | yaw p95 |")
     lines.append("|---|---:|---:|---:|---:|---:|")
-    for name in ("local", "ekf"):
+    for name in names:
         for item in metrics["common"][name]["rpe"]:
             if item["count"] == 0:
                 continue
@@ -751,19 +802,33 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     glim_directory = args.glim_dir.resolve()
     glim_path = glim_directory / args.glim_trajectory
     reference = read_glim_trajectory(glim_path)
+    local_only = getattr(args, "local_only", False)
+    local_topic = getattr(args, "local_topic", LOCAL_TOPIC)
+    sample_at_estimate_stamps = getattr(args, "sample_at_estimate_stamps", False)
+    if sample_at_estimate_stamps and not local_only:
+        raise RuntimeError("--sample-at-estimate-stamps requires --local-only")
+    requested_topics = (local_topic,) if local_only else (local_topic, EKF_TOPIC)
     result_trajectories, duplicates = read_result_trajectories(
         args.result_bag,
         int(reference.stamp_ns[0]),
         int(reference.stamp_ns[-1]),
         args.duplicate_policy,
+        requested_topics,
     )
     estimates = {
-        "local": result_trajectories[LOCAL_TOPIC],
-        "ekf": result_trajectories[EKF_TOPIC],
+        "local": result_trajectories[local_topic],
     }
-    common_reference, common_estimates = common_samples(
-        reference, estimates, args.maximum_interpolation_gap_sec
-    )
+    if not local_only:
+        estimates["ekf"] = result_trajectories[EKF_TOPIC]
+    names = tuple(estimates)
+    if sample_at_estimate_stamps:
+        common_reference, common_estimates = samples_at_local_estimate_stamps(
+            reference, estimates["local"], args.maximum_interpolation_gap_sec
+        )
+    else:
+        common_reference, common_estimates = common_samples(
+            reference, estimates, args.maximum_interpolation_gap_sec
+        )
     initial_mask = first_distance_mask(common_reference.xy, args.initial_alignment_distance_m)
     full_mask = np.ones(len(common_reference.stamp_ns), dtype=bool)
     calibration_mask = None
@@ -791,7 +856,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     calibration_aligned: dict[str, Trajectory] = {}
     calibration_position_errors: dict[str, np.ndarray] = {}
     calibration_yaw_errors: dict[str, np.ndarray] = {}
-    for name in ("local", "ekf"):
+    for name in names:
         trajectory = common_estimates[name]
         full_result, full_aligned, position_error, yaw_error = evaluate_aligned(
             trajectory, common_reference, full_mask
@@ -853,12 +918,24 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
             "xy_path_m": trajectory_path_length(reference.xy),
         },
         "duplicates": {
-            "local": asdict(duplicates[LOCAL_TOPIC]),
-            "ekf": asdict(duplicates[EKF_TOPIC]),
+            name: asdict(duplicates[topic])
+            for name, topic in zip(names, requested_topics, strict=True)
         },
         "common": common_metrics,
         "glim_internal_consistency": evaluate_glim_internal_consistency(glim_directory),
     }
+    if local_only:
+        metrics["method"]["evaluated_topics"] = list(requested_topics)
+    elif local_topic != LOCAL_TOPIC:
+        metrics["method"]["evaluated_topics"] = list(requested_topics)
+    if local_topic != LOCAL_TOPIC:
+        metrics["inputs"]["local_topic"] = local_topic
+    if sample_at_estimate_stamps:
+        metrics["method"]["sampling"] = (
+            "exact local estimate header.stamps; GLIM reference interpolated "
+            "to estimate stamps; estimate poses not interpolated"
+        )
+        metrics["inputs"]["sample_at_estimate_stamps"] = True
     (output_directory / "metrics.json").write_text(
         json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -916,6 +993,30 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--maximum-interpolation-gap-sec", type=float, default=0.1)
     parser.add_argument("--duplicate-policy", choices=("last", "first"), default="last")
+    parser.add_argument(
+        "--local-topic",
+        default=LOCAL_TOPIC,
+        help=(
+            "Odometry topic evaluated as the local trajectory "
+            f"(default: {LOCAL_TOPIC})"
+        ),
+    )
+    parser.add_argument(
+        "--local-only",
+        action="store_true",
+        help=(
+            "evaluate only the odometry selected by --local-topic; use this "
+            "for LiDAR/IMU-only runs that do not publish /localization/ekf_odom"
+        ),
+    )
+    parser.add_argument(
+        "--sample-at-estimate-stamps",
+        action="store_true",
+        help=(
+            "use each exact local-estimate header stamp as an evaluation sample "
+            "and interpolate only GLIM; requires --local-only"
+        ),
+    )
     parser.add_argument("--calibration-start-stamp-sec", type=float)
     parser.add_argument("--calibration-end-stamp-sec", type=float)
     parser.add_argument("--no-plots", action="store_true")
@@ -931,6 +1032,8 @@ def main() -> int:
         parser.error("--rpe-distances-m values must be positive")
     if args.maximum_interpolation_gap_sec <= 0.0:
         parser.error("--maximum-interpolation-gap-sec must be positive")
+    if args.sample_at_estimate_stamps and not args.local_only:
+        parser.error("--sample-at-estimate-stamps requires --local-only")
     if (args.calibration_start_stamp_sec is None) != (
         args.calibration_end_stamp_sec is None
     ):
@@ -947,7 +1050,8 @@ def main() -> int:
     except Exception as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    for name in ("local", "ekf"):
+    names = ("local",) if args.local_only else ("local", "ekf")
+    for name in names:
         item = metrics["common"][name]["full_alignment"]
         print(
             f"{name}: XY RMSE={item['position_error_m']['rmse']:.4f} m, "

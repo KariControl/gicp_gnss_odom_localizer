@@ -1,0 +1,19 @@
+schema_version: 1
+dataset:
+  id: course_2
+  display_name: "Hesai 32-Line + IMU + RTK GNSS — Course 2"
+  availability: private_not_distributed
+  local_bag_hint: rosbag/output_pointcloud3
+  duration_sec: 213.635
+  topics:
+    pointcloud: /pandar_points_ex
+    imu: /sensor/imu/data_raw
+    nmea: /sensor/gnss/nmea_sentence
+  reference_trajectory:
+    provider: GLIM
+    availability: private_not_distributed
+    environment_variable: COURSE_2_REFERENCE_DIRECTORY
+  static_transforms:
+    base_to_lidar: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    base_to_imu: [0.0, 0.0, -0.1874, 3.14159, 0.0, 0.0]
+    base_to_gnss: [0.0, 0.0, -0.1326, 0.0, 0.0, 0.0]

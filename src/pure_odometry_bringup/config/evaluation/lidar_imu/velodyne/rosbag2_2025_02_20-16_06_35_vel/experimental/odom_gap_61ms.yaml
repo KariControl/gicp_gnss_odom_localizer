@@ -1,0 +1,8 @@
+/**:
+  ros__parameters:
+    imu_corrected.linear_acceleration_scale: 1.0
+    imu_corrected.max_sample_gap_sec: 0.061
+    imu_corrected.max_boundary_gap_sec: 0.025
+
+    lidar_odom.accepted_scan_odom.enable: true
+    lidar_odom.accepted_scan_odom.topic: /localization/gyro_lidar_odom_scan

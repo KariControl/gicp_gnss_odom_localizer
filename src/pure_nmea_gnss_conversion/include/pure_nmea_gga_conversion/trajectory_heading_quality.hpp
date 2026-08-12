@@ -257,7 +257,6 @@ public:
         reset_epoch("unusable_gap");
       }
       samples_.push_back(sample);
-      last_usable_stamp_sec_ = sample.stamp_sec;
       has_last_usable_stamp_ = true;
       has_unusable_streak_ = false;
       result.inserted = true;
@@ -305,7 +304,6 @@ public:
 
     samples_.push_back(current);
     last_input_stamp_sec_ = current.stamp_sec;
-    last_usable_stamp_sec_ = current.stamp_sec;
     has_last_input_stamp_ = true;
     has_last_usable_stamp_ = true;
 
@@ -421,7 +419,6 @@ private:
   bool has_unusable_streak_{false};
   bool hard_unusable_active_{false};
   double last_input_stamp_sec_{0.0};
-  double last_usable_stamp_sec_{0.0};
   double unusable_streak_start_sec_{0.0};
   std::size_t epoch_{0U};
 };

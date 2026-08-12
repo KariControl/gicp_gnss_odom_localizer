@@ -40,6 +40,7 @@ def generate_launch_description():
     nmea_gnss_param = LaunchConfiguration("nmea_gnss_param")
     nmea_gnss_override_param = LaunchConfiguration("nmea_gnss_override_param")
     gnss_fusion_param = LaunchConfiguration("gnss_fusion_param")
+    gnss_fusion_override_param = LaunchConfiguration("gnss_fusion_override_param")
     use_gnss = LaunchConfiguration("use_gnss")
     use_map_odom_fusion = LaunchConfiguration("use_map_odom_fusion")
     use_imu_deskew = LaunchConfiguration("use_imu_deskew")
@@ -165,13 +166,14 @@ def generate_launch_description():
         output="screen",
         parameters=[
             gnss_fusion_param,
+            {"xy_only_recovery.enabled": fusion_xy_only_recovery},
+            gnss_fusion_override_param,
             {
                 "use_sim_time": use_sim_time,
                 "gnss_input_topic": gnss_fusion_input_topic,
                 "out_odom_topic": fused_odom_topic,
                 "out_pose_topic": fused_pose_topic,
                 "publish_tf": fusion_publish_tf,
-                "xy_only_recovery.enabled": fusion_xy_only_recovery,
             },
         ],
         arguments=["--ros-args", "--log-level", log_level],
@@ -195,6 +197,9 @@ def generate_launch_description():
                 "nmea_gnss_override_param", default_value=default_empty_param
             ),
             DeclareLaunchArgument("gnss_fusion_param", default_value=default_gnss_fusion_param),
+            DeclareLaunchArgument(
+                "gnss_fusion_override_param", default_value=default_empty_param
+            ),
             DeclareLaunchArgument("use_gnss", default_value="false"),
             DeclareLaunchArgument(
                 "use_map_odom_fusion",
@@ -224,8 +229,8 @@ def generate_launch_description():
                 "fusion_xy_only_recovery",
                 default_value="false",
                 description=(
-                    "Enable guarded translation-only GNSS recovery while stopped; "
-                    "yaw remains unobserved and full SE(2) recovery retains priority."
+                    "Deprecated compatibility switch for guarded translation-only "
+                    "GNSS recovery. Prefer gnss_fusion_override_param."
                 ),
             ),
             DeclareLaunchArgument(

@@ -7,21 +7,26 @@ usage() {
 Run the ROS 2 LiDAR/IMU/NMEA localization stack against a Hesai rosbag.
 
 Usage:
-  run_vehicle_localizer_hesai_nmea_gnss_no_snow_lp.sh [options]
+  run_hesai_localization_bag.sh [options]
 
 Options:
+  --dataset <name>             course-1 | course-2 (default: course-1)
+                               Selects a descriptive private-dataset manifest
+                               and its local default bag path
   --bag <path>                 Input rosbag directory
-                               default: rosbag/output_pointcloud2
+                               Overrides the dataset's local default path
   --rate <factor>             Playback rate (default: 1.0)
-  --tracking-mode <mode>      scan_to_scan | scan_to_submap
-                               scan_to_submap starts the isolated precision
-                               overlay; the production odometer remains
-                               scan_to_scan (default: scan_to_scan)
+  --localization-mode <mode>  baseline | precision (default: baseline)
+                               precision starts the isolated submap-matcher
+                               overlay; the odometer remains scan_to_scan
+  --tracking-mode <mode>      Deprecated compatibility alias:
+                               scan_to_scan -> baseline
+                               scan_to_submap -> precision
   --accepted-scan-control     Evaluation-only scan_to_scan control: enable and
                               record the same accepted-scan snapshots as the
                               precision run, without starting its overlay
   --output <directory>        Result directory
-                               default: test_results/output_pointcloud2_<timestamp>
+                               default: test_results/<dataset>_<timestamp>
   --playback-duration <sec>   Stop after this many seconds of bag time
   --lsim-interface-test       Run the LSim localizer/Autoware adapter launch
                               without requiring the Autoware installation
@@ -31,7 +36,8 @@ Options:
 
 The default profile uses LiDAR and IMU only for local odometry. It neither
 subscribes to /vehicle/twist nor supplies another translational deskew speed.
-Static transforms are the calibrated values for rosbag/output_pointcloud2.
+Both datasets use the calibrated Hesai 32-Line + IMU + RTK GNSS rig. Rosbags are
+private evaluation inputs and are not distributed with this repository.
 USAGE
 }
 
@@ -61,9 +67,12 @@ print_command() {
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-bag="$ROOT/rosbag/output_pointcloud2"
+dataset="course-1"
+dataset_was_set=false
+bag=""
 rate="1.0"
-tracking_mode="scan_to_scan"
+localization_mode="baseline"
+mode_option=""
 output=""
 playback_duration=""
 record_output=true
@@ -73,6 +82,12 @@ accepted_scan_control=false
 
 while (($# > 0)); do
   case "$1" in
+    --dataset)
+      [[ $# -ge 2 ]] || fail "--dataset requires a value"
+      dataset="$2"
+      dataset_was_set=true
+      shift 2
+      ;;
     --bag)
       [[ $# -ge 2 ]] || fail "--bag requires a value"
       bag="$2"
@@ -83,9 +98,27 @@ while (($# > 0)); do
       rate="$2"
       shift 2
       ;;
+    --localization-mode)
+      [[ $# -ge 2 ]] || fail "--localization-mode requires a value"
+      [[ -z "$mode_option" ]] ||
+        fail "--localization-mode cannot be combined with $mode_option"
+      localization_mode="$2"
+      mode_option="--localization-mode"
+      shift 2
+      ;;
     --tracking-mode)
       [[ $# -ge 2 ]] || fail "--tracking-mode requires a value"
-      tracking_mode="$2"
+      [[ -z "$mode_option" ]] ||
+        fail "--tracking-mode cannot be combined with $mode_option"
+      case "$2" in
+        scan_to_scan) localization_mode="baseline" ;;
+        scan_to_submap) localization_mode="precision" ;;
+        *) fail "--tracking-mode must be scan_to_scan or scan_to_submap: $2" ;;
+      esac
+      mode_option="--tracking-mode"
+      printf '%s\n' \
+        '[vehicle-localizer] WARNING: --tracking-mode is deprecated; use --localization-mode baseline|precision' \
+        >&2
       shift 2
       ;;
     --output)
@@ -125,16 +158,45 @@ while (($# > 0)); do
 done
 
 require_positive_number "--rate" "$rate"
-case "$tracking_mode" in
-  scan_to_scan|scan_to_submap) ;;
-  *) fail "--tracking-mode must be scan_to_scan or scan_to_submap: $tracking_mode" ;;
+case "$dataset" in
+  course-1)
+    dataset_id="course_1"
+    dataset_display_name="Hesai 32-Line + IMU + RTK GNSS — Course 1"
+    dataset_default_bag="$ROOT/rosbag/output_pointcloud2"
+    ;;
+  course-2)
+    dataset_id="course_2"
+    dataset_display_name="Hesai 32-Line + IMU + RTK GNSS — Course 2"
+    dataset_default_bag="$ROOT/rosbag/output_pointcloud3"
+    ;;
+  *) fail "--dataset must be course-1 or course-2: $dataset" ;;
+esac
+if [[ -z "$bag" ]]; then
+  bag="$dataset_default_bag"
+elif [[ "$dataset_was_set" != true ]]; then
+  case "$(basename -- "$bag")" in
+    output_pointcloud2)
+      dataset="course-1"
+      dataset_id="course_1"
+      dataset_display_name="Hesai 32-Line + IMU + RTK GNSS — Course 1"
+      ;;
+    output_pointcloud3)
+      dataset="course-2"
+      dataset_id="course_2"
+      dataset_display_name="Hesai 32-Line + IMU + RTK GNSS — Course 2"
+      ;;
+  esac
+fi
+case "$localization_mode" in
+  baseline|precision) ;;
+  *) fail "--localization-mode must be baseline or precision: $localization_mode" ;;
 esac
 if [[ -n "$playback_duration" ]]; then
   require_positive_number "--playback-duration" "$playback_duration"
 fi
 if [[ "$accepted_scan_control" == true ]]; then
-  [[ "$tracking_mode" == "scan_to_scan" ]] ||
-    fail "--accepted-scan-control requires --tracking-mode scan_to_scan"
+  [[ "$localization_mode" == "baseline" ]] ||
+    fail "--accepted-scan-control requires --localization-mode baseline"
   [[ "$record_output" == true ]] ||
     fail "--accepted-scan-control requires recording"
 fi
@@ -142,8 +204,7 @@ fi
 [[ -e "$bag" ]] || fail "bag does not exist: $bag"
 bag="$(realpath -e -- "$bag")"
 if [[ -z "$output" ]]; then
-  bag_name="$(basename "$bag")"
-  output="$ROOT/test_results/${bag_name}_$(date +%Y%m%d_%H%M%S)"
+  output="$ROOT/test_results/${dataset_id}_$(date +%Y%m%d_%H%M%S)"
 fi
 output="$(realpath -m -- "$output")"
 [[ ! -e "$output" ]] || fail "output directory already exists: $output"
@@ -170,35 +231,65 @@ else
 fi
 NMEA_GNSS_PARAM="$(ros2 pkg prefix pure_nmea_gnss_conversion)/share/pure_nmea_gnss_conversion/param/param.yaml"
 BRINGUP_SHARE="$(ros2 pkg prefix pure_odometry_bringup)/share/pure_odometry_bringup"
+EVALUATION_PROFILE_ROOT="$BRINGUP_SHARE/config/evaluation/lidar_imu_gnss/hesai_32line_rtk"
+DATASET_MANIFEST="$EVALUATION_PROFILE_ROOT/datasets/${dataset_id}.yaml"
+DIAGNOSTIC_AGGREGATOR_PARAM="$BRINGUP_SHARE/config/diagnostic_aggregator.yaml"
 ODOM_OVERRIDE_PARAM="$BRINGUP_SHARE/config/autoware_lsim/empty_params.yaml"
 PRECISION_BRINGUP_SHARE=""
 PRECISION_MATCHER_PARAM=""
+PRECISION_MATCHER_OVERRIDE_PARAM=""
 PRECISION_GLOBAL_PARAM=""
-if [[ "$tracking_mode" == "scan_to_submap" || "$accepted_scan_control" == true ]]; then
+PRECISION_GLOBAL_OVERRIDE_PARAM=""
+LSIM_ADAPTER_PARAM=""
+if [[ "$localization_mode" == "precision" || "$accepted_scan_control" == true ]]; then
   PRECISION_BRINGUP_SHARE="$(ros2 pkg prefix pure_precision_bringup)/share/pure_precision_bringup"
   ODOM_OVERRIDE_PARAM="$PRECISION_BRINGUP_SHARE/config/submap_snapshot_override.yaml"
 fi
-if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+if [[ "$localization_mode" == "precision" ]]; then
   PRECISION_MATCHER_PARAM="$(ros2 pkg prefix pure_lidar_submap_matcher)/share/pure_lidar_submap_matcher/param/param.yaml"
   PRECISION_GLOBAL_PARAM="$(ros2 pkg prefix pure_precision_global_localizer)/share/pure_precision_global_localizer/param/param.yaml"
+  PRECISION_MATCHER_OVERRIDE_PARAM="$PRECISION_BRINGUP_SHARE/config/empty_params.yaml"
+  PRECISION_GLOBAL_OVERRIDE_PARAM="$PRECISION_BRINGUP_SHARE/config/empty_params.yaml"
 fi
-NMEA_GNSS_OVERRIDE_PARAM="$BRINGUP_SHARE/config/autoware_lsim/hesai_rosbag23_nmea_override.yaml"
+if [[ "$lsim_interface_test" == true ]]; then
+  LSIM_ADAPTER_PARAM="$(ros2 pkg prefix pure_autoware_localization_adapter)/share/pure_autoware_localization_adapter/param/param.yaml"
+fi
+NMEA_GNSS_OVERRIDE_PARAM="$EVALUATION_PROFILE_ROOT/accepted/nmea_site_origin.yaml"
+GNSS_FUSION_OVERRIDE_PARAM="$EVALUATION_PROFILE_ROOT/accepted/gnss_fusion_single_antenna.yaml"
+PRECISION_PROFILE_MANIFEST=""
+if [[ -n "$PRECISION_BRINGUP_SHARE" ]]; then
+  PRECISION_PROFILE_MANIFEST="$PRECISION_BRINGUP_SHARE/config/evaluation/lidar_imu_gnss/hesai_32line_rtk/profile.yaml"
+fi
 for parameter_file in \
   "$IMU_PARAM" \
   "$ODOM_PARAM" \
   "$ODOM_OVERRIDE_PARAM" \
   "$GNSS_FUSION_PARAM" \
-  "$NMEA_GNSS_PARAM"
+  "$NMEA_GNSS_PARAM" \
+  "$NMEA_GNSS_OVERRIDE_PARAM" \
+  "$GNSS_FUSION_OVERRIDE_PARAM" \
+  "$DATASET_MANIFEST" \
+  "$DIAGNOSTIC_AGGREGATOR_PARAM"
 do
   [[ -f "$parameter_file" ]] || fail "parameter file does not exist: $parameter_file"
 done
-[[ -f "$NMEA_GNSS_OVERRIDE_PARAM" ]] ||
-  fail "parameter file does not exist: $NMEA_GNSS_OVERRIDE_PARAM"
-if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+if [[ -n "$PRECISION_PROFILE_MANIFEST" ]]; then
+  [[ -f "$PRECISION_PROFILE_MANIFEST" ]] ||
+    fail "profile manifest does not exist: $PRECISION_PROFILE_MANIFEST"
+fi
+if [[ "$localization_mode" == "precision" ]]; then
   [[ -f "$PRECISION_MATCHER_PARAM" ]] ||
     fail "parameter file does not exist: $PRECISION_MATCHER_PARAM"
   [[ -f "$PRECISION_GLOBAL_PARAM" ]] ||
     fail "parameter file does not exist: $PRECISION_GLOBAL_PARAM"
+  [[ -f "$PRECISION_MATCHER_OVERRIDE_PARAM" ]] ||
+    fail "parameter file does not exist: $PRECISION_MATCHER_OVERRIDE_PARAM"
+  [[ -f "$PRECISION_GLOBAL_OVERRIDE_PARAM" ]] ||
+    fail "parameter file does not exist: $PRECISION_GLOBAL_OVERRIDE_PARAM"
+fi
+if [[ -n "$LSIM_ADAPTER_PARAM" ]]; then
+  [[ -f "$LSIM_ADAPTER_PARAM" ]] ||
+    fail "parameter file does not exist: $LSIM_ADAPTER_PARAM"
 fi
 
 tf_lidar_command=(
@@ -235,10 +326,10 @@ if [[ "$lsim_interface_test" == true ]]; then
     odom_param:="$ODOM_PARAM"
     odom_override_param:="$ODOM_OVERRIDE_PARAM"
     gnss_fusion_param:="$GNSS_FUSION_PARAM"
+    gnss_fusion_override_param:="$GNSS_FUSION_OVERRIDE_PARAM"
     nmea_gnss_param:="$NMEA_GNSS_PARAM"
     nmea_gnss_override_param:="$NMEA_GNSS_OVERRIDE_PARAM"
     gnss_primary_gga_topic:=/nmea_sentence
-    fusion_xy_only_recovery:=true
   )
 else
   launch_command=(
@@ -252,23 +343,24 @@ else
     odom_param:="$ODOM_PARAM"
     odom_override_param:="$ODOM_OVERRIDE_PARAM"
     gnss_fusion_param:="$GNSS_FUSION_PARAM"
+    gnss_fusion_override_param:="$GNSS_FUSION_OVERRIDE_PARAM"
     nmea_gnss_param:="$NMEA_GNSS_PARAM"
+    nmea_gnss_override_param:="$NMEA_GNSS_OVERRIDE_PARAM"
     gnss_primary_gga_topic:=/nmea_sentence
     use_secondary_gga:=false
     use_doppler_heading:=false
     use_imu_yaw_rate_heading:=true
-    # This single-antenna parking profile may regain RTK position while stopped.
-    # Enable guarded XY-only recovery; generic bringup remains disabled by default.
-    fusion_xy_only_recovery:=true
   )
 fi
 precision_launch_command=()
-if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+if [[ "$localization_mode" == "precision" ]]; then
   precision_launch_command=(
     ros2 launch pure_precision_bringup precision_overlay.launch.py
     use_sim_time:=true
     matcher_param:="$PRECISION_MATCHER_PARAM"
+    matcher_override_param:="$PRECISION_MATCHER_OVERRIDE_PARAM"
     global_param:="$PRECISION_GLOBAL_PARAM"
+    global_override_param:="$PRECISION_GLOBAL_OVERRIDE_PARAM"
   )
 fi
 record_directory="$output/localization_output"
@@ -291,12 +383,12 @@ record_topics=(
   /localization/pose_estimator/pose_with_covariance
   /localization/acceleration
 )
-if [[ "$tracking_mode" == "scan_to_submap" || "$accepted_scan_control" == true ]]; then
+if [[ "$localization_mode" == "precision" || "$accepted_scan_control" == true ]]; then
   record_topics+=(
     /localization/submap_scan
   )
 fi
-if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+if [[ "$localization_mode" == "precision" ]]; then
   record_topics+=(
     /localization/submap_correction
     /localization/precision_local_odom
@@ -339,9 +431,12 @@ if [[ -n "$playback_duration" ]]; then
 fi
 
 log "bag: $bag"
+log "dataset: $dataset_display_name"
+log "evaluation profile: hesai_32line_rtk"
 log "output: $output"
 log "ROS_DOMAIN_ID: $ROS_DOMAIN_ID"
-log "tracking mode: $tracking_mode"
+log "localization mode: $localization_mode"
+log "odometer tracking mode: scan_to_scan"
 log "accepted-scan control instrumentation: $accepted_scan_control"
 
 if [[ "$dry_run" == true ]]; then
@@ -351,7 +446,7 @@ if [[ "$dry_run" == true ]]; then
     print_command "${tf_gnss_command[@]}"
   fi
   print_command "${launch_command[@]}"
-  if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+  if [[ "$localization_mode" == "precision" ]]; then
     print_command "${precision_launch_command[@]}"
   fi
   if [[ "$record_output" == true ]]; then
@@ -363,15 +458,128 @@ fi
 
 mkdir -p "$output/ros_logs"
 export ROS_LOG_DIR="$output/ros_logs"
+artifact_directory="$output/artifacts"
+mkdir -p "$artifact_directory"
+
+sha256_of() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+copy_effective_config() {
+  local role="$1"
+  local source_path="$2"
+  local artifact_name="$3"
+  local digest
+  digest="$(sha256_of "$source_path")"
+  install -m 0644 "$source_path" "$artifact_directory/$artifact_name"
+  printf '%s\t%s\t%s\t%s\n' \
+    "$role" "$source_path" "$digest" "$artifact_name" \
+    >> "$artifact_directory/effective_configurations.tsv"
+}
+
+printf 'role\tsource_path\tsha256\tartifact\n' \
+  > "$artifact_directory/effective_configurations.tsv"
+copy_effective_config imu_base "$IMU_PARAM" imu_param.yaml
+copy_effective_config odometry_base "$ODOM_PARAM" odom_param.yaml
+copy_effective_config odometry_override "$ODOM_OVERRIDE_PARAM" odom_override_param.yaml
+copy_effective_config nmea_base "$NMEA_GNSS_PARAM" nmea_gnss_param.yaml
+copy_effective_config nmea_site_override "$NMEA_GNSS_OVERRIDE_PARAM" nmea_site_origin.yaml
+copy_effective_config gnss_fusion_base "$GNSS_FUSION_PARAM" gnss_fusion_param.yaml
+copy_effective_config gnss_fusion_override "$GNSS_FUSION_OVERRIDE_PARAM" \
+  gnss_fusion_single_antenna.yaml
+copy_effective_config dataset_manifest "$DATASET_MANIFEST" dataset_manifest.yaml
+copy_effective_config diagnostic_aggregator "$DIAGNOSTIC_AGGREGATOR_PARAM" \
+  diagnostic_aggregator.yaml
+if [[ -n "$LSIM_ADAPTER_PARAM" ]]; then
+  copy_effective_config autoware_adapter_base "$LSIM_ADAPTER_PARAM" \
+    autoware_adapter_param.yaml
+fi
+if [[ -n "$PRECISION_PROFILE_MANIFEST" ]]; then
+  copy_effective_config precision_profile_manifest "$PRECISION_PROFILE_MANIFEST" \
+    precision_profile.yaml
+fi
+if [[ "$localization_mode" == "precision" ]]; then
+  copy_effective_config precision_matcher_base "$PRECISION_MATCHER_PARAM" \
+    precision_matcher_param.yaml
+  copy_effective_config precision_matcher_override \
+    "$PRECISION_MATCHER_OVERRIDE_PARAM" precision_matcher_override_param.yaml
+  copy_effective_config precision_global_base "$PRECISION_GLOBAL_PARAM" \
+    precision_global_param.yaml
+  copy_effective_config precision_global_override \
+    "$PRECISION_GLOBAL_OVERRIDE_PARAM" precision_global_override_param.yaml
+fi
+
+IMU_PARAM_SHA256="$(sha256_of "$IMU_PARAM")"
+ODOM_PARAM_SHA256="$(sha256_of "$ODOM_PARAM")"
+ODOM_OVERRIDE_PARAM_SHA256="$(sha256_of "$ODOM_OVERRIDE_PARAM")"
+NMEA_GNSS_PARAM_SHA256="$(sha256_of "$NMEA_GNSS_PARAM")"
+NMEA_GNSS_OVERRIDE_PARAM_SHA256="$(sha256_of "$NMEA_GNSS_OVERRIDE_PARAM")"
+GNSS_FUSION_PARAM_SHA256="$(sha256_of "$GNSS_FUSION_PARAM")"
+GNSS_FUSION_OVERRIDE_PARAM_SHA256="$(sha256_of "$GNSS_FUSION_OVERRIDE_PARAM")"
+DATASET_MANIFEST_SHA256="$(sha256_of "$DATASET_MANIFEST")"
+PRECISION_MATCHER_PARAM_SHA256="n/a"
+PRECISION_GLOBAL_PARAM_SHA256="n/a"
+PRECISION_MATCHER_OVERRIDE_PARAM_SHA256="n/a"
+PRECISION_GLOBAL_OVERRIDE_PARAM_SHA256="n/a"
+PRECISION_PROFILE_MANIFEST_SHA256="n/a"
+DIAGNOSTIC_AGGREGATOR_PARAM_SHA256="$(sha256_of "$DIAGNOSTIC_AGGREGATOR_PARAM")"
+LSIM_ADAPTER_PARAM_SHA256="n/a"
+if [[ -n "$LSIM_ADAPTER_PARAM" ]]; then
+  LSIM_ADAPTER_PARAM_SHA256="$(sha256_of "$LSIM_ADAPTER_PARAM")"
+fi
+if [[ -n "$PRECISION_PROFILE_MANIFEST" ]]; then
+  PRECISION_PROFILE_MANIFEST_SHA256="$(sha256_of "$PRECISION_PROFILE_MANIFEST")"
+fi
+if [[ "$localization_mode" == "precision" ]]; then
+  PRECISION_MATCHER_PARAM_SHA256="$(sha256_of "$PRECISION_MATCHER_PARAM")"
+  PRECISION_GLOBAL_PARAM_SHA256="$(sha256_of "$PRECISION_GLOBAL_PARAM")"
+  PRECISION_MATCHER_OVERRIDE_PARAM_SHA256="$(sha256_of "$PRECISION_MATCHER_OVERRIDE_PARAM")"
+  PRECISION_GLOBAL_OVERRIDE_PARAM_SHA256="$(sha256_of "$PRECISION_GLOBAL_OVERRIDE_PARAM")"
+fi
 {
+  printf 'evaluation_profile=%q\n' "hesai_32line_rtk"
+  printf 'dataset=%q\n' "$dataset"
+  printf 'dataset_id=%q\n' "$dataset_id"
+  printf 'dataset_display_name=%q\n' "$dataset_display_name"
+  printf 'dataset_manifest=%q\n' "$DATASET_MANIFEST"
+  printf 'dataset_manifest_sha256=%q\n' "$DATASET_MANIFEST_SHA256"
   printf 'bag=%q\n' "$bag"
   printf 'rate=%q\n' "$rate"
-  printf 'tracking_mode=%q\n' "$tracking_mode"
+  printf 'localization_mode=%q\n' "$localization_mode"
+  printf 'odometer_tracking_mode=%q\n' "scan_to_scan"
   printf 'accepted_scan_control=%q\n' "$accepted_scan_control"
   printf 'odom_param=%q\n' "$ODOM_PARAM"
+  printf 'odom_param_sha256=%q\n' "$ODOM_PARAM_SHA256"
   printf 'odom_override_param=%q\n' "$ODOM_OVERRIDE_PARAM"
+  printf 'odom_override_param_sha256=%q\n' "$ODOM_OVERRIDE_PARAM_SHA256"
+  printf 'imu_param=%q\n' "$IMU_PARAM"
+  printf 'imu_param_sha256=%q\n' "$IMU_PARAM_SHA256"
+  printf 'nmea_gnss_param=%q\n' "$NMEA_GNSS_PARAM"
+  printf 'nmea_gnss_param_sha256=%q\n' "$NMEA_GNSS_PARAM_SHA256"
+  printf 'nmea_gnss_override_param=%q\n' "$NMEA_GNSS_OVERRIDE_PARAM"
+  printf 'nmea_gnss_override_param_sha256=%q\n' "$NMEA_GNSS_OVERRIDE_PARAM_SHA256"
+  printf 'gnss_fusion_param=%q\n' "$GNSS_FUSION_PARAM"
+  printf 'gnss_fusion_param_sha256=%q\n' "$GNSS_FUSION_PARAM_SHA256"
+  printf 'gnss_fusion_override_param=%q\n' "$GNSS_FUSION_OVERRIDE_PARAM"
+  printf 'gnss_fusion_override_param_sha256=%q\n' "$GNSS_FUSION_OVERRIDE_PARAM_SHA256"
   printf 'precision_matcher_param=%q\n' "$PRECISION_MATCHER_PARAM"
+  printf 'precision_matcher_param_sha256=%q\n' "$PRECISION_MATCHER_PARAM_SHA256"
+  printf 'precision_matcher_override_param=%q\n' "$PRECISION_MATCHER_OVERRIDE_PARAM"
+  printf 'precision_matcher_override_param_sha256=%q\n' "$PRECISION_MATCHER_OVERRIDE_PARAM_SHA256"
   printf 'precision_global_param=%q\n' "$PRECISION_GLOBAL_PARAM"
+  printf 'precision_global_param_sha256=%q\n' "$PRECISION_GLOBAL_PARAM_SHA256"
+  printf 'precision_global_override_param=%q\n' "$PRECISION_GLOBAL_OVERRIDE_PARAM"
+  printf 'precision_global_override_param_sha256=%q\n' "$PRECISION_GLOBAL_OVERRIDE_PARAM_SHA256"
+  printf 'precision_profile_manifest=%q\n' "$PRECISION_PROFILE_MANIFEST"
+  printf 'precision_profile_manifest_sha256=%q\n' "$PRECISION_PROFILE_MANIFEST_SHA256"
+  printf 'diagnostic_aggregator_param=%q\n' "$DIAGNOSTIC_AGGREGATOR_PARAM"
+  printf 'diagnostic_aggregator_param_sha256=%q\n' "$DIAGNOSTIC_AGGREGATOR_PARAM_SHA256"
+  printf 'lsim_adapter_param=%q\n' "$LSIM_ADAPTER_PARAM"
+  printf 'lsim_adapter_param_sha256=%q\n' "$LSIM_ADAPTER_PARAM_SHA256"
+  printf 'tf_policy=%q\n' "isolate_all"
+  printf 'tf_base_to_lidar_xyz_rpy=%q\n' "0.0 0.0 0.0 0.0 0.0 0.0"
+  printf 'tf_base_to_imu_xyz_rpy=%q\n' "0.0 0.0 -0.1874 3.14159 0.0 0.0"
+  printf 'tf_base_to_gnss_xyz_rpy=%q\n' "0.0 0.0 -0.1326 0.0 0.0 0.0"
   printf 'playback_duration=%q\n' "$playback_duration"
   printf 'record_output=%q\n' "$record_output"
   printf 'lsim_interface_test=%q\n' "$lsim_interface_test"
@@ -503,7 +711,7 @@ fi
 
 start_process_group "$output/launch.log" "${launch_command[@]}"
 launch_pid=$started_pid
-if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+if [[ "$localization_mode" == "precision" ]]; then
   start_process_group "$output/precision_launch.log" "${precision_launch_command[@]}"
   precision_launch_pid=$started_pid
 fi
@@ -517,12 +725,12 @@ fi
 if ! wait_for_topic /localization/ekf_odom 60; then
   fail "GNSS fusion did not become ready; see $output/launch.log"
 fi
-if [[ "$tracking_mode" == "scan_to_submap" || "$accepted_scan_control" == true ]]; then
+if [[ "$localization_mode" == "precision" || "$accepted_scan_control" == true ]]; then
   if ! wait_for_topic /localization/submap_scan 60 "$launch_pid"; then
     fail "exact-key scan publisher did not become ready; see $output/launch.log"
   fi
 fi
-if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+if [[ "$localization_mode" == "precision" ]]; then
   if ! wait_for_topic /localization/submap_correction 60 "$precision_launch_pid"; then
     fail "submap matcher did not become ready; see $output/precision_launch.log"
   fi
@@ -566,14 +774,14 @@ play_pid=""
 # can write the last messages and finalize metadata.yaml. Precision mode waits
 # for at least one complete 1 Hz diagnostics period so bag/diagnostic counters
 # can be checked exactly.
-if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+if [[ "$localization_mode" == "precision" ]]; then
   sleep 2
 else
   sleep 1
 fi
 precision_runtime_healthy=true
 precision_runtime_detail=""
-if [[ "$tracking_mode" == "scan_to_submap" ]]; then
+if [[ "$localization_mode" == "precision" ]]; then
   if ! process_alive "$precision_launch_pid"; then
     precision_runtime_healthy=false
     precision_runtime_detail+=" precision_overlay_exited"
@@ -618,7 +826,7 @@ fi
 if [[ "$precision_runtime_healthy" != true ]]; then
   fail "precision runtime health check failed:$precision_runtime_detail"
 fi
-if [[ "$tracking_mode" == "scan_to_submap" && "$record_output" == true ]]; then
+if [[ "$localization_mode" == "precision" && "$record_output" == true ]]; then
   if ! ros2 run pure_precision_bringup validate_precision_bag.py \
     "$record_directory" --expected-rate "$rate" \
     > "$output/precision_validation.log" 2>&1
