@@ -506,6 +506,61 @@ def check_safe_defaults() -> None:
             fail(f"Autoware adapter safe/default interface must remain enabled: {key}")
 
 
+def check_nmea_projection_contract() -> None:
+    """Keep the runtime NMEA projection synchronized with its metadata file."""
+    parameter_path = ROOT / "src/pure_nmea_gnss_conversion/param/param.yaml"
+    projector_path = (
+        ROOT / "src/pure_nmea_gnss_conversion/config/map_projector_info.yaml"
+    )
+    parameters = parameter_map(parameter_path)
+    projector = yaml.load(
+        projector_path.read_text(encoding="utf-8"), Loader=UniqueKeyLoader
+    )
+    expected = {
+        "projector_type": projector.get("projector_type"),
+        "vertical_datum": projector.get("vertical_datum"),
+        "map_origin.latitude": projector.get("map_origin", {}).get("latitude"),
+        "map_origin.longitude": projector.get("map_origin", {}).get("longitude"),
+        "scale_factor": projector.get("scale_factor"),
+    }
+    for key, value in expected.items():
+        if parameters.get(key) != value:
+            fail(
+                "NMEA runtime projection differs from map_projector_info.yaml: "
+                f"{key}={parameters.get(key)!r}, expected {value!r}"
+            )
+    gnss0 = parameters.get("gnss0")
+    if not isinstance(gnss0, list) or gnss0[:2] != [
+        expected["map_origin.latitude"],
+        expected["map_origin.longitude"],
+    ]:
+        fail("NMEA legacy gnss0 latitude/longitude differs from the map origin")
+
+    evaluation_override = (
+        ROOT
+        / "src/pure_odometry_bringup/config/evaluation/lidar_imu_gnss/"
+        "hesai_32line_rtk/accepted/nmea_site_origin.yaml"
+    )
+    if evaluation_override.exists():
+        fail("Hesai evaluation must not override the NMEA map origin")
+
+    required_runner_tokens = (
+        'NMEA_PROJECTOR_METADATA="$NMEA_GNSS_SHARE/config/map_projector_info.yaml"',
+        'NMEA_GNSS_OVERRIDE_PARAM="$EMPTY_PARAM"',
+        "copy_effective_config nmea_projector_metadata",
+        "copy_effective_config nmea_override",
+    )
+    runner = (ROOT / "script/run_hesai_localization_bag.sh").read_text(
+        encoding="utf-8"
+    )
+    for token in required_runner_tokens:
+        if token not in runner:
+            fail(f"Hesai runner projection contract missing: {token}")
+    for token in ("nmea_site_origin.yaml", "nmea_site_override"):
+        if token in runner:
+            fail(f"Hesai runner still applies a retired NMEA site override: {token}")
+
+
 def check_lidar_tracking_contract() -> None:
     parameter_directory = ROOT / "src/pure_lidar_gyro_odometer/param"
     public_profiles = {
@@ -773,6 +828,7 @@ def main() -> int:
     check_required_semantics()
     check_parameter_files_match_nodes()
     check_safe_defaults()
+    check_nmea_projection_contract()
     check_lidar_tracking_contract()
     check_gnss_message_access()
     check_hygiene()

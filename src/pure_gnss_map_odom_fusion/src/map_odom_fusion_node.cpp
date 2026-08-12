@@ -23,6 +23,7 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr double kUnknownVariance = 1.0e6;
 constexpr double kDisabledVariance = 1.0e12;
 constexpr double kMinimumVariance = 1.0e-9;
+constexpr std::size_t kPublishedStampHistoryLimit = 8192U;
 
 bool quaternionIsValid(const geometry_msgs::msg::Quaternion & quaternion)
 {
@@ -2451,7 +2452,7 @@ void MapOdomFusionNode::onOdom(const nav_msgs::msg::Odometry::SharedPtr message)
 
   updateRecoveryModeFromClock(sample.stamp);
   resolvePendingMeasurement();
-  publishFused(sample.stamp);
+  publishFused(sample.stamp, PublicationTrigger::ODOMETRY);
 }
 
 void MapOdomFusionNode::onGnssInput(
@@ -2586,11 +2587,27 @@ void MapOdomFusionNode::onInitialPose(
   handleMeasurement(measurementFromPose(*message, "initialpose"));
 }
 
-void MapOdomFusionNode::publishFused(const rclcpp::Time & stamp)
+void MapOdomFusionNode::publishFused(
+  const rclcpp::Time & stamp, PublicationTrigger trigger)
 {
   std::lock_guard<std::mutex> publish_lock(publish_mutex_);
-  if (last_published_stamp_.nanoseconds() != 0 && stamp < last_published_stamp_) {
+  const auto requested_stamp_ns = stamp.nanoseconds();
+  const bool requested_stamp_already_published = std::binary_search(
+    published_stamp_history_ns_.begin(), published_stamp_history_ns_.end(),
+    requested_stamp_ns);
+  const PublicationOrderDecision order = classifyPublicationOrder(
+    requested_stamp_ns, last_published_stamp_.nanoseconds(), trigger,
+    requested_stamp_already_published);
+  if (order == PublicationOrderDecision::DROP_OUT_OF_ORDER_ODOMETRY) {
     out_of_order_publish_drop_count_.fetch_add(1U, std::memory_order_relaxed);
+    return;
+  }
+  if (order == PublicationOrderDecision::COALESCE_ALREADY_PUBLISHED_ODOMETRY) {
+    covered_odometry_coalesced_count_.fetch_add(1U, std::memory_order_relaxed);
+    return;
+  }
+  if (order == PublicationOrderDecision::COALESCE_STALE_WALL_TIMER) {
+    wall_timer_coalesced_count_.fetch_add(1U, std::memory_order_relaxed);
     return;
   }
 
@@ -2693,12 +2710,20 @@ void MapOdomFusionNode::publishFused(const rclcpp::Time & stamp)
   }
 
   last_published_stamp_ = stamp;
+  if (published_stamp_history_ns_.empty() ||
+    published_stamp_history_ns_.back() != requested_stamp_ns)
+  {
+    published_stamp_history_ns_.push_back(requested_stamp_ns);
+    if (published_stamp_history_ns_.size() > kPublishedStampHistoryLimit) {
+      published_stamp_history_ns_.pop_front();
+    }
+  }
   (void)last_good_stamp;
 }
 
 void MapOdomFusionNode::onPublishTimer()
 {
-  publishFused(now());
+  publishFused(now(), PublicationTrigger::WALL_TIMER);
 }
 
 void MapOdomFusionNode::publishDiagnostics(
@@ -2820,6 +2845,14 @@ void MapOdomFusionNode::publishDiagnostics(
   add("pending_measurement", pending ? "true" : "false");
   add("output.out_of_order_drop_count", std::to_string(
       out_of_order_publish_drop_count_.load(std::memory_order_relaxed)));
+  add("output.covered_odometry_coalesced_count", std::to_string(
+      covered_odometry_coalesced_count_.load(std::memory_order_relaxed)));
+  add("output.wall_timer_coalesced_count", std::to_string(
+      wall_timer_coalesced_count_.load(std::memory_order_relaxed)));
+  add("output.total_suppressed_request_count", std::to_string(
+      out_of_order_publish_drop_count_.load(std::memory_order_relaxed) +
+      covered_odometry_coalesced_count_.load(std::memory_order_relaxed) +
+      wall_timer_coalesced_count_.load(std::memory_order_relaxed)));
   add("anchor_valid", anchor ? "true" : "false");
 
   const rclcpp::Time current = now();

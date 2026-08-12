@@ -32,8 +32,9 @@
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
 
-#include "pure_precision_global_localizer/precision_anchor_estimator.hpp"
 #include "pure_precision_global_localizer/existing_fusion_anchor_tracker.hpp"
+#include "pure_precision_global_localizer/outage_yaw_guard.hpp"
+#include "pure_precision_global_localizer/precision_anchor_estimator.hpp"
 #include "pure_precision_global_localizer/precision_local_compositor.hpp"
 
 namespace pure_precision_global_localizer
@@ -296,6 +297,7 @@ struct Counters
   uint64_t global_published{0U};
   uint64_t global_suppressed_not_ready{0U};
   uint64_t global_suppressed_activation_watermark{0U};
+  uint64_t global_suppressed_yaw_guard_invalid{0U};
   uint64_t existing_global_received{0U};
   uint64_t existing_global_accepted{0U};
   uint64_t existing_global_rejected{0U};
@@ -339,6 +341,7 @@ public:
     compositor_ = std::make_unique<PrecisionLocalCompositor>(local_correction_config_);
     gnss_anchor_ = std::make_unique<PrecisionAnchorEstimator>(anchor_config_);
     fusion_anchor_ = std::make_unique<ExistingFusionAnchorTracker>(fusion_anchor_config_);
+    outage_yaw_guard_ = std::make_unique<OutageYawGuard>(outage_yaw_guard_config_);
 
     callback_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
     rclcpp::SubscriptionOptions subscription_options;
@@ -367,7 +370,7 @@ public:
       std::bind(
         &PrecisionGlobalLocalizerNode::onFusionDiagnostics, this, std::placeholders::_1),
       subscription_options);
-    if (gnss_position_diagnostics_enabled_) {
+    if (gnss_position_diagnostics_enabled_ || outage_yaw_guard_enabled_) {
       gnss_subscription_ = create_subscription<GnssInput>(
         gnss_input_topic_, rclcpp::SensorDataQoS().keep_last(50),
         std::bind(&PrecisionGlobalLocalizerNode::onGnss, this, std::placeholders::_1),
@@ -427,9 +430,11 @@ private:
   std::unique_ptr<PrecisionLocalCompositor> compositor_;
   std::unique_ptr<PrecisionAnchorEstimator> gnss_anchor_;
   std::unique_ptr<ExistingFusionAnchorTracker> fusion_anchor_;
+  std::unique_ptr<OutageYawGuard> outage_yaw_guard_;
   LocalCorrectionConfig local_correction_config_;
   AnchorConfig anchor_config_;
   FusionAnchorConfig fusion_anchor_config_;
+  OutageYawGuardConfig outage_yaw_guard_config_;
 
   std::string raw_odom_topic_;
   std::string submap_scan_topic_;
@@ -455,6 +460,8 @@ private:
   double existing_global_max_age_sec_{0.25};
   double existing_global_max_future_skew_sec_{0.05};
   bool gnss_position_diagnostics_enabled_{false};
+  bool outage_yaw_guard_enabled_{true};
+  int outage_yaw_guard_required_fix_quality_{4};
   double diagnostics_period_sec_{1.0};
 
   rclcpp::CallbackGroup::SharedPtr callback_group_;
@@ -511,6 +518,9 @@ private:
   bool has_fusion_anchor_local_covariance_ref_{false};
   Eigen::Matrix3d fusion_anchor_local_covariance_ref_{Eigen::Matrix3d::Zero()};
   Eigen::Matrix3d frozen_anchor_residual_covariance_{Eigen::Matrix3d::Zero()};
+  OutageYawUpdate last_outage_yaw_update_;
+  double last_outage_yaw_nominal_global_yaw_rad_{std::numeric_limits<double>::quiet_NaN()};
+  double last_outage_yaw_output_global_yaw_rad_{std::numeric_limits<double>::quiet_NaN()};
   std::string active_raw_frame_;
 };
 
@@ -643,6 +653,22 @@ void PrecisionGlobalLocalizerNode::loadParameters()
     "fusion_sync.existing_global_max_future_skew_sec", 0.05);
   gnss_position_diagnostics_enabled_ = declare_parameter<bool>(
     "fallback.gnss_position_enabled", false);
+  outage_yaw_guard_enabled_ = declare_parameter<bool>(
+    "outage_yaw_guard.enabled", true);
+  outage_yaw_guard_required_fix_quality_ = declare_parameter<int>(
+    "outage_yaw_guard.required_fix_quality", 4);
+  outage_yaw_guard_config_.max_trusted_age_sec = declare_parameter<double>(
+    "outage_yaw_guard.max_trusted_age_sec", 2.0);
+  outage_yaw_guard_config_.max_trusted_variance_rad2 = declare_parameter<double>(
+    "outage_yaw_guard.max_trusted_variance_rad2", 0.0225);
+  outage_yaw_guard_config_.max_trusted_delta_rad = declare_parameter<double>(
+    "outage_yaw_guard.max_trusted_delta_rad", 0.35);
+  outage_yaw_guard_config_.max_offset_rate_radps = declare_parameter<double>(
+    "outage_yaw_guard.max_offset_rate_radps", 0.20);
+  outage_yaw_guard_config_.max_offset_step_rad = declare_parameter<double>(
+    "outage_yaw_guard.max_offset_step_rad", 0.04);
+  outage_yaw_guard_config_.max_step_dt_sec = declare_parameter<double>(
+    "outage_yaw_guard.max_step_dt_sec", 0.25);
 
   local_correction_config_.max_translation_rate_mps = declare_parameter<double>(
     "local_correction.max_translation_rate_mps", 2.0);
@@ -695,11 +721,21 @@ void PrecisionGlobalLocalizerNode::validateParameters() const
     local_correction_config_.max_translation_step_m,
     local_correction_config_.max_yaw_step_rad,
     local_correction_config_.max_dt_sec};
+  const std::array<double, 6> finite_outage_yaw_parameters{
+    outage_yaw_guard_config_.max_trusted_age_sec,
+    outage_yaw_guard_config_.max_trusted_variance_rad2,
+    outage_yaw_guard_config_.max_trusted_delta_rad,
+    outage_yaw_guard_config_.max_offset_rate_radps,
+    outage_yaw_guard_config_.max_offset_step_rad,
+    outage_yaw_guard_config_.max_step_dt_sec};
   const bool nonfinite = std::any_of(
     finite_parameters.begin(), finite_parameters.end(),
     [](double value) {return !std::isfinite(value);}) ||
     std::any_of(
     finite_local_parameters.begin(), finite_local_parameters.end(),
+    [](double value) {return !std::isfinite(value);}) ||
+    std::any_of(
+    finite_outage_yaw_parameters.begin(), finite_outage_yaw_parameters.end(),
     [](double value) {return !std::isfinite(value);});
   const bool invalid_topics = raw_odom_topic_.empty() || submap_scan_topic_.empty() ||
     submap_correction_topic_.empty() || gnss_input_topic_.empty() ||
@@ -751,8 +787,21 @@ void PrecisionGlobalLocalizerNode::validateParameters() const
     fusion_sync_max_candidate_age_sec_ <= 0.0 ||
     existing_global_max_age_sec_ <= 0.0 ||
     existing_global_max_future_skew_sec_ < 0.0;
+  const bool invalid_outage_yaw_guard =
+    outage_yaw_guard_config_.max_trusted_age_sec <= 0.0 ||
+    outage_yaw_guard_config_.max_trusted_variance_rad2 <= 0.0 ||
+    outage_yaw_guard_config_.max_trusted_delta_rad <= 0.0 ||
+    outage_yaw_guard_config_.max_trusted_delta_rad > kPi ||
+    outage_yaw_guard_config_.max_offset_rate_radps <= 0.0 ||
+    outage_yaw_guard_config_.max_offset_step_rad <= 0.0 ||
+    outage_yaw_guard_config_.max_offset_step_rad > kPi ||
+    outage_yaw_guard_config_.max_step_dt_sec <= 0.0;
   if (nonfinite || invalid_topics || invalid_sync || invalid_alignment || invalid_limits ||
-    invalid_fusion_anchor ||
+    invalid_fusion_anchor || invalid_outage_yaw_guard ||
+    (gnss_position_diagnostics_enabled_ && outage_yaw_guard_enabled_) ||
+    (outage_yaw_guard_enabled_ && outage_yaw_guard_required_fix_quality_ != 4) ||
+    outage_yaw_guard_required_fix_quality_ < 1 ||
+    outage_yaw_guard_required_fix_quality_ > 9 ||
     anchor_config_.max_yaw_samples > 100U ||
     anchor_config_.max_committed_yaw_innovation_rad <= 0.0 ||
     anchor_config_.activation_min_stable_yaw_candidates < 3U ||
@@ -834,6 +883,7 @@ void PrecisionGlobalLocalizerNode::onSubmapScan(SubmapScan::ConstSharedPtr messa
       }
       gnss_anchor_->reset("new_odom_session_reset");
       fusion_anchor_->reset("new_odom_session_reset");
+      outage_yaw_guard_->reset("new_odom_session_reset");
       local_history_.clear();
       pending_fusion_locals_.clear();
       existing_global_history_.clear();
@@ -862,6 +912,11 @@ void PrecisionGlobalLocalizerNode::onSubmapScan(SubmapScan::ConstSharedPtr messa
       has_fusion_anchor_local_covariance_ref_ = false;
       fusion_anchor_local_covariance_ref_.setZero();
       frozen_anchor_residual_covariance_.setZero();
+      last_outage_yaw_update_ = OutageYawUpdate{};
+      last_outage_yaw_nominal_global_yaw_rad_ =
+        std::numeric_limits<double>::quiet_NaN();
+      last_outage_yaw_output_global_yaw_rad_ =
+        std::numeric_limits<double>::quiet_NaN();
       last_fusion_sync_error_sec_ = std::numeric_limits<double>::quiet_NaN();
       last_fusion_sync_mode_ = "none";
       last_fusion_sync_reason_ = "odom_session_reset";
@@ -1136,6 +1191,34 @@ void PrecisionGlobalLocalizerNode::publishGlobalLocked(
   }
   tf2::Quaternion orientation =
     yawQuaternion(fusion_anchor_->appliedAnchor().yaw) * local_quaternion.quaternion;
+  double outage_yaw_additional_variance_rad2 = 0.0;
+  last_outage_yaw_nominal_global_yaw_rad_ = global_pose.yaw;
+  last_outage_yaw_output_global_yaw_rad_ = global_pose.yaw;
+  if (outage_yaw_guard_enabled_) {
+    const bool authority_tracking = fusion_anchor_->fusionHealthy() &&
+      fusion_anchor_->state() == FusionAnchorState::TRACKING;
+    last_outage_yaw_update_ = outage_yaw_guard_->advance(
+      local_stamp_sec,
+      fusion_anchor_->appliedAnchor().yaw,
+      global_pose.yaw,
+      authority_tracking);
+    if (!last_outage_yaw_update_.valid) {
+      ++counters_.global_suppressed_yaw_guard_invalid;
+      return;
+    }
+    orientation =
+      yawQuaternion(last_outage_yaw_update_.applied_offset_rad) * orientation;
+    last_outage_yaw_output_global_yaw_rad_ =
+      last_outage_yaw_update_.output_yaw_rad;
+    outage_yaw_additional_variance_rad2 =
+      last_outage_yaw_update_.additional_variance_rad2;
+  } else {
+    last_outage_yaw_update_ = OutageYawUpdate{};
+    last_outage_yaw_update_.valid = true;
+    last_outage_yaw_update_.output_yaw_rad = global_pose.yaw;
+    last_outage_yaw_update_.state = OutageYawState::DISARMED;
+    last_outage_yaw_update_.reason = "disabled_nominal_yaw";
+  }
   orientation.normalize();
   output.pose.pose.orientation = quaternionMessage(orientation);
   // The anchor covariance is stored as uncertainty of the synchronized
@@ -1179,6 +1262,7 @@ void PrecisionGlobalLocalizerNode::publishGlobalLocked(
   // The follower state is known, but while it is intentionally behind a new
   // existing-fusion target its deterministic residual is still an accuracy risk. Report
   // that residual as a conservative rank-one covariance contribution.
+  global_covariance(2, 2) += outage_yaw_additional_variance_rad2;
   global_covariance = projectCovariancePsd(
     global_covariance + lag * lag.transpose() + frozen_anchor_residual_covariance_);
   writeCovariance3(global_covariance, output.pose.covariance);
@@ -1261,7 +1345,7 @@ void PrecisionGlobalLocalizerNode::onRawOdom(
   if (!duplicate_stamp) {
     (void)fusion_anchor_->advance(stamp_sec, local_pose);
   }
-  if (gnss_position_diagnostics_enabled_) {
+  if (gnss_position_diagnostics_enabled_ || outage_yaw_guard_enabled_) {
     const AnchorState before_time = gnss_anchor_->state();
     gnss_anchor_->updateTime(stamp_sec);
     noteStateTransition(before_time, gnss_anchor_->state());
@@ -1706,6 +1790,16 @@ bool PrecisionGlobalLocalizerNode::processGnssLocked(
     reason = "not_usable";
     return false;
   }
+  if (outage_yaw_guard_enabled_ &&
+    message.fix_quality != outage_yaw_guard_required_fix_quality_)
+  {
+    // The trusted outage-yaw observer deliberately consumes only the RTK FIX
+    // class used by the validated counterfactual. Lower-quality positions may
+    // remain usable to the authoritative fusion stack, but cannot refresh this
+    // independent frozen yaw reference.
+    reason = "outage_yaw_guard_fix_quality_gate";
+    return false;
+  }
   if (message.odom.header.stamp.sec != message.header.stamp.sec ||
     message.odom.header.stamp.nanosec != message.header.stamp.nanosec)
   {
@@ -1808,6 +1902,20 @@ bool PrecisionGlobalLocalizerNode::processGnssLocked(
   if (!update.accepted) {
     return false;
   }
+  if (outage_yaw_guard_enabled_ && update.yaw_updated &&
+    gnss_anchor_->yawPublishable() &&
+    gnss_anchor_->state() == AnchorState::TRACKING_SE2 &&
+    fusion_anchor_->fusionHealthy() &&
+    fusion_anchor_->state() == FusionAnchorState::TRACKING)
+  {
+    // Refresh only from a newly gated robust SE(2) fit. Translation-only
+    // observations must not make a stale yaw reference look fresh.
+    (void)outage_yaw_guard_->observeTrustedReference(
+      stamp_sec,
+      fusion_anchor_->appliedAnchor().yaw,
+      gnss_anchor_->targetAnchor().yaw,
+      gnss_anchor_->anchorCovariance()(2, 2));
+  }
   position_fused_ = true;
   last_usable_stamp_sec_ = stamp_sec;
   if (message.fix_quality == 4) {
@@ -1886,7 +1994,6 @@ void PrecisionGlobalLocalizerNode::onGnss(GnssInput::ConstSharedPtr message)
       gnss_anchor_->lastReason() : "not_usable_before_init";
     return;
   }
-
   if (!has_latest_local_stamp_ || stamp_sec > latest_local_stamp_sec_) {
     if (has_latest_local_stamp_ &&
       stamp_sec - latest_local_stamp_sec_ > sync_max_pending_sec_)
@@ -2074,6 +2181,70 @@ void PrecisionGlobalLocalizerNode::publishDiagnostics()
   add("fallback.gnss_position_enabled",
     gnss_position_diagnostics_enabled_ ? "true" : "false");
 
+  const OutageYawState outage_yaw_state = outage_yaw_guard_->state();
+  const bool outage_yaw_active = outage_yaw_state == OutageYawState::OUTAGE_SLEW ||
+    outage_yaw_state == OutageYawState::OUTAGE_HOLD ||
+    outage_yaw_state == OutageYawState::RECOVERY_RELEASE;
+  const double outage_yaw_reference_age =
+    has_latest_local_stamp_ && outage_yaw_guard_->hasTrustedReference() ?
+    std::max(
+    0.0, latest_local_stamp_sec_ - outage_yaw_guard_->trustedReferenceStamp()) :
+    std::numeric_limits<double>::quiet_NaN();
+  add("outage_yaw_guard.enabled", outage_yaw_guard_enabled_ ? "true" : "false");
+  add("outage_yaw_guard.state", toString(outage_yaw_state));
+  add("outage_yaw_guard.active", outage_yaw_active ? "true" : "false");
+  add("outage_yaw_guard.reference_source", "robust_gnss_position_alignment_yaw");
+  add("outage_yaw_guard.propagation_source", "precision_local_yaw");
+  add("outage_yaw_guard.xy_policy", "existing_fusion_anchor_compose_precision_local");
+  add("outage_yaw_guard.reference_stamp_sec",
+    number(outage_yaw_guard_->trustedReferenceStamp()));
+  add("outage_yaw_guard.reference_age_sec", number(outage_yaw_reference_age));
+  add("outage_yaw_guard.trusted_anchor_yaw_rad",
+    number(outage_yaw_guard_->trustedAnchorYaw()));
+  add("outage_yaw_guard.observed_fusion_anchor_yaw_rad",
+    number(outage_yaw_guard_->observedFusionAnchorYaw()));
+  add("outage_yaw_guard.observed_delta_rad", number(outage_yaw_guard_->observedDelta()));
+  add("outage_yaw_guard.trusted_variance_rad2",
+    number(outage_yaw_guard_->trustedYawVariance()));
+  add("outage_yaw_guard.active_reference_variance_rad2",
+    number(outage_yaw_guard_->activeReferenceVariance()));
+  add("outage_yaw_guard.nominal_global_yaw_rad",
+    number(last_outage_yaw_nominal_global_yaw_rad_));
+  add("outage_yaw_guard.output_global_yaw_rad",
+    number(last_outage_yaw_output_global_yaw_rad_));
+  add("outage_yaw_guard.applied_offset_rad", number(outage_yaw_guard_->appliedOffset()));
+  add("outage_yaw_guard.target_offset_rad", number(outage_yaw_guard_->targetOffset()));
+  add("outage_yaw_guard.additional_variance_rad2",
+    number(outage_yaw_guard_->additionalVariance()));
+  add("outage_yaw_guard.last_reason", outage_yaw_guard_->lastReason());
+  add("outage_yaw_guard.config.max_trusted_age_sec",
+    number(outage_yaw_guard_config_.max_trusted_age_sec));
+  add("outage_yaw_guard.config.required_fix_quality",
+    std::to_string(outage_yaw_guard_required_fix_quality_));
+  add("outage_yaw_guard.config.max_trusted_variance_rad2",
+    number(outage_yaw_guard_config_.max_trusted_variance_rad2));
+  add("outage_yaw_guard.config.max_trusted_delta_rad",
+    number(outage_yaw_guard_config_.max_trusted_delta_rad));
+  add("outage_yaw_guard.config.max_offset_rate_radps",
+    number(outage_yaw_guard_config_.max_offset_rate_radps));
+  add("outage_yaw_guard.config.max_offset_step_rad",
+    number(outage_yaw_guard_config_.max_offset_step_rad));
+  add("outage_yaw_guard.config.max_step_dt_sec",
+    number(outage_yaw_guard_config_.max_step_dt_sec));
+  addUnsigned(
+    "outage_yaw_guard.accepted_reference_count",
+    outage_yaw_guard_->acceptedReferenceCount());
+  addUnsigned(
+    "outage_yaw_guard.rejected_reference_count",
+    outage_yaw_guard_->rejectedReferenceCount());
+  addUnsigned("outage_yaw_guard.outage_count", outage_yaw_guard_->outageCount());
+  addUnsigned("outage_yaw_guard.recovery_count", outage_yaw_guard_->recoveryCount());
+  addUnsigned(
+    "outage_yaw_guard.applied_step_count", outage_yaw_guard_->appliedStepCount());
+  addUnsigned(
+    "outage_yaw_guard.invalid_advance_count", outage_yaw_guard_->invalidAdvanceCount());
+  addUnsigned("outage_yaw_guard.reset_count", outage_yaw_guard_->resetCount());
+
   add("gnss.last_usable_stamp_sec", number(last_usable_stamp_sec_));
   add("gnss.last_usable_age_sec", number(usable_age));
   add("gnss.last_q4_usable_stamp_sec", number(last_q4_usable_stamp_sec_));
@@ -2086,6 +2257,8 @@ void PrecisionGlobalLocalizerNode::publishDiagnostics()
   addUnsigned("gnss.pending", counters_.gnss_pending);
   addUnsigned("gnss.pending_expired", counters_.gnss_pending_expired);
   addUnsigned("gnss.direct_heading_ignored", counters_.ignored_direct_heading);
+  addUnsigned("gnss.anchor.yaw_evaluation_count", gnss_anchor_->yawEvaluationCount());
+  addUnsigned("gnss.anchor.yaw_window_size", gnss_anchor_->yawWindowSize());
   add("gnss.last_reason", last_gnss_reason_);
 
   addUnsigned("state.soft_gap_count", counters_.soft_gap_count);
@@ -2122,6 +2295,9 @@ void PrecisionGlobalLocalizerNode::publishDiagnostics()
   addUnsigned(
     "publish.global_suppressed_activation_watermark",
     counters_.global_suppressed_activation_watermark);
+  addUnsigned(
+    "publish.global_suppressed_yaw_guard_invalid",
+    counters_.global_suppressed_yaw_guard_invalid);
 
   array.status.push_back(std::move(status));
   diagnostics_publisher_->publish(array);

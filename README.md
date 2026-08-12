@@ -3,8 +3,7 @@
 `gicp_gnss_odom_localizer` is a general-purpose ROS 2 planar localization stack
 for mobile robots and road vehicles. It provides LiDAR/IMU local odometry,
 optional GNSS-based global localization, and an isolated rolling-submap
-precision output through standard ROS 2 messages and TF. It can be integrated
-into a custom robot or automated-driving system without Autoware.
+precision output through standard ROS 2 messages and TF.
 
 The stack is prior-map-free: it does not require a PCD or Lanelet2 map. Its
 standard profiles also do not require wheel speed or a CUDA-capable GPU.
@@ -24,14 +23,14 @@ standard profiles also do not require wheel speed or a CUDA-capable GPU.
   estimator outputs into Autoware pose, kinematic-state, acceleration, and TF
   interfaces. The core estimators do not depend on Autoware.
 - **CPU-only operation:** the estimator has no CUDA dependency; CPU-only
-  operation has also been demonstrated with the optional Autoware example.
+  operation has also been demonstrated.
 
 ### Operating modes
 
 | Mode | Processing path | Intended trade-off |
 |---|---|---|
-| **Computation-speed priority (`baseline`)** | Strict deskew, scan-to-scan GICP, and the SE(2) smoother | Default mode with fewer processes and lower computational demand; publishes `/localization/gyro_lidar_odom` and can optionally feed GNSS fusion |
-| **Accuracy priority (`precision`)** | Keeps the baseline path unchanged and adds accepted-scan snapshots, an external rolling-submap matcher, and isolated local/global compositors | Adds computation and latency in exchange for a separate higher-accuracy candidate at `/localization/precision_local_odom` and, with a healthy global anchor, `/localization/precision_global_odom` |
+| **Computation-speed priority (`normal mode`)** | Strict deskew, scan-to-scan GICP, and the SE(2) smoother | Default mode with fewer processes and lower computational demand; publishes `/localization/gyro_lidar_odom` and can optionally feed GNSS fusion |
+| **Accuracy priority (`high precision mode`)** | Keeps the baseline path unchanged and adds accepted-scan snapshots, an external rolling-submap matcher, and isolated local/global compositors | Adds computation and latency in exchange for a separate higher-accuracy candidate at `/localization/precision_local_odom` and, with a healthy global anchor, `/localization/precision_global_odom` |
 
 Both modes keep the primary odometer in `scan_to_scan`. Precision corrections
 never feed back into the baseline estimator, and mode selection is made at
@@ -42,19 +41,43 @@ evaluation, and is not a safety-certified localization system. CPU utilization
 and RSS have not yet been measured; CPU-only support is not a claim of low CPU
 load.
 
-## Demonstrated results
+## Evaluation results
+
+The evaluation uses [GLIM](https://github.com/koide3/glim) as a correlated
+LiDAR/IMU pseudo-reference; it is not independent ground truth. The RMSE values
+compare the estimator output with that pseudo-reference. Representative results
+are summarized below.
+
+The published Hesai primary accuracy result uses exact-initial-pose alignment. Its
+separate startup yaw-safety check uses a fixed legacy-global/GLIM calibration
+window and does not contribute to the primary RMSE values or plots.
 
 | Sensor configuration | Demonstrated result | Scope |
 |---|---|---|
 | Velodyne 32-Line + External IMU — LiDAR/IMU-Only (No GNSS) | On the valid 45.991 s prefix, scan-to-submap reduced XY/yaw RMSE from **0.4946 m / 0.3140 deg** to **0.2156 m / 0.1227 deg** | Exact-initial-pose alignment; the full recording failed recovery after an IMU-gap generation transition |
 | Livox MID-360 + Internal IMU — LiDAR/IMU-Only (No GNSS) | Scan-to-scan XY/yaw RMSE: **0.7795 m / 2.9057 deg** over 294.099 s | Recording-specific fixed gyro-bias diagnostic profile; scan-to-submap was rejected |
-| Hesai 32-Line + IMU + RTK GNSS — Course 1 / Course 2 | Historical precision-global XY RMSE: **0.3658 m / 0.7542 m** | **Provisional:** the native runs used the wrong NMEA site origin and require a corrected-profile rerun |
-| Example integration: Autoware LSim — Hesai Course 1 / Course 2 | 1.0x replay produced **52.236 / 54.334 Hz** state output and **99.407% / 99.532%** registration acceptance; Course 2 recovered after an approximately 63 s GNSS outage | Optional downstream interface and runtime validation; not a requirement, absolute-accuracy result, or CPU-load measurement |
+| Hesai 32-Line + IMU + RTK GNSS — Course 2 | Precision-global XY/yaw RMSE improved from **1.7105 m / 2.4647 deg** to **0.5060 m / 1.4484 deg**; outage yaw RMSE improved from **2.0770 deg** to **0.7077 deg** | **Accepted:** 53/53 accuracy, 20/20 startup, 28/28 runtime, 17/17 non-intrusion, plus 33/33 baseline, 34/34 control, and 40/40 precision provenance checks passed |
+| Example integration: Autoware LSim — Hesai Course 2 | Current default-projection 1.0x headless replay produced **99.113 Hz** effective state output and **99.5316%** registration acceptance | The run passed 35 checks with one warning; interface/runtime and outage-recovery evidence only, not absolute-accuracy or CPU-load evidence |
 
-GLIM is a correlated LiDAR/IMU pseudo-reference, not independent ground truth.
-Alignment and validity intervals differ between result sets, so use the
-[evaluation pages](docs/evaluation/README.md) for plots, error distributions,
-methodology, and limitations.
+Additional private recordings are used for internal regression testing. Their
+identities, measurements, and artifacts are intentionally not published.
+
+### Representative plots
+
+[![Hesai 32-Line, IMU, and RTK GNSS Course 2 guarded precision-global trajectory](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/global_trajectory.png)](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/global_trajectory.png)
+
+*Hesai Course 2 default-projection result — existing GNSS fusion and guarded
+precision-global trajectories under the common exact-initial-pose alignment.
+The orientation-only guard leaves the existing-fusion XY composition unchanged
+and retains its trusted-reference variance in the published yaw covariance.*
+
+| Velodyne 32-Line + External IMU | Livox MID-360 + Internal IMU |
+|---|---|
+| [![Velodyne LiDAR and external IMU scan-to-scan and scan-to-submap trajectories](docs/evaluation/assets/velodyne_32line_external_imu/trajectory.png)](docs/evaluation/assets/velodyne_32line_external_imu/trajectory.png) | [![Livox MID-360 and internal IMU scan-to-scan trajectory](docs/evaluation/assets/livox_mid360_internal_imu/trajectory.png)](docs/evaluation/assets/livox_mid360_internal_imu/trajectory.png) |
+| Scan-to-scan and isolated scan-to-submap over the accepted 45.991 s continuous prefix. | Retained scan-to-scan result over the full 294.099 s recording; scan-to-submap was rejected. |
+
+See the [evaluation pages](docs/evaluation/README.md) for full-size plots, error
+distributions, methodology, provenance, and limitations.
 
 ## Required data
 
@@ -64,9 +87,14 @@ The normal LiDAR/IMU configuration requires:
 - monotonic `sensor_msgs/msg/Imu` samples covering each scan;
 - calibrated static transforms from `base_link` to the LiDAR and IMU frames.
 
-GNSS operation additionally requires NMEA GGA input, a site-specific local map
-origin, and a calibrated `base_link` to GNSS-antenna transform. Optional Doppler
-or secondary-antenna topics can provide additional heading observations.
+GNSS operation additionally requires NMEA GGA input, a projection configuration
+that matches the deployment's map metadata, and a calibrated `base_link` to
+GNSS-antenna transform. The packaged runtime parameters in
+[`param/param.yaml`](src/pure_nmea_gnss_conversion/param/param.yaml) match the
+projector type, datum, origin, and scale in
+[`map_projector_info.yaml`](src/pure_nmea_gnss_conversion/config/map_projector_info.yaml).
+The metadata file is not itself a ROS parameter file. Optional Doppler or
+secondary-antenna topics can provide additional heading observations.
 
 See [known limitations](docs/known_limitations.md) before selecting this stack
 for a new sensor, environment, or vehicle.
@@ -144,16 +172,17 @@ into `/localization/gyro_lidar_odom`.
 
 ### LiDAR + IMU + GNSS global localization
 
-Create a deployment-owned NMEA override containing the local map origin instead
-of editing package defaults, then launch with the calibrated GNSS static TF:
+When the packaged projection matches the deployment's map metadata, launch with
+the calibrated GNSS static TF and no evaluation-origin override:
 
 ```bash
-NMEA_SITE_CONFIG=/path/to/site_nmea_override.yaml
-
 ros2 launch pure_odometry_bringup odometry_container.launch.py \
-  use_gnss:=true \
-  nmea_gnss_override_param:="$NMEA_SITE_CONFIG"
+  use_gnss:=true
 ```
+
+For a different map projection, create a deployment-owned ROS parameter override
+whose projector, datum, origin, and scale match that map's projector metadata;
+do not pass `map_projector_info.yaml` directly as a ROS parameter file.
 
 The principal global output is `/localization/ekf_odom`, with the corresponding
 `map -> odom` TF when TF publication is enabled. See

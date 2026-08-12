@@ -83,9 +83,17 @@ residual of a bounded correction. The published covariance contains both while
 the transform is converging, but only the target covariance is carried into
 `TRACKING`; an unapplied residual is never fed back into the next target.
 
-Pose, odometry, and TF output sets are serialized. A publication request older
-than the last successfully published timestamp is dropped and counted in
-`output.out_of_order_drop_count`, so output timestamps are non-decreasing.
+Pose, odometry, and TF output sets are serialized. A source-stamped odometry
+request older than the last successfully published timestamp is dropped and
+counted in `output.out_of_order_drop_count`, so output timestamps are
+non-decreasing. A wall timer can observe an older ROS `/clock` value after an
+odometry callback has already published; that harmless retry is suppressed and
+reported separately as `output.wall_timer_coalesced_count` rather than being
+misclassified as lost estimator data. If that timer has already published the
+exact physical stamp before its odometry callback is delivered, the later
+request is reported as `output.covered_odometry_coalesced_count`. Only an older
+odometry stamp absent from the bounded publication history increments the
+strict `output.out_of_order_drop_count`.
 Clock rewind, rosbag loop, and seek without restarting the node are not
 supported because all time-indexed estimator buffers would need a coordinated
 reset.

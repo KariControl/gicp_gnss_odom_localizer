@@ -103,6 +103,7 @@ SUBMAP_SNAPSHOT_OVERRIDE_PARAM="$PRECISION_BRINGUP_SHARE/config/submap_snapshot_
 PRECISION_MATCHER_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_lidar_submap_matcher/param/param.yaml"
 PRECISION_GLOBAL_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_precision_global_localizer/param/param.yaml"
 NMEA_GNSS_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_nmea_gnss_conversion/param/param.yaml"
+NMEA_PROJECTOR_METADATA="${GICP_GNSS_ODOM_INSTALL}/share/pure_nmea_gnss_conversion/config/map_projector_info.yaml"
 GNSS_FUSION_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_gnss_map_odom_fusion/param/param.yaml"
 DIAGNOSTIC_AGGREGATOR_PARAM="$BRINGUP_SHARE/config/diagnostic_aggregator.yaml"
 AUTOWARE_ADAPTER_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_autoware_localization_adapter/param/param.yaml"
@@ -138,7 +139,8 @@ case "$DATASET_PROFILE" in
     SENSOR_PROFILE="hesai_rosbag23"
     IMU_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_imu_undistortion/param/param_xt.yaml"
     ODOM_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_lidar_gyro_odometer/param/param_xt_lidar_imu_only.yaml"
-    NMEA_GNSS_OVERRIDE_PARAM="$BRINGUP_SHARE/config/evaluation/lidar_imu_gnss/hesai_32line_rtk/accepted/nmea_site_origin.yaml"
+    # Preserve the projection in the NMEA component's base parameter file.
+    NMEA_GNSS_OVERRIDE_PARAM="$EMPTY_PARAM"
     GNSS_FUSION_OVERRIDE_PARAM="$BRINGUP_SHARE/config/evaluation/lidar_imu_gnss/hesai_32line_rtk/accepted/gnss_fusion_single_antenna.yaml"
     ;;
   *) fail "DATASET_PROFILE must be generic or hesai_rosbag23: $DATASET_PROFILE" ;;
@@ -146,7 +148,8 @@ esac
 
 for parameter_file in \
   "$EMPTY_PARAM" "$IMU_PARAM" "$ODOM_PARAM" "$ODOM_OVERRIDE_PARAM" \
-  "$NMEA_GNSS_PARAM" "$NMEA_GNSS_OVERRIDE_PARAM" "$GNSS_FUSION_PARAM" \
+  "$NMEA_GNSS_PARAM" "$NMEA_PROJECTOR_METADATA" \
+  "$NMEA_GNSS_OVERRIDE_PARAM" "$GNSS_FUSION_PARAM" \
   "$GNSS_FUSION_OVERRIDE_PARAM" "$DIAGNOSTIC_AGGREGATOR_PARAM" \
   "$AUTOWARE_ADAPTER_PARAM"
 do
@@ -249,6 +252,7 @@ write_manifest() {
     printf 'PRECISION_MATCHER_PARAM=%q\n' "$PRECISION_MATCHER_PARAM"
     printf 'PRECISION_GLOBAL_PARAM=%q\n' "$PRECISION_GLOBAL_PARAM"
     printf 'NMEA_GNSS_PARAM=%q\n' "$NMEA_GNSS_PARAM"
+    printf 'NMEA_PROJECTOR_METADATA=%q\n' "$NMEA_PROJECTOR_METADATA"
     printf 'NMEA_GNSS_OVERRIDE_PARAM=%q\n' "$NMEA_GNSS_OVERRIDE_PARAM"
     printf 'GNSS_FUSION_PARAM=%q\n' "$GNSS_FUSION_PARAM"
     printf 'GNSS_FUSION_OVERRIDE_PARAM=%q\n' "$GNSS_FUSION_OVERRIDE_PARAM"
@@ -301,7 +305,8 @@ imu_base	$IMU_PARAM	imu_param.yaml
 odometry_base	$ODOM_PARAM	odom_param.yaml
 odometry_override	$ODOM_OVERRIDE_PARAM	odom_override_param.yaml
 nmea_base	$NMEA_GNSS_PARAM	nmea_gnss_param.yaml
-nmea_site_override	$NMEA_GNSS_OVERRIDE_PARAM	nmea_site_origin.yaml
+nmea_projector_metadata	$NMEA_PROJECTOR_METADATA	map_projector_info.yaml
+nmea_override	$NMEA_GNSS_OVERRIDE_PARAM	nmea_override_param.yaml
 gnss_fusion_base	$GNSS_FUSION_PARAM	gnss_fusion_param.yaml
 gnss_fusion_override	$GNSS_FUSION_OVERRIDE_PARAM	gnss_fusion_override_param.yaml
 diagnostic_aggregator	$DIAGNOSTIC_AGGREGATOR_PARAM	diagnostic_aggregator.yaml

@@ -41,9 +41,23 @@ precision_global_localizer:
     fusion_anchor.max_yaw_step_rad: 0.04
     fusion_anchor.max_step_dt_sec: 0.25
 
-    # The original position-only GNSS estimator is retained only for optional
-    # diagnostics and can never mix into the existing-fusion authority path.
+    # This switch controls only the legacy position-output diagnostic path. It
+    # remains disabled: existing fusion is still the sole global XY authority.
     fallback.gnss_position_enabled: false
+
+    # When strict existing-fusion health is lost, retain global XY from the
+    # frozen existing-fusion anchor while guarding only published yaw with the
+    # last robust, position-derived SE(2) yaw reference. The reference must
+    # already have passed the alignment baseline/inlier/RMS/uncertainty gates.
+    # Entry and recovery are bounded, and no unhealthy GNSS sample is consumed.
+    outage_yaw_guard.enabled: true
+    outage_yaw_guard.required_fix_quality: 4
+    outage_yaw_guard.max_trusted_age_sec: 2.0
+    outage_yaw_guard.max_trusted_variance_rad2: 0.0225
+    outage_yaw_guard.max_trusted_delta_rad: 0.35
+    outage_yaw_guard.max_offset_rate_radps: 0.20
+    outage_yaw_guard.max_offset_step_rad: 0.04
+    outage_yaw_guard.max_step_dt_sec: 0.25
 
     gnss.min_confidence: 0.35
     gnss.max_position_variance_m2: 25.0

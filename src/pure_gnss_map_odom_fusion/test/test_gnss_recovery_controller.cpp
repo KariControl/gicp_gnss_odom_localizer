@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "pure_gnss_map_odom_fusion/gnss_recovery_controller.hpp"
+#include "pure_gnss_map_odom_fusion/publication_order.hpp"
 
 namespace
 {
@@ -368,6 +369,33 @@ int main()
     require(!latestPastSampleCoversTimestamp(
         std::numeric_limits<double>::quiet_NaN(), 9.9, 0.1),
       "non-finite timestamps must fail closed");
+  }
+
+  {
+    require(
+      classifyPublicationOrder(100, 0, PublicationTrigger::ODOMETRY) ==
+      PublicationOrderDecision::PUBLISH,
+      "the first odometry publication must be accepted");
+    require(
+      classifyPublicationOrder(100, 100, PublicationTrigger::WALL_TIMER) ==
+      PublicationOrderDecision::PUBLISH,
+      "same-stamp wall-timer publication remains allowed");
+    require(
+      classifyPublicationOrder(99, 100, PublicationTrigger::ODOMETRY) ==
+      PublicationOrderDecision::DROP_OUT_OF_ORDER_ODOMETRY,
+      "a late odometry request remains a strict source-ordering defect");
+    require(
+      classifyPublicationOrder(99, 100, PublicationTrigger::ODOMETRY, true) ==
+      PublicationOrderDecision::COALESCE_ALREADY_PUBLISHED_ODOMETRY,
+      "an exact odometry stamp already published by the timer is covered");
+    require(
+      classifyPublicationOrder(99, 100, PublicationTrigger::WALL_TIMER) ==
+      PublicationOrderDecision::COALESCE_STALE_WALL_TIMER,
+      "a stale ROS-clock wall-timer request is classified as coalescing");
+    require(
+      classifyPublicationOrder(99, 100, PublicationTrigger::WALL_TIMER, true) ==
+      PublicationOrderDecision::COALESCE_STALE_WALL_TIMER,
+      "wall-timer classification does not borrow odometry coverage semantics");
   }
 
   {

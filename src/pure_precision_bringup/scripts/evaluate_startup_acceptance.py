@@ -26,6 +26,11 @@ LOCAL = "/localization/precision_local_odom"
 GLOBAL = "/localization/precision_global_odom"
 GLOBAL_POSE = "/localization/precision_global_pose"
 ACTIVATION_SERIALIZATION_TOLERANCE_NS = 20_000_000
+CALIBRATION_MAXIMUM_INTERPOLATION_GAP_SEC = 0.1
+CALIBRATION_ASSOCIATION = (
+    "GLIM reference timestamps inside the inclusive explicit window; "
+    "speed legacy-global yaw linearly interpolated to those GLIM timestamps"
+)
 
 
 def load(name: str, path: Path) -> Any:
@@ -50,6 +55,94 @@ def integer_value(value: Any) -> int:
 
 def wrap(value: np.ndarray | float) -> np.ndarray | float:
     return (value + np.pi) % (2.0 * np.pi) - np.pi
+
+
+def calibration_window_bounds(start_sec: float, end_sec: float) -> tuple[float, float]:
+    """Validate the explicit calibration interval before any bag processing."""
+    start = float(start_sec)
+    end = float(end_sec)
+    if not math.isfinite(start) or not math.isfinite(end):
+        raise RuntimeError("calibration window bounds must be finite")
+    if end <= start:
+        raise RuntimeError("calibration end must be greater than calibration start")
+    return start, end
+
+
+def calibration_window_provenance(
+    reference_stamps_ns: Any,
+    estimate_yaw_rad: Any,
+    reference_yaw_rad: Any,
+    start_sec: float,
+    end_sec: float,
+) -> dict[str, Any]:
+    """Derive and fully serialize the frozen startup-yaw calibration."""
+    start, end = calibration_window_bounds(start_sec, end_sec)
+    stamps = np.asarray(reference_stamps_ns, dtype=np.int64)
+    estimate = np.asarray(estimate_yaw_rad, dtype=float)
+    reference = np.asarray(reference_yaw_rad, dtype=float)
+    if (
+        stamps.ndim != 1
+        or estimate.ndim != 1
+        or reference.ndim != 1
+        or not (len(stamps) == len(estimate) == len(reference))
+    ):
+        raise RuntimeError("calibration common series are not one-dimensional and aligned")
+    if (
+        len(stamps) == 0
+        or np.any(stamps <= 0)
+        or np.any(np.diff(stamps) <= 0)
+        or not np.all(np.isfinite(estimate))
+        or not np.all(np.isfinite(reference))
+    ):
+        raise RuntimeError("calibration common series are invalid")
+
+    start_ns = int(round(start * 1.0e9))
+    end_ns = int(round(end * 1.0e9))
+    mask = (stamps >= start_ns) & (stamps <= end_ns)
+    common_sample_count = int(np.count_nonzero(mask))
+    if common_sample_count < 3:
+        raise RuntimeError("calibration window has fewer than three common samples")
+
+    delta = wrap(reference[mask] - estimate[mask])
+    yaw_offset_rad = math.atan2(
+        float(np.mean(np.sin(delta))), float(np.mean(np.cos(delta)))
+    )
+    if not math.isfinite(yaw_offset_rad):
+        raise RuntimeError("calibration circular yaw offset is not finite")
+    return {
+        "start_sec": start,
+        "end_sec": end,
+        "duration_sec": end - start,
+        "common_sample_count": common_sample_count,
+        "frozen_circular_yaw_offset_rad": yaw_offset_rad,
+        "frozen_circular_yaw_offset_deg": math.degrees(yaw_offset_rad),
+        "association": CALIBRATION_ASSOCIATION,
+        "maximum_interpolation_gap_sec": CALIBRATION_MAXIMUM_INTERPOLATION_GAP_SEC,
+        "window_bounds": "inclusive",
+        "timestamp_source": "physical ROS header stamps",
+    }
+
+
+def startup_contract(calibration: dict[str, Any]) -> dict[str, Any]:
+    """Build the startup gate contract, including replayable calibration data."""
+    return {
+        "readiness": "position_initialized && yaw_publishable",
+        "candidate_count": 3,
+        "candidate_delta_max_rad": 0.08,
+        "first_ready_anchor_lag_max_rad": 0.02,
+        "activation_stamp_serialization_tolerance_sec": 0.02,
+        "first_publish_rule": "exactly the next unique raw stamp after activation",
+        "first_global_delay_max_sec": 25.0,
+        "absolute_yaw_safety_max_deg": 10.0,
+        "first_legacy_global_yaw_difference_max_deg": 3.0,
+        "alignment": "speed legacy-global calibration yaw offset frozen for GLIM",
+        "calibration": dict(calibration),
+        "authority": "existing fusion only; position-only GNSS fallback disabled",
+        "session_rearm": (
+            "fresh explicit unhealthy/non-TRACKING status, then fresh strict TRACKING; "
+            "stale/unavailable alone never qualifies"
+        ),
+    }
 
 
 def interpolate_one(trajectory: Any, stamp_ns: int) -> tuple[np.ndarray, float] | None:
@@ -394,10 +487,15 @@ def legacy_derived_activation(diagnostics: list[dict[str, Any]]) -> dict[str, An
 
 
 def common_yaw_series(canonical: Any, reference: Any, trajectories: dict[str, Any]):
-    return canonical.common_samples(reference, trajectories, 0.1)
+    return canonical.common_samples(
+        reference, trajectories, CALIBRATION_MAXIMUM_INTERPOLATION_GAP_SEC
+    )
 
 
 def evaluate(args: argparse.Namespace) -> dict[str, Any]:
+    calibration_start, calibration_end = calibration_window_bounds(
+        args.calibration_start, args.calibration_end
+    )
     repo = args.repo.resolve()
     canonical = load("startup_canonical", repo / "tools/evaluate_glim_trajectory.py")
     repo_eval = load(
@@ -418,15 +516,27 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         reference,
         {"speed_existing": speed["trajectories"][EXISTING]},
     )
-    calibration_mask = (
-        (calibration_reference.stamp_ns >= int(round(args.calibration_start * 1.0e9)))
-        & (calibration_reference.stamp_ns <= int(round(args.calibration_end * 1.0e9)))
+    calibration_provenance = calibration_window_provenance(
+        calibration_reference.stamp_ns,
+        calibration["speed_existing"].yaw,
+        calibration_reference.yaw,
+        calibration_start,
+        calibration_end,
     )
-    if np.count_nonzero(calibration_mask) < 3:
-        raise RuntimeError("calibration window has fewer than three common samples")
-    yaw_offset = repo_eval.circular_offset(
+    yaw_offset = calibration_provenance["frozen_circular_yaw_offset_rad"]
+    # Keep this independent implementation comparison as a fail-closed guard
+    # against evaluator/helper drift.
+    calibration_mask = (
+        (calibration_reference.stamp_ns >= int(round(calibration_start * 1.0e9)))
+        & (calibration_reference.stamp_ns <= int(round(calibration_end * 1.0e9)))
+    )
+    evaluator_yaw_offset = repo_eval.circular_offset(
         calibration["speed_existing"].yaw, calibration_reference.yaw, calibration_mask
     )
+    if not math.isclose(
+        yaw_offset, evaluator_yaw_offset, rel_tol=0.0, abs_tol=1.0e-15
+    ):
+        raise RuntimeError("calibration circular yaw offset implementations disagree")
 
     global_reference, global_values = common_yaw_series(
         canonical,
@@ -753,27 +863,13 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "label": args.label,
         "passed": all(item["passed"] for item in checks),
-        "contract": {
-            "readiness": "position_initialized && yaw_publishable",
-            "candidate_count": 3,
-            "candidate_delta_max_rad": 0.08,
-            "first_ready_anchor_lag_max_rad": 0.02,
-            "activation_stamp_serialization_tolerance_sec": 0.02,
-            "first_publish_rule": "exactly the next unique raw stamp after activation",
-            "first_global_delay_max_sec": 25.0,
-            "absolute_yaw_safety_max_deg": 10.0,
-            "first_legacy_global_yaw_difference_max_deg": 3.0,
-            "alignment": "speed legacy-global calibration yaw offset frozen for GLIM",
-            "authority": "existing fusion only; position-only GNSS fallback disabled",
-            "session_rearm": (
-                "fresh explicit unhealthy/non-TRACKING status, then fresh strict TRACKING; "
-                "stale/unavailable alone never qualifies"
-            ),
-        },
+        "contract": startup_contract(calibration_provenance),
         "inputs": {
             "speed_bag": str(args.speed_bag.resolve()),
             "precision_bag": str(args.precision_bag.resolve()),
             "glim": str(args.glim_trajectory.resolve()),
+            "calibration_start_sec": calibration_start,
+            "calibration_end_sec": calibration_end,
         },
         "counts": {
             "precision_global_odom_positive_records": len(global_stamps),
@@ -819,6 +915,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def markdown(result: dict[str, Any]) -> str:
+    calibration = result["contract"]["calibration"]
     lines = [
         f"# {result['label']} startup yaw acceptance",
         "",
@@ -828,6 +925,20 @@ def markdown(result: dict[str, Any]) -> str:
         f"{result['startup']['first_global_glim_yaw_error_deg']} deg",
         "- maximum GLIM yaw error: "
         f"{result['yaw_safety']['all_records_glim_error_deg']['maximum']:.6f} deg",
+        "",
+        "## Calibration provenance",
+        "",
+        "- explicit inclusive window: "
+        f"{calibration['start_sec']:.9f} to {calibration['end_sec']:.9f} s "
+        f"(duration {calibration['duration_sec']:.9f} s)",
+        f"- common samples: {calibration['common_sample_count']}",
+        "- frozen circular yaw offset: "
+        f"{calibration['frozen_circular_yaw_offset_rad']:.12f} rad / "
+        f"{calibration['frozen_circular_yaw_offset_deg']:.9f} deg",
+        f"- association: {calibration['association']}",
+        "- maximum interpolation gap: "
+        f"{calibration['maximum_interpolation_gap_sec']:.6f} s",
+        f"- timestamp source: {calibration['timestamp_source']}",
         "",
         "## Checks",
         "",

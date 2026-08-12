@@ -6,8 +6,8 @@ package-renaming change rather than the current localization implementation.
 
 Dated terminal logs and complete generated runs are not committed. Public
 evaluation evidence is curated under [evaluation/assets](evaluation/assets/README.md),
-while the [evaluation index](evaluation/README.md) records remaining rerun and
-publication gates.
+while the [evaluation index](evaluation/README.md) records current acceptance
+and publication gates.
 
 ## Validation layers
 
@@ -80,18 +80,25 @@ utilization.
 
 ## Current publication-specific gates
 
-- The historical Hesai Course 1 and Course 2 native accuracy results must be
-  repeated with the intended site-local NMEA-origin override before becoming
-  final acceptance evidence.
-- The GNSS plot alignment must remain labeled frozen calibration window unless
-  the metrics and plots are regenerated with exact-initial-pose alignment.
+- Default-projection Hesai publication runs must pass the dataset-specific
+  provenance validator, exact-initial-pose accuracy evaluation, startup gate,
+  full-rate runtime validator, and accepted-scan non-intrusion gate. The
+  published Course 2 result passed 53/53 accuracy hard gates, 20/20 startup
+  yaw-safety checks, 28/28 runtime checks, and 17/17 non-intrusion checks. Its
+  baseline/control/precision provenance suites passed 33/33, 34/34, and 40/40.
+  Accuracy and runtime validation require the guarded yaw covariance to retain
+  the active trusted-reference variance throughout an outage and bounded
+  release, with state-specific formula and clearing checks. Additional private
+  datasets may be used for internal validation without publishing their
+  identities or results.
 - The recording-specific MID-360 fixed gyro bias must be generalized and tested
   on additional recordings before being treated as production calibration.
 - Velodyne full-recording generation recovery remains a failed robustness gate,
   even though the valid-prefix scan-to-submap metrics improved.
 - Baseline/precision CPU and RSS measurements are still unavailable.
-- Autoware headless and RViz integration checks passed on the recorded evidence,
-  but an RViz video has not yet been published.
+- The Autoware Course 2 headless integration checks pass with the current
+  default projection. A public current-projection RViz run and video have not
+  yet been published.
 
 ## Documentation checks
 

@@ -1,8 +1,8 @@
 # Evaluation Methodology
 
 This document defines the common rules used to interpret the published metrics
-and plots. Two trajectory-alignment methods exist in the current evidence, so
-every result must identify its alignment method.
+and plots. Current LiDAR/IMU and LiDAR/IMU/GNSS results use one common
+exact-initial-pose rule.
 
 ## Reference trajectory and timestamp matching
 
@@ -18,10 +18,10 @@ every result must identify its alignment method.
 
 ## Alignment A: exact initial pose
 
-The LiDAR/IMU-only results use exact-initial-pose alignment. The first physical
-timestamp shared by the control and comparison streams is the anchor. A single
-transform maps the control pose at that timestamp exactly onto the reference
-pose.
+The published results use exact-initial-pose alignment. The first physical
+timestamp shared by the baseline and comparison streams is the anchor. A
+single transform maps the baseline pose at that timestamp exactly onto the
+reference pose.
 
 For initial control position `p0`, initial control yaw `yaw0`, reference
 position `p_ref0`, and reference yaw `yaw_ref0`:
@@ -33,40 +33,13 @@ p'    = R(theta) * p + t
 yaw'  = yaw + theta
 ```
 
-The same transform is fixed for every A/B stream. The precision output is not
+The same transform is fixed for both A/B streams. The precision output is not
 fitted independently, so subsequent drift and correction differences remain in
-the score. Earlier exploratory full-trajectory and first-20-metre fits are not
-used for published RMSE values or acceptance decisions.
-
-## Alignment B: frozen calibration window
-
-The current LiDAR/IMU/GNSS plots use frozen calibration-window alignment. A
-scale-fixed SE(2) transform is fitted once between the scan-to-scan control and
-the GLIM reference over an initial calibration window, then held fixed for all
-local A/B streams. A separate transform is derived from the existing-fusion
-control and held fixed for all global A/B streams. The local and global yaw
-offsets are also derived from their respective controls and shared by the
-comparison streams.
-
-This prevents an independent precision-only refit and keeps each A/B comparison
-fair. Because the method minimizes error over a window, the first plotted XY
-and yaw errors are not necessarily zero. Absolute RMSE from this alignment must
-not be compared directly with exact-initial-pose RMSE without stating the
-alignment difference.
-
-| Property | Exact initial pose | Frozen calibration window |
-|---|---|---|
-| Current use | LiDAR/IMU-only datasets | Hesai 32-Line + IMU + RTK GNSS — Course 1 and Course 2 |
-| Transform source | One initial control pose | Least-squares fit of the control over an initial window |
-| Shared across A/B streams | Yes | Yes |
-| Scale correction | None | None |
-| Initial plotted error | Zero by construction | Not necessarily zero |
-| Independent precision refit | Prohibited | Prohibited |
-
-If a single public alignment rule is required, the Hesai local and global
-metrics and plots must be regenerated from the first common physical timestamp
-with a control-derived exact SE(2) transform. Existing frozen-window values must
-not simply be renamed.
+the score. For GNSS evaluation, local and global pairs use separate anchors
+because they are different coordinate streams, but each pair shares exactly
+one transform. Earlier exploratory full-trajectory, first-20-metre, and frozen
+calibration-window fits are not used for published RMSE values or acceptance
+decisions.
 
 ## Metrics
 
@@ -123,4 +96,3 @@ A publishable CPU/RSS A/B measurement must fix the following conditions:
   paths.
 - Source rosbags and complete generated output directories are not distributed
   on GitHub.
-

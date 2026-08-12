@@ -32,6 +32,88 @@ FUSION_HEALTH_REQUIRED_KEYS = {
     "recovery.yaw_fused",
     "last_fix_state",
 }
+MAP_FUSION_PUBLICATION_COUNTER_KEYS = (
+    "output.out_of_order_drop_count",
+    "output.covered_odometry_coalesced_count",
+    "output.wall_timer_coalesced_count",
+    "output.total_suppressed_request_count",
+)
+MAP_FUSION_STRICT_DROP_KEY = "output.out_of_order_drop_count"
+MAP_FUSION_COVERED_COALESCED_KEY = (
+    "output.covered_odometry_coalesced_count"
+)
+MAP_FUSION_WALL_TIMER_COALESCED_KEY = "output.wall_timer_coalesced_count"
+MAP_FUSION_TOTAL_SUPPRESSED_KEY = "output.total_suppressed_request_count"
+
+OUTAGE_YAW_GUARD_STATES = {
+    "DISARMED",
+    "READY",
+    "OUTAGE_SLEW",
+    "OUTAGE_HOLD",
+    "RECOVERY_RELEASE",
+}
+OUTAGE_YAW_GUARD_ACTIVE_STATES = {
+    "OUTAGE_SLEW",
+    "OUTAGE_HOLD",
+    "RECOVERY_RELEASE",
+}
+OUTAGE_YAW_GUARD_OUTAGE_STATES = {"OUTAGE_SLEW", "OUTAGE_HOLD"}
+OUTAGE_YAW_GUARD_REOUTAGE_FRESH_REASON = (
+    "trusted_outage_yaw_reentered_during_release"
+)
+OUTAGE_YAW_GUARD_REOUTAGE_RETAIN_REASONS = {
+    "outage_reentry_without_fresh_reference_held_last_offset",
+    "outage_reentry_delta_gate_held_last_offset",
+}
+OUTAGE_YAW_GUARD_REOUTAGE_REASONS = {
+    OUTAGE_YAW_GUARD_REOUTAGE_FRESH_REASON,
+    *OUTAGE_YAW_GUARD_REOUTAGE_RETAIN_REASONS,
+}
+OUTAGE_YAW_GUARD_CONFIG_KEYS = (
+    "outage_yaw_guard.config.max_trusted_age_sec",
+    "outage_yaw_guard.config.max_trusted_variance_rad2",
+    "outage_yaw_guard.config.max_trusted_delta_rad",
+    "outage_yaw_guard.config.max_offset_rate_radps",
+    "outage_yaw_guard.config.max_offset_step_rad",
+    "outage_yaw_guard.config.max_step_dt_sec",
+)
+OUTAGE_YAW_GUARD_COUNTER_KEYS = (
+    "outage_yaw_guard.accepted_reference_count",
+    "outage_yaw_guard.rejected_reference_count",
+    "outage_yaw_guard.outage_count",
+    "outage_yaw_guard.recovery_count",
+    "outage_yaw_guard.applied_step_count",
+    "outage_yaw_guard.invalid_advance_count",
+    "outage_yaw_guard.reset_count",
+    "publish.global_suppressed_yaw_guard_invalid",
+)
+OUTAGE_YAW_GUARD_REQUIRED_KEYS = {
+    "outage_yaw_guard.enabled",
+    "outage_yaw_guard.state",
+    "outage_yaw_guard.active",
+    "outage_yaw_guard.reference_source",
+    "outage_yaw_guard.propagation_source",
+    "outage_yaw_guard.xy_policy",
+    "outage_yaw_guard.reference_stamp_sec",
+    "outage_yaw_guard.reference_age_sec",
+    "outage_yaw_guard.trusted_anchor_yaw_rad",
+    "outage_yaw_guard.observed_fusion_anchor_yaw_rad",
+    "outage_yaw_guard.observed_delta_rad",
+    "outage_yaw_guard.trusted_variance_rad2",
+    "outage_yaw_guard.active_reference_variance_rad2",
+    "outage_yaw_guard.nominal_global_yaw_rad",
+    "outage_yaw_guard.output_global_yaw_rad",
+    "outage_yaw_guard.applied_offset_rad",
+    "outage_yaw_guard.target_offset_rad",
+    "outage_yaw_guard.additional_variance_rad2",
+    "outage_yaw_guard.last_reason",
+    "global_output_ready",
+    "fusion.health.healthy",
+    "fusion.anchor.state",
+    "local_correction.odom_session_resets",
+    *OUTAGE_YAW_GUARD_CONFIG_KEYS,
+    *OUTAGE_YAW_GUARD_COUNTER_KEYS,
+}
 
 
 def stamp_ns(stamp: Any) -> int:
@@ -388,6 +470,269 @@ def fusion_health_prefix_accounting(
     }
 
 
+def _strict_nonnegative_diagnostic_integer(value: Any) -> int:
+    """Parse the canonical decimal form emitted by std::to_string."""
+    if not isinstance(value, str):
+        raise ValueError(f"expected a string, got {type(value).__name__}")
+    if value == "0":
+        return 0
+    if (
+        not value
+        or value[0] not in "123456789"
+        or any(character not in "0123456789" for character in value[1:])
+    ):
+        raise ValueError(f"not a canonical non-negative integer: {value!r}")
+    return int(value)
+
+
+def map_fusion_publication_integrity_contract(
+    timeline: list[dict[str, Any]],
+) -> tuple[bool, dict[str, Any], list[str]]:
+    """Validate strict-drop and harmless-coalescing diagnostic accounting.
+
+    Coalesced requests are intentionally report-only: a suppressed request is
+    not present in the output bag and therefore cannot be reconstructed from
+    output topic counts.  The diagnostic sum identity is the authoritative
+    accounting contract for those requests.
+    """
+    errors: list[str] = []
+    previous: dict[str, int] | None = None
+    final_counters: dict[str, int] | None = None
+    schema_samples = 0
+
+    for index, item in enumerate(timeline):
+        if item.get("status_count") != 1:
+            errors.append(
+                f"map-fusion sample {index} at record {item.get('record_ns')} "
+                f"has status_count={item.get('status_count')!r}"
+            )
+
+        raw_values = item.get("values", [])
+        try:
+            pairs = (
+                list(raw_values.items())
+                if isinstance(raw_values, dict)
+                else list(raw_values)
+            )
+            encoded_by_key = {
+                key: [pair[1] for pair in pairs if str(pair[0]) == key]
+                for key in MAP_FUSION_PUBLICATION_COUNTER_KEYS
+            }
+        except (TypeError, ValueError, IndexError) as error:
+            errors.append(f"map-fusion sample {index} has malformed values: {error}")
+            continue
+
+        missing = [
+            key for key in MAP_FUSION_PUBLICATION_COUNTER_KEYS
+            if not encoded_by_key[key]
+        ]
+        duplicate = [
+            key for key in MAP_FUSION_PUBLICATION_COUNTER_KEYS
+            if len(encoded_by_key[key]) > 1
+        ]
+        if missing or duplicate:
+            errors.append(
+                f"map-fusion sample {index} at stamp {item.get('stamp_ns')} "
+                f"missing={missing} duplicate={duplicate}"
+            )
+            continue
+
+        try:
+            counters = {
+                key: _strict_nonnegative_diagnostic_integer(encoded_by_key[key][0])
+                for key in MAP_FUSION_PUBLICATION_COUNTER_KEYS
+            }
+        except ValueError as error:
+            errors.append(
+                f"map-fusion sample {index} at stamp {item.get('stamp_ns')} "
+                f"has malformed counter: {error}"
+            )
+            continue
+
+        schema_samples += 1
+        strict_drop = counters[MAP_FUSION_STRICT_DROP_KEY]
+        covered = counters[MAP_FUSION_COVERED_COALESCED_KEY]
+        wall_timer = counters[MAP_FUSION_WALL_TIMER_COALESCED_KEY]
+        total = counters[MAP_FUSION_TOTAL_SUPPRESSED_KEY]
+        if total != strict_drop + covered + wall_timer:
+            errors.append(
+                f"map-fusion sample {index} suppression sum mismatch: "
+                f"total={total} strict={strict_drop} covered={covered} "
+                f"wall_timer={wall_timer}"
+            )
+        if strict_drop != 0:
+            errors.append(
+                f"map-fusion sample {index} recorded strict out-of-order drops: "
+                f"{strict_drop}"
+            )
+        if previous is not None:
+            for key in MAP_FUSION_PUBLICATION_COUNTER_KEYS:
+                if counters[key] < previous[key]:
+                    errors.append(
+                        f"map-fusion counter {key} backstep at sample {index}: "
+                        f"{previous[key]}->{counters[key]}"
+                    )
+        previous = counters
+        final_counters = counters
+
+    summary = {
+        "samples": len(timeline),
+        "schema_samples": schema_samples,
+        "final_counters": final_counters or {},
+        "strict_drop_count": (
+            final_counters.get(MAP_FUSION_STRICT_DROP_KEY)
+            if final_counters is not None else None
+        ),
+        "coalesced_report_only": {
+            "covered_odometry": (
+                final_counters.get(MAP_FUSION_COVERED_COALESCED_KEY)
+                if final_counters is not None else None
+            ),
+            "wall_timer": (
+                final_counters.get(MAP_FUSION_WALL_TIMER_COALESCED_KEY)
+                if final_counters is not None else None
+            ),
+        },
+    }
+    if not timeline:
+        errors.append("map-fusion diagnostic timeline is empty")
+    return bool(timeline) and not errors, summary, errors[:20]
+
+
+def exact_raw_to_existing_stamp_coverage(
+    raw_records: list[tuple[int, Any]],
+    existing_records: list[tuple[int, Any]],
+    final_diagnostic_record_ns: int | None,
+) -> tuple[bool, dict[str, Any], list[str]]:
+    """Require exact RAW stamp coverage over a causally closed bag prefix.
+
+    Raw messages before the first positive existing-fusion output are startup
+    inputs.  Messages recorded after the final map-fusion diagnostic, or with
+    stamps beyond the last output in that prefix, are an open recorder tail.
+    Neither region has enough causal evidence for a publication assertion.
+    """
+    errors: list[str] = []
+
+    def serialize_records(
+        records: list[tuple[int, Any]], label: str
+    ) -> list[tuple[int, int]]:
+        serialized: list[tuple[int, int]] = []
+        previous_record_ns: int | None = None
+        for index, (record_ns_value, message) in enumerate(records):
+            try:
+                record_ns = int(record_ns_value)
+                physical_stamp = stamp_ns(message.header.stamp)
+            except (AttributeError, TypeError, ValueError) as error:
+                errors.append(f"{label} record {index} is malformed: {error}")
+                continue
+            if previous_record_ns is not None and record_ns < previous_record_ns:
+                errors.append(
+                    f"{label} bag record time backstep at record {index}: "
+                    f"{previous_record_ns}->{record_ns}"
+                )
+            previous_record_ns = record_ns
+            serialized.append((record_ns, physical_stamp))
+        return serialized
+
+    raw = serialize_records(raw_records, "raw")
+    existing = serialize_records(existing_records, "existing")
+    try:
+        final_record_ns = int(final_diagnostic_record_ns)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        final_record_ns = -1
+    if final_record_ns < 0:
+        errors.append("final map-fusion diagnostic record time is unavailable")
+
+    existing_prefix = [
+        item for item in existing
+        if item[0] <= final_record_ns
+    ]
+    existing_prefix_stamps = [stamp for _, stamp in existing_prefix]
+    existing_order_valid, existing_leading_zero = timer_stamp_order(
+        existing_prefix_stamps
+    )
+    if not existing_order_valid:
+        errors.append(
+            "existing-fusion prefix has no positive nondecreasing stamp stream"
+        )
+    existing_positive_stamps = [
+        stamp for stamp in existing_prefix_stamps if stamp > 0
+    ]
+
+    first_existing_stamp: int | None = None
+    last_existing_stamp: int | None = None
+    eligible_raw_stamps: list[int] = []
+    startup_excluded = 0
+    stamp_tail_excluded = 0
+    if existing_positive_stamps:
+        first_existing_stamp = existing_positive_stamps[0]
+        last_existing_stamp = existing_positive_stamps[-1]
+        raw_prefix_positive = [
+            stamp for record_ns, stamp in raw
+            if record_ns <= final_record_ns and stamp > 0
+        ]
+        startup_excluded = sum(
+            stamp < first_existing_stamp for stamp in raw_prefix_positive
+        )
+        stamp_tail_excluded = sum(
+            stamp > last_existing_stamp for stamp in raw_prefix_positive
+        )
+        eligible_raw_stamps = [
+            stamp for stamp in raw_prefix_positive
+            if first_existing_stamp <= stamp <= last_existing_stamp
+        ]
+    else:
+        errors.append("no positive existing-fusion output in causal prefix")
+
+    eligible_unique = sorted(set(eligible_raw_stamps))
+    existing_unique = set(existing_positive_stamps)
+    missing = [stamp for stamp in eligible_unique if stamp not in existing_unique]
+    if not eligible_unique:
+        errors.append("no eligible positive raw stamps in causal prefix")
+    if missing:
+        errors.append(
+            f"{len(missing)} eligible raw stamps lack an exact existing-fusion "
+            f"output; first={missing[:10]}"
+        )
+
+    raw_zero_excluded = sum(stamp <= 0 for _, stamp in raw)
+    raw_record_tail_excluded = sum(
+        record_ns > final_record_ns and stamp > 0 for record_ns, stamp in raw
+    )
+    existing_record_tail_excluded = sum(
+        record_ns > final_record_ns and stamp > 0
+        for record_ns, stamp in existing
+    )
+    matched = len(eligible_unique) - len(missing)
+    summary = {
+        "final_diagnostic_record_ns": (
+            final_record_ns if final_record_ns >= 0 else None
+        ),
+        "first_existing_stamp_ns": first_existing_stamp,
+        "last_existing_stamp_ns": last_existing_stamp,
+        "existing_prefix_positive_records": len(existing_positive_stamps),
+        "existing_prefix_unique_stamps": len(existing_unique),
+        "existing_leading_zero_records": existing_leading_zero,
+        "eligible_raw_records": len(eligible_raw_stamps),
+        "eligible_unique_raw_stamps": len(eligible_unique),
+        "duplicate_eligible_raw_records": (
+            len(eligible_raw_stamps) - len(eligible_unique)
+        ),
+        "matched_unique_raw_stamps": matched,
+        "missing_unique_raw_stamps": len(missing),
+        "missing_examples_ns": missing[:20],
+        "coverage_ratio": (
+            matched / len(eligible_unique) if eligible_unique else 0.0
+        ),
+        "startup_excluded_raw_records": startup_excluded,
+        "zero_stamp_excluded_raw_records": raw_zero_excluded,
+        "stamp_tail_excluded_raw_records": stamp_tail_excluded,
+        "record_tail_excluded_raw_records": raw_record_tail_excluded,
+        "record_tail_excluded_existing_records": existing_record_tail_excluded,
+    }
+    return not errors, summary, errors[:20]
+
+
 @dataclass
 class Check:
     name: str
@@ -611,6 +956,529 @@ def fusion_anchor_freeze_contract(
     # A short smoke bag may never enter a post-activation outage. In that case
     # the startup suppression checks remain authoritative and this is vacuous.
     return not errors, summaries, errors[:20]
+
+
+def outage_yaw_guard_contract(
+    timeline: list[dict[str, Any]],
+) -> tuple[bool, dict[str, Any], list[str]]:
+    """Validate the orientation-only outage guard from runtime diagnostics.
+
+    Diagnostic sampling is slower than raw odometry, so a pair of snapshots
+    can span several bounded guard steps.  The net applied-offset change is
+    therefore checked against both the reported step-count increase and a
+    rate envelope with one configured dt-cap of phase allowance.  Existing
+    fusion anchor target/applied immutability remains a separate contract.
+    """
+    errors: list[str] = []
+    parsed: list[dict[str, Any]] = []
+    reference_config: tuple[float, ...] | None = None
+
+    def parse_finite(values: dict[str, str], key: str) -> float:
+        value = float(values[key])
+        if not math.isfinite(value):
+            raise ValueError(f"{key} is not finite")
+        return value
+
+    def parse_counter(values: dict[str, str], key: str) -> int:
+        encoded = values[key]
+        value = int(encoded)
+        if str(value) != encoded.strip() or value < 0:
+            raise ValueError(f"{key} is not a non-negative integer")
+        return value
+
+    for index, item in enumerate(timeline):
+        values = item.get("values", {})
+        missing = sorted(OUTAGE_YAW_GUARD_REQUIRED_KEYS - set(values))
+        if missing:
+            errors.append(
+                f"guard sample {index} at {item.get('stamp_ns')} missing={missing}"
+            )
+            continue
+        active_variance_key = (
+            "outage_yaw_guard.active_reference_variance_rad2"
+        )
+        key_counts = item.get("key_counts")
+        for exact_key in (
+            active_variance_key,
+            "outage_yaw_guard.last_reason",
+        ):
+            if not isinstance(key_counts, dict) or key_counts.get(exact_key) != 1:
+                errors.append(
+                    f"guard sample {index} at {item.get('stamp_ns')} requires "
+                    f"exactly one {exact_key}; count="
+                    f"{key_counts.get(exact_key) if isinstance(key_counts, dict) else None}"
+                )
+        try:
+            stamp = int(item["stamp_ns"])
+            enabled_text = values["outage_yaw_guard.enabled"]
+            active_text = values["outage_yaw_guard.active"]
+            if enabled_text not in {"true", "false"}:
+                raise ValueError("outage_yaw_guard.enabled is not boolean")
+            if active_text not in {"true", "false"}:
+                raise ValueError("outage_yaw_guard.active is not boolean")
+            enabled = enabled_text == "true"
+            active = active_text == "true"
+            state = values["outage_yaw_guard.state"]
+            last_reason = values["outage_yaw_guard.last_reason"]
+            config = tuple(
+                parse_finite(values, key) for key in OUTAGE_YAW_GUARD_CONFIG_KEYS
+            )
+            counters = {
+                key: parse_counter(values, key)
+                for key in OUTAGE_YAW_GUARD_COUNTER_KEYS
+            }
+            odom_session_resets = parse_counter(
+                values, "local_correction.odom_session_resets"
+            )
+            applied_offset = parse_finite(
+                values, "outage_yaw_guard.applied_offset_rad"
+            )
+            target_offset = parse_finite(
+                values, "outage_yaw_guard.target_offset_rad"
+            )
+            additional_variance = parse_finite(
+                values, "outage_yaw_guard.additional_variance_rad2"
+            )
+            active_reference_variance = float(values[active_variance_key])
+            if math.isinf(active_reference_variance):
+                raise ValueError(f"{active_variance_key} is infinite")
+            reference_values = tuple(
+                float(values[key])
+                for key in (
+                    "outage_yaw_guard.reference_stamp_sec",
+                    "outage_yaw_guard.reference_age_sec",
+                    "outage_yaw_guard.trusted_anchor_yaw_rad",
+                    "outage_yaw_guard.observed_fusion_anchor_yaw_rad",
+                    "outage_yaw_guard.observed_delta_rad",
+                    "outage_yaw_guard.trusted_variance_rad2",
+                )
+            )
+            nominal_yaw = float(values["outage_yaw_guard.nominal_global_yaw_rad"])
+            output_yaw = float(values["outage_yaw_guard.output_global_yaw_rad"])
+        except (KeyError, TypeError, ValueError) as error:
+            errors.append(
+                f"malformed guard sample {index} at {item.get('stamp_ns')}: {error}"
+            )
+            continue
+
+        if not enabled:
+            errors.append(f"guard sample {index} reports disabled runtime policy")
+        if state not in OUTAGE_YAW_GUARD_STATES:
+            errors.append(f"guard sample {index} has unknown state {state!r}")
+        expected_active = state in OUTAGE_YAW_GUARD_ACTIVE_STATES
+        if active != expected_active:
+            errors.append(
+                f"guard sample {index} active={active} disagrees with state={state}"
+            )
+        if values["outage_yaw_guard.reference_source"] != (
+            "robust_gnss_position_alignment_yaw"
+        ):
+            errors.append(f"guard sample {index} has wrong reference source")
+        if values["outage_yaw_guard.propagation_source"] != "precision_local_yaw":
+            errors.append(f"guard sample {index} has wrong propagation source")
+        if values["outage_yaw_guard.xy_policy"] != (
+            "existing_fusion_anchor_compose_precision_local"
+        ):
+            errors.append(f"guard sample {index} has wrong XY policy")
+        if not last_reason:
+            errors.append(f"guard sample {index} has empty last reason")
+
+        (
+            max_trusted_age,
+            max_trusted_variance,
+            max_trusted_delta,
+            max_offset_rate,
+            max_offset_step,
+            max_step_dt,
+        ) = config
+        valid_config = (
+            max_trusted_age > 0.0
+            and max_trusted_variance > 0.0
+            and 0.0 < max_trusted_delta <= math.pi
+            and max_offset_rate > 0.0
+            and 0.0 < max_offset_step <= math.pi
+            and max_step_dt > 0.0
+        )
+        if not valid_config:
+            errors.append(f"guard sample {index} has invalid config={config}")
+        if reference_config is None:
+            reference_config = config
+        elif config != reference_config:
+            errors.append(
+                f"guard sample {index} changed config {reference_config}->{config}"
+            )
+
+        authority_tracking = (
+            values["fusion.health.healthy"] == "true"
+            and values["fusion.anchor.state"] == "TRACKING"
+        )
+        if values["fusion.health.healthy"] not in {"true", "false"}:
+            errors.append(f"guard sample {index} has malformed fusion health")
+        if state in OUTAGE_YAW_GUARD_OUTAGE_STATES and authority_tracking:
+            errors.append(
+                f"guard sample {index} has outage state under tracking authority"
+            )
+        if state in OUTAGE_YAW_GUARD_OUTAGE_STATES and values[
+            "fusion.anchor.state"
+        ] not in {"FROZEN", "STABILIZING_RECOVERY"}:
+            errors.append(
+                f"guard sample {index} has outage state with fusion anchor "
+                f"{values['fusion.anchor.state']!r}"
+            )
+        if state == "RECOVERY_RELEASE" and not authority_tracking:
+            errors.append(
+                f"guard sample {index} releases without tracking authority"
+            )
+        if active and values["global_output_ready"] != "true":
+            errors.append(f"guard sample {index} is active before global readiness")
+        if values["global_output_ready"] not in {"true", "false"}:
+            errors.append(f"guard sample {index} has malformed readiness")
+
+        if counters["outage_yaw_guard.invalid_advance_count"] != 0:
+            errors.append(
+                f"guard sample {index} recorded an invalid advance: "
+                f"{counters['outage_yaw_guard.invalid_advance_count']}"
+            )
+        if counters["publish.global_suppressed_yaw_guard_invalid"] != 0:
+            errors.append(
+                f"guard sample {index} suppressed invalid global yaw output: "
+                f"{counters['publish.global_suppressed_yaw_guard_invalid']}"
+            )
+        if counters["outage_yaw_guard.recovery_count"] > counters[
+            "outage_yaw_guard.outage_count"
+        ]:
+            errors.append(f"guard sample {index} has recovery count above outage count")
+        if state in OUTAGE_YAW_GUARD_OUTAGE_STATES and counters[
+            "outage_yaw_guard.outage_count"
+        ] <= counters["outage_yaw_guard.recovery_count"]:
+            errors.append(f"guard sample {index} has no open outage edge")
+        if state == "RECOVERY_RELEASE" and counters[
+            "outage_yaw_guard.outage_count"
+        ] != counters["outage_yaw_guard.recovery_count"]:
+            errors.append(f"guard sample {index} recovery edge accounting differs")
+        if counters["outage_yaw_guard.reset_count"] != odom_session_resets + 1:
+            errors.append(
+                f"guard sample {index} reset/session mismatch reset="
+                f"{counters['outage_yaw_guard.reset_count']} odom={odom_session_resets}"
+            )
+
+        if abs(applied_offset) > math.pi + 1.0e-12:
+            errors.append(f"guard sample {index} applied offset is not wrapped")
+        if abs(target_offset) > math.pi + 1.0e-12:
+            errors.append(f"guard sample {index} target offset is not wrapped")
+        if abs(applied_offset) > max_trusted_delta + 1.0e-12:
+            errors.append(f"guard sample {index} applied offset exceeds configured gate")
+        if abs(target_offset) > max_trusted_delta + 1.0e-12:
+            errors.append(f"guard sample {index} target offset exceeds configured gate")
+        if additional_variance < 0.0:
+            errors.append(f"guard sample {index} has negative added variance")
+        if state in OUTAGE_YAW_GUARD_ACTIVE_STATES:
+            if (
+                not math.isfinite(active_reference_variance)
+                or active_reference_variance < 0.0
+                or active_reference_variance > max_trusted_variance + 1.0e-12
+            ):
+                errors.append(
+                    f"guard sample {index} active reference variance is invalid: "
+                    f"{active_reference_variance}"
+                )
+        elif not math.isnan(active_reference_variance):
+            errors.append(
+                f"guard sample {index} {state} active reference variance "
+                f"is not cleared: {active_reference_variance}"
+            )
+        if state in {"DISARMED", "READY"} and (
+            abs(applied_offset) > 1.0e-12
+            or abs(target_offset) > 1.0e-12
+            or abs(additional_variance) > 1.0e-12
+        ):
+            errors.append(
+                f"guard sample {index} non-active state carries correction "
+                f"applied={applied_offset} target={target_offset} "
+                f"variance={additional_variance}"
+            )
+        if state == "OUTAGE_HOLD" and abs(wrap(target_offset - applied_offset)) > 1.0e-12:
+            errors.append(f"guard sample {index} outage hold has residual offset")
+        if state == "RECOVERY_RELEASE" and abs(target_offset) > 1.0e-12:
+            errors.append(f"guard sample {index} recovery target is not zero")
+
+        reference_finite = all(math.isfinite(value) for value in reference_values)
+        reference_nan = all(math.isnan(value) for value in reference_values)
+        if state == "DISARMED":
+            if not reference_nan:
+                errors.append(f"guard sample {index} disarmed reference is not cleared")
+        elif not reference_finite:
+            errors.append(f"guard sample {index} armed reference is incomplete")
+        if reference_finite:
+            (
+                reference_stamp,
+                reference_age,
+                trusted_yaw,
+                observed_yaw,
+                observed_delta,
+                trusted_variance,
+            ) = reference_values
+            if reference_stamp <= 0.0 or reference_age < 0.0:
+                errors.append(f"guard sample {index} has invalid reference time")
+            if state == "READY" and reference_age > max_trusted_age + 1.0e-9:
+                errors.append(f"guard sample {index} READY reference is stale")
+            if not 0.0 <= trusted_variance <= max_trusted_variance:
+                errors.append(f"guard sample {index} has invalid trusted variance")
+            if abs(wrap(trusted_yaw - observed_yaw - observed_delta)) > 1.0e-9:
+                errors.append(f"guard sample {index} has inconsistent observed delta")
+            if abs(observed_delta) > max_trusted_delta + 1.0e-12:
+                errors.append(f"guard sample {index} exceeds trusted delta gate")
+            if state in OUTAGE_YAW_GUARD_OUTAGE_STATES:
+                expected_variance = active_reference_variance + wrap(
+                    target_offset - applied_offset
+                ) ** 2
+                if abs(additional_variance - expected_variance) > 1.0e-9:
+                    errors.append(
+                        f"guard sample {index} outage variance mismatch "
+                        f"actual={additional_variance} expected={expected_variance}"
+                    )
+        if state == "RECOVERY_RELEASE":
+            expected_variance = (
+                active_reference_variance + applied_offset * applied_offset
+            )
+            if abs(additional_variance - expected_variance) > 1.0e-9:
+                errors.append(
+                    f"guard sample {index} release variance mismatch "
+                    f"actual={additional_variance} expected={expected_variance}"
+                )
+
+        if math.isfinite(nominal_yaw) != math.isfinite(output_yaw):
+            errors.append(f"guard sample {index} has incomplete published yaw pair")
+        if active and not (
+            math.isfinite(nominal_yaw) and math.isfinite(output_yaw)
+        ):
+            errors.append(f"guard sample {index} active yaw output is unavailable")
+        if math.isfinite(nominal_yaw) and (
+            abs(wrap(output_yaw - nominal_yaw - applied_offset)) > 1.0e-9
+        ):
+            errors.append(f"guard sample {index} violates yaw offset composition")
+
+        current = {
+            "index": index,
+            "stamp_ns": stamp,
+            "state": state,
+            "active": active,
+            "authority_tracking": authority_tracking,
+            "config": config,
+            "counters": counters,
+            "applied_offset_rad": applied_offset,
+            "active_reference_variance_rad2": active_reference_variance,
+            "trusted_variance_rad2": reference_values[-1],
+            "last_reason": last_reason,
+        }
+        if parsed:
+            previous = parsed[-1]
+            if stamp < previous["stamp_ns"]:
+                errors.append(
+                    f"guard diagnostic stamp backstep {previous['stamp_ns']}->{stamp}"
+                )
+            counter_delta: dict[str, int] = {}
+            for key in OUTAGE_YAW_GUARD_COUNTER_KEYS:
+                delta = counters[key] - previous["counters"][key]
+                counter_delta[key] = delta
+                if delta < 0:
+                    errors.append(
+                        f"guard counter {key} backstep at sample {index}: {delta}"
+                    )
+
+            reset_delta = counter_delta["outage_yaw_guard.reset_count"]
+            outage_delta = counter_delta["outage_yaw_guard.outage_count"]
+            recovery_delta = counter_delta["outage_yaw_guard.recovery_count"]
+            accepted_delta = counter_delta[
+                "outage_yaw_guard.accepted_reference_count"
+            ]
+            step_delta = counter_delta["outage_yaw_guard.applied_step_count"]
+            previous_state = previous["state"]
+            previous_outage = previous_state in OUTAGE_YAW_GUARD_OUTAGE_STATES
+            current_outage = state in OUTAGE_YAW_GUARD_OUTAGE_STATES
+            if reset_delta == 0:
+                expected_outage_delta = (
+                    recovery_delta
+                    + int(current_outage)
+                    - int(previous_outage)
+                )
+                if outage_delta != expected_outage_delta:
+                    errors.append(
+                        "guard outage/recovery endpoint balance mismatch "
+                        f"at sample {index}: outage_delta={outage_delta} "
+                        f"recovery_delta={recovery_delta} "
+                        f"previous_state={previous_state} state={state} "
+                        f"expected_outage_delta={expected_outage_delta}"
+                    )
+            if (
+                state in OUTAGE_YAW_GUARD_OUTAGE_STATES
+                and previous_state not in OUTAGE_YAW_GUARD_OUTAGE_STATES
+                and outage_delta <= 0
+            ):
+                errors.append(
+                    f"guard transition {previous_state}->{state} lacks outage edge"
+                )
+            if (
+                state == "RECOVERY_RELEASE"
+                and previous_state != "RECOVERY_RELEASE"
+                and recovery_delta <= 0
+            ):
+                errors.append(
+                    f"guard transition {previous_state}->{state} lacks recovery edge"
+                )
+            if (
+                previous_state in OUTAGE_YAW_GUARD_OUTAGE_STATES
+                and state in {"READY", "DISARMED"}
+                and recovery_delta <= 0
+                and reset_delta <= 0
+            ):
+                errors.append(
+                    f"guard transition {previous_state}->{state} skips recovery"
+                )
+            if (
+                previous_state == "RECOVERY_RELEASE"
+                and state in OUTAGE_YAW_GUARD_OUTAGE_STATES
+                and outage_delta <= 0
+            ):
+                errors.append(
+                    f"guard transition {previous_state}->{state} lacks re-outage edge"
+                )
+            if previous_state == "DISARMED" and state == "READY" and accepted_delta <= 0:
+                errors.append("guard DISARMED->READY transition lacks accepted reference")
+            if previous_state == "READY" and state == "RECOVERY_RELEASE" and not (
+                outage_delta > 0 and recovery_delta > 0
+            ):
+                errors.append("guard READY->RECOVERY_RELEASE lacks sampled hidden outage")
+            if previous_state == "DISARMED" and state == "RECOVERY_RELEASE" and not (
+                accepted_delta > 0 and outage_delta > 0 and recovery_delta > 0
+            ):
+                errors.append("guard DISARMED->RECOVERY_RELEASE lacks authority edges")
+            if (
+                previous_state in OUTAGE_YAW_GUARD_OUTAGE_STATES
+                and state == "DISARMED"
+                and reset_delta <= 0
+                and not (recovery_delta > 0 and authority_tracking)
+            ):
+                errors.append(
+                    "guard active outage disarmed without reset or an unobserved "
+                    f"healthy recovery completion at sample {index}"
+                )
+
+            if reset_delta == 0:
+                if previous["active"] and active:
+                    previous_active_variance = previous[
+                        "active_reference_variance_rad2"
+                    ]
+                    previous_outage_count = previous["counters"][
+                        "outage_yaw_guard.outage_count"
+                    ]
+                    current_outage_count = counters[
+                        "outage_yaw_guard.outage_count"
+                    ]
+                    if current_outage_count == previous_outage_count:
+                        if abs(
+                            active_reference_variance
+                            - previous_active_variance
+                        ) > 1.0e-12:
+                            errors.append(
+                                "guard active reference variance changed within "
+                                f"outage {current_outage_count} at sample {index}: "
+                                f"{previous_active_variance}->"
+                                f"{active_reference_variance}"
+                            )
+                    elif (
+                        previous_state == "RECOVERY_RELEASE"
+                        and state in OUTAGE_YAW_GUARD_OUTAGE_STATES
+                        and current_outage_count - previous_outage_count == 1
+                        and recovery_delta == 0
+                        and last_reason in OUTAGE_YAW_GUARD_REOUTAGE_REASONS
+                    ):
+                        if last_reason == OUTAGE_YAW_GUARD_REOUTAGE_FRESH_REASON:
+                            expected_active_variance = max(
+                                previous_active_variance,
+                                current["trusted_variance_rad2"],
+                            )
+                        elif last_reason in OUTAGE_YAW_GUARD_REOUTAGE_RETAIN_REASONS:
+                            expected_active_variance = previous_active_variance
+                        else:
+                            errors.append(
+                                "guard visible release re-outage has invalid reason "
+                                f"at sample {index}: {last_reason!r}"
+                            )
+                            expected_active_variance = None
+                        if (
+                            expected_active_variance is not None
+                            and abs(
+                                active_reference_variance
+                                - expected_active_variance
+                            ) > 1.0e-12
+                        ):
+                            errors.append(
+                                "guard re-outage active reference variance violates "
+                                f"reason={last_reason!r} at sample {index}: actual="
+                                f"{active_reference_variance} expected="
+                                f"{expected_active_variance}"
+                            )
+                    elif current_outage_count > previous_outage_count:
+                        # A recovery and subsequent re-outage can both occur
+                        # between diagnostic snapshots. Its exact branch reason
+                        # is not observable, but all branches retain or increase
+                        # the active uncertainty snapshot.
+                        if active_reference_variance + 1.0e-12 < (
+                            previous_active_variance
+                        ):
+                            errors.append(
+                                "guard hidden re-outage decreased active reference "
+                                f"variance at sample {index}: "
+                                f"{previous_active_variance}->"
+                                f"{active_reference_variance}"
+                            )
+                offset_delta = abs(wrap(applied_offset - previous["applied_offset_rad"]))
+                step_bound = step_delta * max_offset_step + 1.0e-9
+                if offset_delta > step_bound:
+                    errors.append(
+                        f"guard applied offset exceeded step accounting at sample {index}: "
+                        f"delta={offset_delta} steps={step_delta} bound={step_bound}"
+                    )
+                dt_sec = max(0.0, (stamp - previous["stamp_ns"]) * 1.0e-9)
+                rate_bound = max_offset_rate * (dt_sec + max_step_dt) + 1.0e-9
+                if offset_delta > rate_bound:
+                    errors.append(
+                        f"guard applied offset exceeded rate envelope at sample {index}: "
+                        f"delta={offset_delta} dt={dt_sec} bound={rate_bound}"
+                    )
+        parsed.append(current)
+
+    stamp_order_valid, leading_zero_count = timer_stamp_order(
+        [item["stamp_ns"] for item in parsed]
+    )
+    if not stamp_order_valid:
+        errors.append(
+            "guard diagnostic stamps are not a leading-zero prefix followed by "
+            "nondecreasing physical time"
+        )
+    summary = {
+        "samples": len(timeline),
+        "parsed_samples": len(parsed),
+        "leading_zero_stamp_samples": leading_zero_count,
+        "states": sorted({item["state"] for item in parsed}),
+        "active_samples": sum(item["active"] for item in parsed),
+        "outage_samples": sum(
+            item["state"] in OUTAGE_YAW_GUARD_OUTAGE_STATES for item in parsed
+        ),
+        "release_samples": sum(
+            item["state"] == "RECOVERY_RELEASE" for item in parsed
+        ),
+        "maximum_active_reference_variance_rad2": max(
+            (
+                item["active_reference_variance_rad2"]
+                for item in parsed if item["active"]
+            ),
+            default=None,
+        ),
+        "config": list(reference_config) if reference_config is not None else None,
+    }
+    return bool(timeline) and len(parsed) == len(timeline) and not errors, summary, errors[:40]
 
 
 def fusion_rearm_contract(
@@ -959,6 +1827,9 @@ def validate(bag: Path, expected_rate: float) -> list[Check]:
             diagnostic, "localization/precision_global_localizer"
         )
         if global_status is not None:
+            global_key_counts: dict[str, int] = defaultdict(int)
+            for item in global_status.values:
+                global_key_counts[str(item.key)] += 1
             global_timeline.append(
                 {
                     "record_ns": diagnostic_record_ns,
@@ -968,6 +1839,7 @@ def validate(bag: Path, expected_rate: float) -> list[Check]:
                     "values": {
                         item.key: item.value for item in global_status.values
                     },
+                    "key_counts": dict(global_key_counts),
                 }
             )
         fusion_statuses = [
@@ -988,6 +1860,35 @@ def validate(bag: Path, expected_rate: float) -> list[Check]:
         odometer_diag = diagnostic_values(
             diagnostic, "localization/gyro_odometer"
         ) or odometer_diag
+
+    publication_valid, publication_summary, publication_errors = (
+        map_fusion_publication_integrity_contract(fusion_health_records)
+    )
+    checks.append(
+        Check(
+            "map-fusion publication counter integrity",
+            publication_valid,
+            f"summary={publication_summary} errors={publication_errors}",
+        )
+    )
+    final_map_fusion_diagnostic_record_ns = (
+        int(fusion_health_records[-1]["record_ns"])
+        if fusion_health_records else None
+    )
+    coverage_valid, coverage_summary, coverage_errors = (
+        exact_raw_to_existing_stamp_coverage(
+            messages[TOPIC_RAW],
+            messages[TOPIC_EXISTING],
+            final_map_fusion_diagnostic_record_ns,
+        )
+    )
+    checks.append(
+        Check(
+            "map-fusion exact raw stamp publication coverage",
+            coverage_valid,
+            f"summary={coverage_summary} errors={coverage_errors}",
+        )
+    )
 
     if odometer_diag is None:
         checks.append(Check("odometer snapshot diagnostics", False, "status not recorded"))
@@ -1358,6 +2259,16 @@ def validate(bag: Path, expected_rate: float) -> list[Check]:
             "existing-fusion anchor freezes outside strict health",
             freeze_valid,
             f"groups={freeze_groups} errors={freeze_errors}",
+        )
+    )
+    guard_valid, guard_summary, guard_errors = outage_yaw_guard_contract(
+        global_timeline
+    )
+    checks.append(
+        Check(
+            "outage yaw guard runtime contract",
+            guard_valid,
+            f"summary={guard_summary} errors={guard_errors}",
         )
     )
     rearm_valid, rearm_summary, rearm_errors = fusion_rearm_contract(

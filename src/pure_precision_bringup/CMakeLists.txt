@@ -13,6 +13,7 @@ install(PROGRAMS
   scripts/evaluate_accepted_scan_nonintrusion.py
   scripts/evaluate_precision_glim_ab.py
   scripts/evaluate_startup_acceptance.py
+  scripts/validate_hesai_gnss_publication_run.py
   scripts/validate_precision_bag.py
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -24,6 +25,17 @@ if(BUILD_TESTING)
     NAME test_precision_evaluation_helpers
     COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/test/test_precision_evaluation_helpers.py"
+  )
+  add_test(
+    NAME test_hesai_gnss_publication_validator
+    COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/test/test_hesai_gnss_publication_validator.py"
+  )
+  add_test(
+    NAME test_hesai_gnss_publication_validator_self_test
+    COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/validate_hesai_gnss_publication_run.py"
+      --self-test
   )
 endif()
 

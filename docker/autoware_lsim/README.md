@@ -33,21 +33,17 @@ down when playback ends.
 
 Results are written below `docker_output/` unless `--output` is supplied.
 
-## Private Hesai Course 1/2 profile
+## Private Hesai evaluation profile
 
-The `hesai-rosbag23` profile is used for the private recordings identified in
-the evaluation documentation as **Hesai 32-Line + IMU + RTK GNSS — Course 1**
-and **Hesai 32-Line + IMU + RTK GNSS — Course 2**. The recordings are not
-distributed on GitHub. The profile supplies three calibrated sensor transforms,
-the source topics, Hesai XT parameters, GNSS, and a shared site-local origin.
-Do not combine it with `--launch-vehicle` or `--already-deskewed`.
+The `hesai-rosbag23` profile is used for private Hesai 32-Line + IMU + RTK GNSS
+evaluation recordings. The recordings are not distributed on GitHub. The
+profile supplies three calibrated sensor transforms, the source topics, Hesai
+XT parameters, and GNSS. NMEA conversion uses the packaged runtime projection,
+which is provenance-checked against the packaged `map_projector_info.yaml`; the
+profile applies no evaluation-origin override. Do not combine it with
+`--launch-vehicle` or `--already-deskewed`.
 
 ```bash
-ROS_DOMAIN_ID=82 ./script/run_autoware_lsim_docker.sh \
-  --bag <hesai_course_1_bag> \
-  --profile hesai-rosbag23 \
-  --run-name hesai_course_1_lsim
-
 ROS_DOMAIN_ID=83 ./script/run_autoware_lsim_docker.sh \
   --bag <hesai_course_2_bag> \
   --profile hesai-rosbag23 \

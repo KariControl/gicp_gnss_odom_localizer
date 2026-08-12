@@ -23,6 +23,7 @@
 #include <Eigen/Geometry>
 
 #include "pure_gnss_map_odom_fusion/gnss_recovery_controller.hpp"
+#include "pure_gnss_map_odom_fusion/publication_order.hpp"
 
 namespace pure_gnss_map_odom_fusion
 {
@@ -192,7 +193,7 @@ private:
     const OdomSample & odom);
   void updateRecoveryModeFromClock(const rclcpp::Time & stamp);
 
-  void publishFused(const rclcpp::Time & stamp);
+  void publishFused(const rclcpp::Time & stamp, PublicationTrigger trigger);
   void publishDiagnostics(uint8_t level, const std::string & message);
 
   // Frames/topics.
@@ -294,6 +295,9 @@ private:
   mutable std::mutex publish_mutex_;
   rclcpp::Time last_published_stamp_{0, 0, RCL_ROS_TIME};
   std::atomic<std::size_t> out_of_order_publish_drop_count_{0U};
+  std::atomic<std::size_t> covered_odometry_coalesced_count_{0U};
+  std::atomic<std::size_t> wall_timer_coalesced_count_{0U};
+  std::deque<std::int64_t> published_stamp_history_ns_;
   std::deque<OdomSample> odom_buffer_;
   std::optional<AnchorState> anchor_;
   std::optional<AbsolutePoseMeasurement> pending_measurement_;

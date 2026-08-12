@@ -10,13 +10,14 @@
 - Added sensor- and recording-scoped LiDAR/IMU evaluation profiles, separated
   into canonical `accepted` inputs and retained `experimental` inputs.
 - Added shared Hesai 32-Line + IMU + RTK GNSS evaluation overrides and
-  descriptive private Course 1/2 manifests under
+  descriptive private recording manifests under
   `config/evaluation/lidar_imu_gnss`; component parameter defaults remain in
   their owning packages.
 - Added the `hesai-rosbag23` Autoware Logging Simulation profile for the private
-  Hesai 32-Line + IMU + RTK GNSS Course 1/2 recordings, including calibrated
-  static transforms, XT parameters, a shared site-local GNSS origin, a 100 Hz
-  simulation clock, input-topic allowlisting, and English operating guidance.
+  Hesai 32-Line + IMU + RTK GNSS recordings, including calibrated
+  static transforms, XT parameters, packaged NMEA projection provenance, a
+  100 Hz simulation clock, input-topic allowlisting, and English operating
+  guidance.
 - Added an Autoware localization-interface output bag analyzer and a native
   `--lsim-interface-test` path for environments where the official Autoware
   Docker image cannot be started.
@@ -28,6 +29,21 @@
   soft quality-gap tolerance, and automatic promotion to full SE(2) recovery.
 - Added fixed-yaw translation, outlier, bounded-correction, and covariance
   propagation regression tests.
+- Added exact-initial-pose GNSS A/B evaluation and a fail-closed Hesai
+  publication-provenance validator covering resolved configuration hashes,
+  NMEA projection diagnostics, dataset/mode/TF contracts, and full 1.0x replay.
+- Added an orientation-only RTK-Q4 outage-yaw guard for precision-global output.
+  It learns a robust trusted yaw reference only under strict healthy fusion,
+  propagates it with precision-local yaw during an outage, and applies and
+  releases the offset with bounded steps without changing global XY.
+- Added fail-closed yaw-guard diagnostics and regression coverage for trusted-
+  reference provenance, authority state, configuration, counters, continuity,
+  invalid advances, reset/re-outage behavior, and suppressed invalid output.
+- Added an explicit active-reference yaw-variance snapshot to outage-guard
+  diagnostics and covariance. The snapshot is retained through outage and
+  bounded release; validation checks the state-specific residual formulas and
+  rejects missing, duplicated, non-finite, negative, cleared, or refreshed-
+  during-release values.
 
 ### Changed
 
@@ -71,10 +87,20 @@
   GNSS timestamp, even when newer odometry is already buffered.
 - Fused pose, odometry, and TF publication is serialized and suppresses a
   stale request that would make output timestamps move backwards.
+- Map-fusion publication diagnostics now separate strict out-of-order drops
+  from harmless already-covered odometry and wall-timer coalescing. Evaluation
+  requires zero strict drops, monotonic counter accounting, and exact causal
+  raw-to-fused stamp coverage.
 - The ROS-bag single-antenna runner explicitly enables XY-only recovery while
   the generic fusion and launch defaults remain disabled.
 - LiDAR/IMU evaluation configuration now uses `config/evaluation/lidar_imu`
   rather than encoding the reference provider in the directory name.
+- Native Hesai and Autoware LSim runners now use the packaged NMEA runtime
+  parameters with an empty evaluation override. Provenance checks require their
+  projector, datum, origin, and scale to match `map_projector_info.yaml`.
+- Published Autoware LSim evidence now reports the current-default-projection
+  Course 2 headless interface and runtime checks. Additional private recordings
+  remain internal regression inputs.
 
 ### Migration
 
@@ -92,9 +118,14 @@
 
 ### Fixed
 
-- Fixed the native Hesai evaluation runner to pass its validated NMEA site
-  origin override to the launch. Historical results produced before this fix
-  remain provisional until they are rerun; this change does not claim a rerun.
+- Removed the evaluation-only site-centred NMEA-origin substitution from the
+  Hesai runners and restored the packaged default projection. A new full-rate
+  Course 2 run verifies the runtime-parameter-to-map-metadata match and empty
+  override. With the accepted orientation-only yaw guard and retained yaw-
+  reference covariance, it passes 53/53 accuracy hard gates, 20/20 startup
+  yaw-safety checks, 28/28 runtime checks, 17/17 non-intrusion checks, and its
+  publication-provenance suites. Additional private recordings are retained
+  for internal validation without publishing their identities or results.
 - Fixed the Autoware overlay image to use colcon's global `--log-base` syntax
   and a merged install tree, and made ROS setup sourcing safe with strict shell
   mode enabled.
@@ -170,7 +201,7 @@
 
 - Existing deployments that use the `pure_*` package names do not need source-level package or message-type migration.
 - Do not overlay this tree on the discarded `gicp_gnss_odom_localizer-0.3.0-rc2` build/install directories. Remove `build/`, `install/`, and `log/`, then rebuild cleanly.
-- The previous `mapless_iv_localizer-0.2.0-rc3` and this release have equivalent estimator source/configuration except for project metadata, documentation, package versions, and identity checks.
+- The previous `0.2.0-rc3` and this release have equivalent estimator source/configuration except for project metadata, documentation, package versions, and identity checks.
 
 ## 0.2.0-rc3 - 2026-08-07
 

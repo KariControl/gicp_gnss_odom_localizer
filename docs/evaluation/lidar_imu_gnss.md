@@ -1,102 +1,188 @@
 # LiDAR/IMU/GNSS Evaluation
 
-## Status and provenance warning
+## Conclusion
 
-Historical 1.0x A/B runs measured two courses with a Hesai 32-line LiDAR, IMU,
-and RTK GNSS. They kept the existing scan-to-scan/GNSS fusion output unchanged
-and added isolated precision-local scan-to-submap and guarded precision-global
-outputs. Both runs passed their original runtime and safety gates.
+The published Hesai 32-Line, IMU, and RTK-GNSS Course 2 recording was replayed
+at 1.0x using the packaged default NMEA projection: Transverse Mercator, WGS84,
+origin `35.681236, 139.767125`, and scale `0.9996`. The runtime values from
+`pure_nmea_gnss_conversion/param/param.yaml` were verified against
+`config/map_projector_info.yaml`, and the evaluation NMEA override was empty.
 
-However, those native runs used the base NMEA configuration's Tokyo origin
-because the intended site-local origin override was checked but not passed to
-the launch. The evaluation configuration and runner now apply the site-local
-override, but no corrected-profile rerun has been completed. The accuracy values
-on this page are therefore **historical provisional measurements**, not final
-acceptance results for the reorganized profile. They must be reproduced before
-publication or adoption.
+Course 2 is accepted with the orientation-only RTK-Q4 trusted-yaw guard. All 53
+accuracy hard gates, 20 startup gates, 28 runtime checks, and 17 accepted-scan
+non-intrusion checks passed. Source rosbags remain private and are not
+distributed on GitHub.
 
-The local odometry values do not directly use the GNSS map origin, but they are
-also kept provisional until one corrected-profile run reproduces the complete
-A/B result and its non-intrusion checks.
+Additional private recordings may be used for internal regression and release
+validation. Their identities, measurements, and artifacts are intentionally
+excluded from the public documentation.
 
-The plots and metrics use
-[frozen calibration-window alignment](methodology.md#alignment-b-frozen-calibration-window).
-They do not use exact-initial-pose alignment, so their first XY and yaw errors
-are not necessarily zero.
+## Evaluation method
 
-## Dataset and output mapping
+The evaluation used a new baseline run, an accepted-scan control run, and a
+precision run from the same Release build and default-projection configuration.
 
-The source rosbags are private and are not distributed on GitHub. The legacy
-artifact identifiers are `PC2` for Course 1 and `PC3` for Course 2; they are
-retained only inside provenance metadata.
+Primary accuracy is measured within the precision run:
 
-| Dataset | Duration | Local baseline | Local precision | Global baseline | Global precision |
-|---|---:|---|---|---|---|
-| Hesai 32-Line + IMU + RTK GNSS — Course 1 | 210.757 s | Raw scan-to-scan from the precision run | Precision-local scan-to-submap | Existing GNSS fusion | Guarded precision-global |
-| Hesai 32-Line + IMU + RTK GNSS — Course 2 | 213.635 s | Raw scan-to-scan from the precision run | Precision-local scan-to-submap | Existing GNSS fusion | Guarded precision-global |
+- local A/B uses the exact integer-header-stamp intersection of scan-to-scan
+  raw odometry and precision-local output;
+- global A/B uses the exact integer-header-stamp intersection of existing GNSS
+  fusion and precision-global output;
+- estimator streams are never interpolated;
+- GLIM alone is interpolated to the exact estimator stamps;
+- one complete SE(2) transform maps the baseline output's first common pose
+  onto the GLIM pose and is shared with the precision output;
+- the same transform supplies position and yaw alignment, and no scale is
+  estimated or applied.
 
-The local table evaluates LiDAR/IMU odometry. The global table evaluates
-map-frame output after the GNSS anchor is applied. These are separate claims:
-scan-to-submap RMSE is not precision-global RMSE.
+The initial aligned baseline residual is numerically zero. GLIM uses the same
+LiDAR and IMU observations, so it is a correlated pseudo-reference rather than
+independent ground truth. See the [common methodology](methodology.md).
 
-## Historical local-odometry A/B
+Startup yaw-safety is a separate acceptance test. It freezes a yaw offset from
+an explicit, inclusive 20-second legacy-global/GLIM calibration window, then
+checks the first precision-global output and every startup output record. GLIM
+provides 400 physical-header-stamp samples in the window; speed-run legacy-
+global yaw is interpolated to those stamps with a 0.1 s maximum gap. That
+calibration is not used by the primary exact-initial-pose accuracy metrics,
+plots, or gates.
 
-Fixed XY and yaw use one frozen control-derived alignment shared by both A/B
-streams. Full-shape XY independently fits each trajectory and is included only
-as a shape diagnostic.
+## Dataset and acceptance
 
-| Dataset | Output | Fixed XY RMSE | Full-shape XY RMSE | Yaw RMSE | Fixed XY improvement |
-|---|---|---:|---:|---:|---:|
-| Hesai 32-Line + IMU + RTK GNSS — Course 1 | Scan-to-scan raw | 1.8953 m | 1.3299 m | 1.8908 deg | Baseline |
-| Hesai 32-Line + IMU + RTK GNSS — Course 1 | Scan-to-submap precision-local | 0.6473 m | 0.3324 m | 0.7282 deg | 65.85% |
-| Hesai 32-Line + IMU + RTK GNSS — Course 2 | Scan-to-scan raw | 1.9880 m | 1.0812 m | 1.9148 deg | Baseline |
-| Hesai 32-Line + IMU + RTK GNSS — Course 2 | Scan-to-submap precision-local | 0.5468 m | 0.3261 m | 0.8980 deg | 72.50% |
+| Dataset | Duration | Exact local/global samples | Accuracy result |
+|---|---:|---:|---|
+| Hesai 32-Line + IMU + RTK GNSS — Course 2 | 213.635 s | 8,500 / 7,772 | **Accepted:** 53/53 hard gates passed |
 
-Historical translation RPE:
+The fail-closed provenance validator passed 33/33 baseline, 34/34 control, and
+40/40 precision checks. It verifies dataset and mode selection, full 1.0x
+playback, TF, copied configuration files and SHA-256 values, projection
+metadata, the empty NMEA evaluation override, required topics, duration,
+diagnostics, and causal raw-to-fused stamp coverage.
 
-| Dataset and output | 10 m | 50 m | 100 m |
+## Local odometry A/B
+
+| Output | XY RMSE | Yaw RMSE | XY improvement |
 |---|---:|---:|---:|
-| Hesai 32-Line + IMU + RTK GNSS — Course 1, scan-to-scan | 0.3725 m | 1.4331 m | 2.9387 m |
-| Hesai 32-Line + IMU + RTK GNSS — Course 1, scan-to-submap | 0.1822 m | 0.6440 m | 1.3194 m |
-| Hesai 32-Line + IMU + RTK GNSS — Course 2, scan-to-scan | 0.2421 m | 0.9496 m | 1.7188 m |
-| Hesai 32-Line + IMU + RTK GNSS — Course 2, scan-to-submap | 0.1562 m | 0.5842 m | 0.9941 m |
+| Scan-to-scan raw | 1.8672 m | 1.5489 deg | Baseline |
+| Scan-to-submap precision-local | 0.4785 m | 0.7390 deg | 74.38% |
 
-## Historical global-GNSS A/B
+Translation/yaw RPE RMSE at fixed path distances:
 
-| Dataset | Output | Fixed XY RMSE | Full-shape XY RMSE | Yaw RMSE | Fixed XY improvement |
-|---|---|---:|---:|---:|---:|
-| Hesai 32-Line + IMU + RTK GNSS — Course 1 | Existing GNSS fusion | 1.2083 m | 1.0864 m | 2.9204 deg | Baseline |
-| Hesai 32-Line + IMU + RTK GNSS — Course 1 | Guarded precision-global | 0.3658 m | 0.3141 m | 2.7076 deg | 69.73% |
-| Hesai 32-Line + IMU + RTK GNSS — Course 2 | Existing GNSS fusion | 1.7971 m | 0.9356 m | 2.7261 deg | Baseline |
-| Hesai 32-Line + IMU + RTK GNSS — Course 2 | Guarded precision-global | 0.7542 m | 0.3161 m | 2.2140 deg | 58.03% |
+| Output | 10 m | 50 m | 100 m |
+|---|---:|---:|---:|
+| Scan-to-scan | 0.2395 m / 0.9329 deg | 0.9349 m / 1.2210 deg | 1.6961 m / 1.4210 deg |
+| Scan-to-submap | 0.1535 m / 0.9002 deg | 0.5616 m / 1.0470 deg | 0.9410 m / 1.0900 deg |
 
-During the common GNSS outage intervals, historical global XY RMSE changed
-from 1.5493 m to 0.4631 m for Course 1 and from 2.2651 m to 0.9441 m for
-Course 2. Anchor target and applied values remained serialized-value stable
-while strict fusion health was false.
+## Global GNSS A/B
 
-The guarded global initial yaw was enabled only after three candidates became
-consistent; precision-global output remained suppressed before that point. The
-corrected-profile rerun must repeat this startup, outage, and non-intrusion
-validation.
+| Output | XY RMSE | Yaw RMSE | XY improvement |
+|---|---:|---:|---:|
+| Existing GNSS fusion | 1.7105 m | 2.4647 deg | Baseline |
+| Guarded precision-global | 0.5060 m | 1.4484 deg | 70.42% |
+
+Global translation/yaw RPE RMSE:
+
+| Output | 10 m | 50 m | 100 m |
+|---|---:|---:|---:|
+| Existing fusion | 0.5023 m / 2.6330 deg | 1.3672 m / 2.6420 deg | 2.0858 m / 2.6179 deg |
+| Guarded precision-global | 0.2447 m / 1.8840 deg | 0.9457 m / 1.9871 deg | 1.4178 m / 1.8572 deg |
+
+## RTK-Q4 trusted-yaw guard
+
+The precision-global XY path remains the existing-fusion frozen-anchor
+composition. The guard changes orientation only. While existing fusion is
+strictly healthy, it estimates a robust SE(2) yaw reference from RTK-Q4 GNSS
+positions and precision-local positions. A candidate must pass its baseline,
+inlier, residual, uncertainty, and stability gates. Unhealthy samples cannot
+refresh the trusted reference.
+
+When fusion becomes unhealthy, the trusted reference is propagated with
+precision-local yaw and applied with bounded yaw-only steps. Recovery releases
+the offset through the same bounded policy. At outage entry, the guard
+snapshots the trusted reference variance and retains it through the complete
+outage and release, including while healthy observations refresh the next
+trusted reference. During outage the added yaw variance is
+`active_reference_variance + wrap(target - applied)^2`; during release it is
+`active_reference_variance + applied^2`. `READY` and `DISARMED` clear the
+active snapshot and add zero guard variance. This prevents the applied yaw
+correction from understating published orientation covariance.
+
+The accepted configuration required fix quality 4 and used a 2.0 s maximum
+reference age, `0.0225 rad²` maximum reference variance, `0.35 rad` maximum
+trusted delta, `0.2 rad/s` rate limit, `0.04 rad` step limit, and `0.25 s`
+step-time cap. Runtime diagnostics verified the orientation-only source, XY
+policy, active variance snapshot, covariance formulas, and clearing policy.
+
+| Guard evidence | Observed value |
+|---|---:|
+| Diagnostic state samples | 214 |
+| Accepted/rejected trusted references | 131 / 0 |
+| Outage/recovery edge counters | 18 / 17 |
+| Maximum observed offset rate | 0.084477 rad/s |
+| Maximum active reference variance | 0.008574748 rad² |
+| Maximum added yaw variance | 0.008574748 rad² |
+| Invalid advances / suppressed invalid outputs | 0 / 0 |
+
+The recording ends during a final `STABILIZING_RECOVERY` episode, which
+explains the 18/17 edge counters; its anchor remains initialized and position
+fused. Earlier outage/recovery cycles returned to tracking.
+
+## Outage accuracy and recovery
+
+Outage RMSE uses the longest post-initialization non-`TRACKING` interval from
+`gnss_map_odom_fusion` in the accepted precision run, not the raw RTK-Q4-loss
+interval. The evaluated fusion-outage window was 122.500 s.
+
+| Metric | Existing fusion | Guarded precision-global | Change |
+|---|---:|---:|---:|
+| XY RMSE | 2.1502 m | 0.6144 m | 71.42% lower |
+| Yaw RMSE | 2.0770 deg | 0.7077 deg | 65.93% lower |
+
+Anchor target and applied values remained serialization-exact and unchanged
+whenever strict existing-fusion health was false. The longest greater-than-two-
+second RTK-Q4 gap lasted 117.252 s; finite XY tracking returned 5.198 s after
+usable Q4 input resumed.
+
+## Startup yaw safety
+
+The dedicated startup evaluation passed 20/20 checks. Native output delay is
+measured from the first positive raw header stamp to the first positive
+precision-global header stamp; the slower 1 Hz diagnostic observation is
+reported only as secondary timing.
+
+| Native first-output delay | 1 Hz diagnostic observation | First/max GLIM yaw error | First/max legacy-global difference |
+|---:|---:|---:|---:|
+| 19.199991 s | 19.974988 s | 0.485945 / 6.958743 deg | 0.014447 / 7.103558 deg |
+
+The declared calibration window, in physical ROS header-stamp seconds, was
+`1776827995.827213` through `1776828015.827213`, inclusive. It contained 400
+GLIM samples and produced a frozen circular yaw offset of -3.874033 deg. This
+window-derived offset belongs only to the startup yaw-safety calibration; the
+primary RMSE, RPE, and plots use their separate exact-initial-pose alignment.
+
+No precision-global odometry or pose was published before readiness. The first
+odom and pose were an atomic pair at exactly the next unique raw stamp after
+activation, under healthy existing-fusion authority and three stable
+candidates.
+
+## Runtime and non-intrusion
+
+| Precision validator | Matcher processing p99 | End-to-end latency p99 | Queue drops |
+|---|---:|---:|---:|
+| 28/28 pass at 1.0x | 54.277 ms | 128.409 ms | 0 |
+
+The runtime validator also confirmed zero strict map-fusion odometry drops and
+exact causal raw-stamp coverage of 7,892/7,892 unique stamps.
+
+All 17 accepted-scan checks passed: all 851/851 physical scans shared
+generation/sequence keys and exact stamps. The accepted-pose XY/yaw RMSE
+difference was 0.000780 m / 0.000831 deg, and the accepted-increment difference
+was 0.000006 m / 0.000004 deg.
+
+Matcher processing and latency are timing metrics, not CPU utilization. CPU
+utilization and RSS were not measured, so no CPU-load comparison is claimed.
 
 ## Curated plots and metrics
-
-Only one representative trajectory is embedded here. Error plots and the other
-trajectories remain linked.
-
-![Hesai 32-Line with IMU and RTK GNSS, Course 1 local trajectory](assets/hesai_32line_imu_rtk_gnss_course_1/local_trajectory.png)
-
-Course 1 evidence:
-
-- [Local XY error](assets/hesai_32line_imu_rtk_gnss_course_1/local_xy_error.png)
-- [Local yaw error](assets/hesai_32line_imu_rtk_gnss_course_1/local_yaw_error.png)
-- [Global trajectory](assets/hesai_32line_imu_rtk_gnss_course_1/global_trajectory.png)
-- [Global XY error](assets/hesai_32line_imu_rtk_gnss_course_1/global_xy_error.png)
-- [Global yaw error](assets/hesai_32line_imu_rtk_gnss_course_1/global_yaw_error.png)
-- [Machine-readable metrics and provenance](assets/hesai_32line_imu_rtk_gnss_course_1/metrics.json)
-
-Course 2 evidence:
 
 - [Local trajectory](assets/hesai_32line_imu_rtk_gnss_course_2/local_trajectory.png)
 - [Local XY error](assets/hesai_32line_imu_rtk_gnss_course_2/local_xy_error.png)
@@ -106,30 +192,6 @@ Course 2 evidence:
 - [Global yaw error](assets/hesai_32line_imu_rtk_gnss_course_2/global_yaw_error.png)
 - [Machine-readable metrics and provenance](assets/hesai_32line_imu_rtk_gnss_course_2/metrics.json)
 
-## Runtime and unmeasured CPU load
-
-| Dataset | Historical runtime gate | Matcher processing p99 | End-to-end latency p99 | Queue drops | CPU | RSS |
-|---|---|---:|---:|---:|---|---|
-| Hesai 32-Line + IMU + RTK GNSS — Course 1 | 25/25 pass at 1.0x | 89.441 ms | 171.006 ms | 0 | Not measured | Not measured |
-| Hesai 32-Line + IMU + RTK GNSS — Course 2 | 25/25 pass at 1.0x | 53.879 ms | 128.002 ms | 0 | Not measured | Not measured |
-
-Processing and latency values support deadline and queue analysis but are not
-CPU utilization. No baseline-versus-precision CPU or RSS samples exist for
-these runs, so no CPU improvement or regression is claimed.
-
-## Required corrected-profile rerun
-
-Before these results become final acceptance evidence:
-
-1. run both courses at 1.0x with the intended site-local NMEA-origin override;
-2. verify the resolved parameters and record their hashes;
-3. repeat local and global A/B metrics with one declared alignment method;
-4. repeat guarded startup-yaw, GNSS-outage, accepted-scan non-intrusion, and
-   queue-drop gates;
-5. collect controlled CPU and RSS samples for baseline and precision modes;
-6. replace the provisional metrics and plots only if the corrected run passes.
-
-The two courses share one Hesai sensor configuration. They do not establish
-generalization to another LiDAR, rig calibration, environment, weather, or
-speed range.
-
+This result does not establish generalization to another LiDAR, calibration,
+environment, weather condition, or speed range. The source recording and full
+validation run are private and are not published on GitHub.

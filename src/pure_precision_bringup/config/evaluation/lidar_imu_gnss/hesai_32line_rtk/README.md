@@ -1,9 +1,12 @@
 # Precision profile for Hesai 32-Line + IMU + RTK GNSS evaluation
 
-The precision branch uses the same shared rig and site profile documented in
+The precision branch uses the same calibrated rig and default-projection
+contract documented in
 `pure_odometry_bringup/config/evaluation/lidar_imu_gnss/hesai_32line_rtk`.
-Course 1 and course 2 intentionally do not have duplicate matcher or global
-localizer parameter files.
+Individual recordings intentionally do not have duplicate matcher or global
+localizer parameter files. Course 2 is the public evaluation example; other
+recordings remain anonymous internal validation inputs. The NMEA package owns
+the runtime projection, and the evaluation applies no origin override.
 
 The effective precision configuration is assembled from unchanged package
 files:
@@ -13,4 +16,5 @@ files:
 - `pure_precision_global_localizer/param/param.yaml`
 
 The runner records the resolved paths and SHA-256 digest of every effective
-file. Historical result manifests remain valid and are not rewritten.
+file. Published result assets pin the hashes of the adopted run instead of
+silently relabelling older run directories.

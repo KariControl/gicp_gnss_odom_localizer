@@ -229,12 +229,15 @@ else
   # Older installs placed the contents of param/ directly in the share root.
   GNSS_FUSION_PARAM="$GNSS_FUSION_SHARE/param.yaml"
 fi
-NMEA_GNSS_PARAM="$(ros2 pkg prefix pure_nmea_gnss_conversion)/share/pure_nmea_gnss_conversion/param/param.yaml"
+NMEA_GNSS_SHARE="$(ros2 pkg prefix pure_nmea_gnss_conversion)/share/pure_nmea_gnss_conversion"
+NMEA_GNSS_PARAM="$NMEA_GNSS_SHARE/param/param.yaml"
+NMEA_PROJECTOR_METADATA="$NMEA_GNSS_SHARE/config/map_projector_info.yaml"
 BRINGUP_SHARE="$(ros2 pkg prefix pure_odometry_bringup)/share/pure_odometry_bringup"
 EVALUATION_PROFILE_ROOT="$BRINGUP_SHARE/config/evaluation/lidar_imu_gnss/hesai_32line_rtk"
 DATASET_MANIFEST="$EVALUATION_PROFILE_ROOT/datasets/${dataset_id}.yaml"
 DIAGNOSTIC_AGGREGATOR_PARAM="$BRINGUP_SHARE/config/diagnostic_aggregator.yaml"
-ODOM_OVERRIDE_PARAM="$BRINGUP_SHARE/config/autoware_lsim/empty_params.yaml"
+EMPTY_PARAM="$BRINGUP_SHARE/config/autoware_lsim/empty_params.yaml"
+ODOM_OVERRIDE_PARAM="$EMPTY_PARAM"
 PRECISION_BRINGUP_SHARE=""
 PRECISION_MATCHER_PARAM=""
 PRECISION_MATCHER_OVERRIDE_PARAM=""
@@ -254,7 +257,10 @@ fi
 if [[ "$lsim_interface_test" == true ]]; then
   LSIM_ADAPTER_PARAM="$(ros2 pkg prefix pure_autoware_localization_adapter)/share/pure_autoware_localization_adapter/param/param.yaml"
 fi
-NMEA_GNSS_OVERRIDE_PARAM="$EVALUATION_PROFILE_ROOT/accepted/nmea_site_origin.yaml"
+# Keep the projection defined by pure_nmea_gnss_conversion/param/param.yaml.
+# The launch interface accepts a second parameter file, so pass a no-op file
+# instead of layering an evaluation-only site origin over the component default.
+NMEA_GNSS_OVERRIDE_PARAM="$EMPTY_PARAM"
 GNSS_FUSION_OVERRIDE_PARAM="$EVALUATION_PROFILE_ROOT/accepted/gnss_fusion_single_antenna.yaml"
 PRECISION_PROFILE_MANIFEST=""
 if [[ -n "$PRECISION_BRINGUP_SHARE" ]]; then
@@ -266,6 +272,7 @@ for parameter_file in \
   "$ODOM_OVERRIDE_PARAM" \
   "$GNSS_FUSION_PARAM" \
   "$NMEA_GNSS_PARAM" \
+  "$NMEA_PROJECTOR_METADATA" \
   "$NMEA_GNSS_OVERRIDE_PARAM" \
   "$GNSS_FUSION_OVERRIDE_PARAM" \
   "$DATASET_MANIFEST" \
@@ -483,7 +490,9 @@ copy_effective_config imu_base "$IMU_PARAM" imu_param.yaml
 copy_effective_config odometry_base "$ODOM_PARAM" odom_param.yaml
 copy_effective_config odometry_override "$ODOM_OVERRIDE_PARAM" odom_override_param.yaml
 copy_effective_config nmea_base "$NMEA_GNSS_PARAM" nmea_gnss_param.yaml
-copy_effective_config nmea_site_override "$NMEA_GNSS_OVERRIDE_PARAM" nmea_site_origin.yaml
+copy_effective_config nmea_projector_metadata "$NMEA_PROJECTOR_METADATA" \
+  map_projector_info.yaml
+copy_effective_config nmea_override "$NMEA_GNSS_OVERRIDE_PARAM" nmea_override_param.yaml
 copy_effective_config gnss_fusion_base "$GNSS_FUSION_PARAM" gnss_fusion_param.yaml
 copy_effective_config gnss_fusion_override "$GNSS_FUSION_OVERRIDE_PARAM" \
   gnss_fusion_single_antenna.yaml
@@ -513,6 +522,7 @@ IMU_PARAM_SHA256="$(sha256_of "$IMU_PARAM")"
 ODOM_PARAM_SHA256="$(sha256_of "$ODOM_PARAM")"
 ODOM_OVERRIDE_PARAM_SHA256="$(sha256_of "$ODOM_OVERRIDE_PARAM")"
 NMEA_GNSS_PARAM_SHA256="$(sha256_of "$NMEA_GNSS_PARAM")"
+NMEA_PROJECTOR_METADATA_SHA256="$(sha256_of "$NMEA_PROJECTOR_METADATA")"
 NMEA_GNSS_OVERRIDE_PARAM_SHA256="$(sha256_of "$NMEA_GNSS_OVERRIDE_PARAM")"
 GNSS_FUSION_PARAM_SHA256="$(sha256_of "$GNSS_FUSION_PARAM")"
 GNSS_FUSION_OVERRIDE_PARAM_SHA256="$(sha256_of "$GNSS_FUSION_OVERRIDE_PARAM")"
@@ -556,6 +566,8 @@ fi
   printf 'imu_param_sha256=%q\n' "$IMU_PARAM_SHA256"
   printf 'nmea_gnss_param=%q\n' "$NMEA_GNSS_PARAM"
   printf 'nmea_gnss_param_sha256=%q\n' "$NMEA_GNSS_PARAM_SHA256"
+  printf 'nmea_projector_metadata=%q\n' "$NMEA_PROJECTOR_METADATA"
+  printf 'nmea_projector_metadata_sha256=%q\n' "$NMEA_PROJECTOR_METADATA_SHA256"
   printf 'nmea_gnss_override_param=%q\n' "$NMEA_GNSS_OVERRIDE_PARAM"
   printf 'nmea_gnss_override_param_sha256=%q\n' "$NMEA_GNSS_OVERRIDE_PARAM_SHA256"
   printf 'gnss_fusion_param=%q\n' "$GNSS_FUSION_PARAM"

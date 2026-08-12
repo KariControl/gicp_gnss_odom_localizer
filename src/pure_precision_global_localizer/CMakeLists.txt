@@ -18,6 +18,7 @@ find_package(tf2 REQUIRED)
 
 add_library(${PROJECT_NAME}_core SHARED
   src/existing_fusion_anchor_tracker.cpp
+  src/outage_yaw_guard.cpp
   src/precision_anchor_estimator.cpp
   src/precision_local_compositor.cpp
 )
@@ -92,6 +93,14 @@ if(BUILD_TESTING)
     ${PROJECT_NAME}_core Eigen3::Eigen)
   add_test(NAME test_existing_fusion_anchor_tracker
     COMMAND test_existing_fusion_anchor_tracker)
+
+  add_executable(test_outage_yaw_guard
+    test/test_outage_yaw_guard.cpp)
+  target_compile_features(test_outage_yaw_guard PRIVATE cxx_std_17)
+  target_link_libraries(test_outage_yaw_guard
+    ${PROJECT_NAME}_core Eigen3::Eigen)
+  add_test(NAME test_outage_yaw_guard
+    COMMAND test_outage_yaw_guard)
 endif()
 
 ament_export_include_directories(include)

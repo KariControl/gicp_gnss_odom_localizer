@@ -83,142 +83,201 @@
       ]
     },
     {
-      "dataset": "hesai_32line_imu_rtk_gnss_course_1",
-      "files": [
-        {
-          "bytes": 79490,
-          "path": "hesai_32line_imu_rtk_gnss_course_1/global_trajectory.png",
-          "sha256": "910dc614ff6ea8737dee76c1d58616c6b5923c413ce21ba151ac6aaa69dfb82a"
-        },
-        {
-          "bytes": 132823,
-          "path": "hesai_32line_imu_rtk_gnss_course_1/global_xy_error.png",
-          "sha256": "0b2729e1304280643cfae94dfad856427baf28d425b3f9f6da678d5cb90d28ce"
-        },
-        {
-          "bytes": 148289,
-          "path": "hesai_32line_imu_rtk_gnss_course_1/global_yaw_error.png",
-          "sha256": "e09368b4eb1f14cd5c6ae766064dae436c181db141903c110fa7f72d2413660f"
-        },
-        {
-          "bytes": 89535,
-          "path": "hesai_32line_imu_rtk_gnss_course_1/local_trajectory.png",
-          "sha256": "df5f64b2ad643665001165f72d888718f1adf4e07c3e3172593c0a468ad145d8"
-        },
-        {
-          "bytes": 119728,
-          "path": "hesai_32line_imu_rtk_gnss_course_1/local_xy_error.png",
-          "sha256": "b08e85038e4f3c5bbf30f23096f4ba0f9fb191196a71b8b7f70ba775bd9fb938"
-        },
-        {
-          "bytes": 167338,
-          "path": "hesai_32line_imu_rtk_gnss_course_1/local_yaw_error.png",
-          "sha256": "6e293af0068c163f01858035dfe0f2859021f03e64a6c0a9179e8c9850cde98e"
-        },
-        {
-          "bytes": 14050,
-          "path": "hesai_32line_imu_rtk_gnss_course_1/metrics.json",
-          "sha256": "e22c034d2a41a1d15e2e9533e79039729ef98c05dd06a40b6872fb629affa779"
-        }
-      ],
-      "provenance": {
-        "legacy_dataset_id": "pc2",
-        "source_result_set": "precision_legacy_anchor_20260812_final"
-      },
-      "source_artifacts": [
-        {
-          "local_source_id": "pc2_glim_ab.json",
-          "sha256": "00bba5451048e42f7411bebd34d2d7b43155938aa8aca9f4ed7d8d2190a51afb"
-        },
-        {
-          "local_source_id": "pc2_local_glim.csv",
-          "sha256": "0b7767de8cf24dfe1746e5c9b80b367fd37267640c85da9b57574844e7d54756"
-        },
-        {
-          "local_source_id": "pc2_global_glim.csv",
-          "sha256": "a798b3047194dea69ae1525e3530d21357cac392b79014d4a2626dcf0ba87fb9"
-        }
-      ]
-    },
-    {
       "dataset": "hesai_32line_imu_rtk_gnss_course_2",
       "files": [
         {
-          "bytes": 87305,
+          "bytes": 83239,
           "path": "hesai_32line_imu_rtk_gnss_course_2/global_trajectory.png",
-          "sha256": "b350de71afd52057c9dbd4996f02c30706e6d52f3c872826006ec827d9ca17cf"
+          "sha256": "53adfea936b54902120bd5e5df438cd7aad3b5628110998f75acb431fb16555f"
         },
         {
-          "bytes": 126932,
+          "bytes": 113067,
           "path": "hesai_32line_imu_rtk_gnss_course_2/global_xy_error.png",
-          "sha256": "5d27ca51d7fedf1a58420d780895493270d351216e97a249b1895bfbbed12de8"
+          "sha256": "f106b21db7e797ade584e22db5b59af4c7ba13d3e9ef1fc50eb9c498271eb312"
         },
         {
-          "bytes": 164419,
+          "bytes": 157490,
           "path": "hesai_32line_imu_rtk_gnss_course_2/global_yaw_error.png",
-          "sha256": "2fc5776eda66b440e378fc80532d03022a6dfa068b5b888723789827494aa670"
+          "sha256": "18207f73a94501a8814321e55e2954c2417a09226f430cff9291d834629d8291"
         },
         {
-          "bytes": 87522,
+          "bytes": 82704,
           "path": "hesai_32line_imu_rtk_gnss_course_2/local_trajectory.png",
-          "sha256": "9d023e0ee434381ae2f2b03bb8bfab54af92b6f1c7bf8cae5143f9b55392880c"
+          "sha256": "6d95430771e4cbb74c7e21f61f1393ee4fc26e8392df10dca66da63f9b4c692b"
         },
         {
-          "bytes": 118451,
+          "bytes": 103818,
           "path": "hesai_32line_imu_rtk_gnss_course_2/local_xy_error.png",
-          "sha256": "bface78783ee7f8ea7b808152949580af8dc95641a95af7a2a3979bcc029d4ad"
+          "sha256": "517b241099606a454cfaf82aa6eacf482e622389a34bdc812671f5879320d2cc"
         },
         {
-          "bytes": 167862,
+          "bytes": 130713,
           "path": "hesai_32line_imu_rtk_gnss_course_2/local_yaw_error.png",
-          "sha256": "56ddd61960fdebd68f44b067dc51002288a7c17173b9e57e5798a08e4d5978d4"
+          "sha256": "8df9336de03d835908853a580d8a6dde02ca1ae7bf929100d1d56004235e4bf2"
         },
         {
-          "bytes": 14033,
+          "bytes": 26094,
           "path": "hesai_32line_imu_rtk_gnss_course_2/metrics.json",
-          "sha256": "16cf6f8aa15f3bf354922aaf3432599b5a5a5e38b4d577efceba984cec75b256"
+          "sha256": "3fbe546119b5f5b9e38fe1439679fd7b0362b26fc0f5d7b7f60d7a98567c9385"
         }
       ],
       "provenance": {
-        "legacy_dataset_id": "pc3",
-        "source_result_set": "precision_legacy_anchor_20260812_final"
+        "canonical_runs": {
+          "baseline": "course_2_baseline_final",
+          "control": "course_2_control_final",
+          "precision": "course_2_precision_q4_guard_variance_final"
+        },
+        "evaluation_method": "exact initial pose; same-run exact estimator stamps",
+        "publication_status": "ACCEPTED",
+        "runtime_validation": {
+          "failed_check_count": 0,
+          "intentional_warning": "raw odom intentional startup zero stamps",
+          "intentional_warning_count": 1,
+          "map_fusion_publication": {
+            "counter_samples": 460,
+            "covered_odometry_coalesced_count": 0,
+            "eligible_unique_raw_stamp_count": 7892,
+            "exact_causal_coverage_ratio": 1.0,
+            "matched_unique_raw_stamp_count": 7892,
+            "missing_unique_raw_stamp_count": 0,
+            "status": "PASS",
+            "strict_drop_count": 0,
+            "total_suppressed_request_count": 0,
+            "wall_timer_coalesced_count": 0
+          },
+          "matcher": {
+            "accepted": 650,
+            "attempted": 771,
+            "committed": 613,
+            "corrections": 613,
+            "end_to_end_latency_p99_ms": 128.409,
+            "malformed_count": 0,
+            "processed": 851,
+            "processing_p99_ms": 54.277,
+            "published": 613,
+            "queue_drop_count": 0,
+            "received": 851,
+            "rejected": 121,
+            "scans": 851,
+            "stale_count": 0
+          },
+          "outage_yaw_guard": {
+            "active_sample_count": 165,
+            "diagnostic_sample_count": 230,
+            "maximum_active_reference_variance_rad2": 0.00857474820591,
+            "outage_sample_count": 163,
+            "recovery_release_sample_count": 2,
+            "states": [
+              "DISARMED",
+              "OUTAGE_HOLD",
+              "OUTAGE_SLEW",
+              "READY",
+              "RECOVERY_RELEASE"
+            ],
+            "status": "PASS"
+          },
+          "pass_line_count": 27,
+          "playback_rate": {
+            "expected": 1.0,
+            "observed": 1.0
+          },
+          "startup": {
+            "first_global_delay_sec": 19.199990637000003,
+            "global_suppressed_not_ready_count": 953,
+            "intentional_raw_zero_stamp_count": 182,
+            "published_before_activation_count": 0
+          },
+          "status": "PASS",
+          "successful_check_count": 28
+        },
+        "source_result_set": "gnss_outage_yaw_guard_20260812_final"
       },
       "source_artifacts": [
         {
-          "local_source_id": "pc3_glim_ab.json",
-          "sha256": "adbd4a83872166f7d9c6c85cbda55fceec3eb7c4d03440154408494b53ffac4f"
+          "local_source_id": "accuracy_result",
+          "sha256": "ccbfff228630fb47fa3d3b19f5d57e42baca3e8f16500fefcfe1315dc7b16609"
         },
         {
-          "local_source_id": "pc3_local_glim.csv",
-          "sha256": "fb67bfc3b77daacbc7f11228984f25793ba1ffb2a9829b747e2c4377cc7190cd"
+          "local_source_id": "startup_acceptance",
+          "sha256": "bf8b5cc1615c740e5127f1af61ee6452dc72728ae1c4edf12a61a934c029022d"
         },
         {
-          "local_source_id": "pc3_global_glim.csv",
-          "sha256": "bdf042ecceb80461e306c75663e5ed719e5fd19841503ff989869cdeea07c4bd"
+          "local_source_id": "accepted_scan_nonintrusion",
+          "sha256": "ab45e548d400b4e346c47765a03b0222de4c746f6a80c3b71fcfe554f467afd8"
+        },
+        {
+          "local_source_id": "precision_runtime_validation",
+          "sha256": "d458b9dfff5939c022c75298c3005c3d81d6f176442f83b847bdc15309949c56"
+        },
+        {
+          "local_source_id": "baseline_run_provenance",
+          "sha256": "aa36e75e310d07c3adc6aea1945f8c3d2e465bad9413f1dd86f27a2a1435308c"
+        },
+        {
+          "local_source_id": "control_run_provenance",
+          "sha256": "3a4574acb73027c66f4cc1de634b5d6b5f07f079ac3d7dbe0136bb9b0a74c89e"
+        },
+        {
+          "local_source_id": "precision_run_provenance",
+          "sha256": "4e57ec21bf8d1bb11d8583ce75f87908f8a9bd7907ee259ae68d962a28d4f9b1"
+        },
+        {
+          "local_source_id": "aligned_local_samples",
+          "sha256": "3d8acd404975e03b6453c45bc4d91e046212b21953e2da8e96d772f83fcc42b2"
+        },
+        {
+          "local_source_id": "aligned_global_samples",
+          "sha256": "2795f904ff0882d192080749525e089f0c692f2a18848f06e58fea67022042cf"
         }
       ]
     },
     {
-      "dataset": "autoware_lsim_hesai_course_1",
+      "dataset": "autoware_lsim_hesai_course_2",
       "files": [
         {
-          "bytes": 960,
-          "path": "autoware_lsim_hesai_course_1/metrics.json",
-          "sha256": "dd3db75afedd460d0e7c44a26140b974572194698db95e67caa5d5ef96fc3d58"
-        },
-        {
-          "bytes": 212110,
-          "path": "autoware_lsim_hesai_course_1/rviz.png",
-          "sha256": "bda87685bb96c68558329791f0a5f5b1527ebb996df968b3c77a631477e73cf7"
+          "bytes": 3157,
+          "path": "autoware_lsim_hesai_course_2/metrics.json",
+          "sha256": "d6ab14030047877469262ef0ff59e5112297f73f0068cd78893099eb673248ca"
         }
       ],
       "provenance": {
-        "source_run_id": "rosbag2_docker_rviz_e2e_20260810_retry1"
+        "current_default_projection_headless": {
+          "current_default_projection_equivalent": true,
+          "evidence_scope": [
+            "interface",
+            "runtime"
+          ],
+          "source_run_id": "default_projection_course_2_20260812"
+        }
       },
       "source_artifacts": [
         {
-          "local_source_id": "rviz_window.png",
-          "sha256": "bda87685bb96c68558329791f0a5f5b1527ebb996df968b3c77a631477e73cf7"
+          "local_source_id": "current_course_2_validation_report",
+          "sha256": "cad4d75f6cdfae97d977c3f5c44f9bfadb99d1fa4e6963e392a886f2a183fa8e"
+        },
+        {
+          "local_source_id": "current_course_2_run_environment",
+          "sha256": "25d554075d6d900ccd1ba1e290f51aadb42c6254a86881a9ee28171f4d081a91"
+        },
+        {
+          "local_source_id": "current_course_2_effective_configurations",
+          "sha256": "5f0805483db85fe4d11369ce1ddc0d85b3e0c750ef65e7818b5c5b71dcff6be1"
+        },
+        {
+          "local_source_id": "current_course_2_nmea_parameters",
+          "sha256": "2d04cde50870b45df6f2e913d8d6c75e331caee24e6c52fe3193129fd0f5c754"
+        },
+        {
+          "local_source_id": "current_course_2_map_projector_metadata",
+          "sha256": "39ebda9a5d35914256077cd1dc00aaed253849392fdce3f910eee27b3fe275cc"
+        },
+        {
+          "local_source_id": "current_course_2_nmea_override",
+          "sha256": "1808b1d66570c24e5cf551c0f160f309f94c70ba258aab2d1a1746d2ed93e5ea"
+        },
+        {
+          "local_source_id": "current_course_2_output_metadata",
+          "sha256": "a38c148cf87b5e93b562dbb0085391bc9a44aa76ea89fabc9123e0519c946805"
         }
       ]
     }

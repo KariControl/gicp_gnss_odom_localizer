@@ -18,7 +18,27 @@ updates and recovery use latest-base-pivot bounded steps.
 
 During outage, reacquisition, recovery, stale diagnostics, stale existing-global
 output, or missing G/P synchronization, the published anchor is frozen. The
-precision-local output continues independently.
+precision-local output continues independently. Global XY therefore retains the
+same fail-closed frozen-anchor composition.
+
+Published global yaw has an additional outage guard. While existing fusion is
+strictly healthy, the node independently estimates a robust SE(2) yaw from the
+GNSS position sequence and precision-local position sequence. Only estimates
+that pass the baseline, inlier, RMS, uncertainty, and stable-candidate gates can
+refresh this trusted yaw reference. When existing fusion becomes unhealthy, the
+last trusted reference is held and introduced through bounded yaw-only steps;
+on recovery the offset is released through the same bounded policy. Unhealthy
+samples cannot refresh the trusted reference, and this guard cannot alter
+global XY or the existing-fusion anchor state.
+
+At outage entry, the guard snapshots the trusted yaw-reference variance. That
+snapshot remains unchanged throughout the outage and recovery release, even if
+healthy observations refresh the next trusted reference during release. During
+an outage, added yaw variance is the snapshot plus the squared unapplied
+target-offset residual. During release, it is the snapshot plus the squared
+applied offset. `READY` and `DISARMED` clear the active snapshot and add no
+guard variance. This prevents the bounded yaw correction from understating the
+published orientation covariance.
 
 ## Restart contract
 
@@ -33,6 +53,7 @@ it explicitly reports `uninitialized`/non-tracking before returning to
 tracking. If that transition is not observed, precision-global remains silent
 by design.
 
-The legacy position-only GNSS estimator is diagnostic-only and disabled by
-default (`fallback.gnss_position_enabled=false`); it is never mixed into the
-authoritative existing-fusion anchor.
+The legacy position-only global-output fallback remains disabled by default
+(`fallback.gnss_position_enabled=false`). Its gated position-alignment estimator
+is shared only as the outage guard's trusted yaw observer; it is never mixed
+into the authoritative existing-fusion anchor or global XY.

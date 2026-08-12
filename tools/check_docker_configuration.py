@@ -171,7 +171,10 @@ def check_container_runner() -> None:
         "ros2 topic echo --once /localization/gyro_lidar_odom",
         "ros2 topic pub --once /initialpose",
         "param_xt_lidar_imu_only.yaml",
-        "config/evaluation/lidar_imu_gnss/hesai_32line_rtk/accepted/nmea_site_origin.yaml",
+        'NMEA_GNSS_OVERRIDE_PARAM="$EMPTY_PARAM"',
+        "NMEA_PROJECTOR_METADATA",
+        "nmea_projector_metadata",
+        "map_projector_info.yaml",
         "config/evaluation/lidar_imu_gnss/hesai_32line_rtk/accepted/gnss_fusion_single_antenna.yaml",
         "--clock-frequency",
         "autoware_lsim_output_recorder",
@@ -217,7 +220,11 @@ def check_container_runner() -> None:
     ):
         if token not in text:
             fail(f"container precision-isolation contract missing: {token}")
-    for retired in ("param_scan_to_submap.yaml", "scan_to_submap_override.yaml"):
+    for retired in (
+        "param_scan_to_submap.yaml",
+        "scan_to_submap_override.yaml",
+        "nmea_site_origin.yaml",
+    ):
         if retired in text:
             fail(f"container runner still references retired internal submap path: {retired}")
 

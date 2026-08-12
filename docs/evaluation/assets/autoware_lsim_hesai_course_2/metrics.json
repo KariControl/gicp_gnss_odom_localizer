@@ -1,0 +1,85 @@
+{
+  "current_default_projection_headless": {
+    "accuracy_evaluated": false,
+    "accuracy_reason": "The LSim output contains no independent ground-truth trajectory.",
+    "current_default_projection_equivalent": true,
+    "evidence_scope": [
+      "interface",
+      "runtime"
+    ],
+    "runs": {
+      "course_2": {
+        "acceptance": {
+          "accuracy_evaluated": false,
+          "accuracy_reason": "No independent ground-truth trajectory is present.",
+          "adapter_final": {
+            "diagnostic_samples": 231,
+            "last_rejection_reason": "none",
+            "rejected_count": 0
+          },
+          "consecutive_xy_step_check_status": "WARN",
+          "deskew": {
+            "success_percent": 99.9532,
+            "successful": 4271,
+            "total": 4273
+          },
+          "effective_state_rate_hz": 99.113,
+          "evaluated_duration_sec": 197.28,
+          "failures": 0,
+          "gnss_fusion_final": {
+            "mode": "full_se2",
+            "position_fused": true,
+            "state": "tracking",
+            "yaw_fused": true
+          },
+          "gnss_outage_recovery_sequence": "uninitialized -> tracking -> reacquiring -> outage -> reacquiring -> recovering -> tracking -> reacquiring -> outage -> reacquiring -> recovering -> tracking",
+          "kinematic_state_samples": 19554,
+          "lidar_registration": {
+            "acceptance_percent": 99.5316,
+            "accepted": 4250,
+            "attempted": 4270
+          },
+          "lidar_tracking": {
+            "mode": "scan_to_scan",
+            "recorded_reset_evidence": false,
+            "samples": 11544
+          },
+          "maximum_consecutive_xy_step_m": 0.51501,
+          "messages_read": 238367,
+          "passed_checks": 35,
+          "status": "PASS with 1 warning",
+          "topic_count": 17,
+          "warning_details": [
+            "consecutive XY step: maximum consecutive XY step=0.515010 m at 1776828183.227277346 (practical limit 0.55 m)"
+          ],
+          "warnings": 1
+        },
+        "configuration": {
+          "current_default_projection_equivalent": true,
+          "playback_rate": 1.0,
+          "projection": {
+            "altitude_m": 0.0,
+            "evaluation_override_applied": false,
+            "latitude_deg": 35.681236,
+            "longitude_deg": 139.767125,
+            "metadata_source": "pure_nmea_gnss_conversion/config/map_projector_info.yaml",
+            "parameters_match_metadata": true,
+            "projector_type": "TransverseMercator",
+            "provenance_verified": true,
+            "runtime_parameter_source": "pure_nmea_gnss_conversion/param/param.yaml",
+            "scale_factor": 0.9996,
+            "vertical_datum": "WGS84"
+          },
+          "rviz_enabled": false
+        },
+        "dataset_label": "Hesai 32-Line + IMU + RTK GNSS \u2014 Course 2",
+        "source_hashes_pinned": true,
+        "source_run_id": "default_projection_course_2_20260812"
+      }
+    },
+    "rviz_evaluated": false,
+    "status": "PASS"
+  },
+  "dataset_label": "Autoware LSim \u2014 Hesai 32-Line + IMU + RTK GNSS \u2014 Course 2",
+  "schema_version": 2
+}
