@@ -75,6 +75,10 @@ identities, measurements, and artifacts are intentionally not published.
 
 *Scan-to-scan and scan-to-submap over the accepted 45.991 s continuous prefix.*
 
+**Assessment:** Scan-to-submap met the project's predefined accuracy criteria
+on the accepted 45.991 s prefix, with **0.2156 m XY RMSE** and **0.1227 deg yaw
+RMSE**.
+
 #### Livox MID-360 + Internal IMU
 
 [![Livox MID-360 and internal IMU tuned scan-to-scan and rolling scan-to-submap trajectories](docs/evaluation/assets/livox_mid360_internal_imu/trajectory.png)](docs/evaluation/assets/livox_mid360_internal_imu/trajectory.png)
@@ -82,9 +86,16 @@ identities, measurements, and artifacts are intentionally not published.
 *Tuned scan-to-scan and rolling scan-to-submap over the complete 294.099 s
 evaluation interval.*
 
+**Assessment:** Rolling scan-to-submap passed all predefined acceptance
+criteria over the complete evaluated interval, with **0.2941 m XY RMSE** and
+**0.6024 deg yaw RMSE**. This is sufficient for this recorded LiDAR/IMU-only
+evaluation.
+
 #### Hesai 32-Line + IMU + RTK GNSS
 
-[Open or download the Hesai Course 2 RViz replay (WebM)](docs/evaluation/assets/autoware_lsim_hesai_course_2/rviz_replay.webm)
+https://github.com/user-attachments/assets/6ce8b916-13e5-4779-87e9-c0f477a6e14b
+
+[Open the repository-local Hesai Course 2 RViz replay (WebM)](docs/evaluation/assets/autoware_lsim_hesai_course_2/rviz_replay.webm)
 
 The global plots compare the GNSS-anchored **scan-to-scan** and
 **scan-to-submap** outputs.
@@ -97,11 +108,23 @@ The global plots compare the GNSS-anchored **scan-to-scan** and
 marker shows GNSS returning; the green marker shows global localization
 resuming 5.2 seconds later.*
 
+**Assessment:** The scan-to-submap global output passed the Course 2 acceptance
+criteria, with **0.5060 m XY RMSE** and **1.4484 deg yaw RMSE**. During the
+evaluated GNSS outage it remained within the predefined limits, and global
+localization resumed 5.2 seconds after usable GNSS positioning returned.
+
 The local plots compare **scan-to-scan** with **scan-to-submap** odometry.
 
 | Hesai Course 2 local XY error | Hesai Course 2 local yaw error |
 |---|---|
 | [![Hesai 32-Line, IMU, and RTK GNSS Course 2 scan-to-scan and scan-to-submap local XY error](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/local_xy_error.png)](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/local_xy_error.png) | [![Hesai 32-Line, IMU, and RTK GNSS Course 2 scan-to-scan and scan-to-submap local yaw error](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/local_yaw_error.png)](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/local_yaw_error.png) |
+
+**Assessment:** The scan-to-submap local output met the Course 2 accuracy
+criteria, with **0.4785 m XY RMSE** and **0.7390 deg yaw RMSE**.
+
+These are dataset-scoped engineering acceptance results. They do not establish
+fitness for safety-critical use or accuracy across other datasets,
+environments, or sensor installations.
 
 See the [evaluation pages](docs/evaluation/README.md) for full-size plots, error
 distributions, methodology, provenance, and limitations.
