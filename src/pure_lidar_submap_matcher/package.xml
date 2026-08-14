@@ -3,7 +3,7 @@
   <name>pure_lidar_submap_matcher</name>
   <version>0.1.0</version>
   <description>Persistent robust fixed-lag full-SE2 LiDAR submap matcher.</description>
-  <maintainer email="motoya@example.com">motoya</maintainer>
+  <maintainer email="118587431+KariControl@users.noreply.github.com">KariControl</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>eigen3_cmake_module</buildtool_depend>

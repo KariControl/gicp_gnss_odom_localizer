@@ -519,6 +519,13 @@ def evaluate_records(
     matcher = latest_diagnostic(
         records.diagnostics[MATCHER_DIAGNOSTIC], "received_count", "correction_publish_count"
     )
+    matcher_attempted: int | None = None
+    matcher_accepted: int | None = None
+    matcher_rejected: int | None = None
+    matcher_accepted_ratio: float | None = None
+    matcher_processing_p99_ms: float | None = None
+    matcher_latency_p99_ms: float | None = None
+    matcher_queue_drop_count: int | None = None
     if matcher is None:
         add("matcher runtime and counter contracts pass", False, "missing diagnostic")
     else:
@@ -532,10 +539,18 @@ def evaluate_records(
         ratio = accepted / attempted if attempted > 0 else 0.0
         processing_p99 = number(matcher, "processing_p99_ms")
         latency_p99 = number(matcher, "latency_p99_ms")
+        queue_drop_count = int(number(matcher, "queue_drop_count", -1))
+        matcher_attempted = attempted
+        matcher_accepted = accepted
+        matcher_rejected = rejected
+        matcher_accepted_ratio = ratio
+        matcher_processing_p99_ms = processing_p99
+        matcher_latency_p99_ms = latency_p99
+        matcher_queue_drop_count = queue_drop_count
         add(
             "matcher runtime and counter contracts pass",
             received == processed == len(scans)
-            and int(number(matcher, "queue_drop_count", -1)) == 0
+            and queue_drop_count == 0
             and int(number(matcher, "malformed_count", -1)) == 0
             and int(number(matcher, "stale_or_duplicate_count", -1)) == 0
             and attempted == accepted + rejected
@@ -601,6 +616,7 @@ def evaluate_records(
         },
         "counts": {
             "raw_accepted": len(raw), "submap_scans": len(scans),
+            "submap_streams": len(scan_streams),
             "submap_corrections": len(corrections), "precision_local": len(local),
             "precision_local_eligible_raw": len(eligible_raw),
             "precision_local_matched": len(local_pairs),
@@ -616,6 +632,17 @@ def evaluate_records(
             ),
             "warmup_sec": warmup_sec,
             "post_warmup_correction_ratio": correction_ratio,
+            "matcher_attempted": matcher_attempted,
+            "matcher_accepted": matcher_accepted,
+            "matcher_rejected": matcher_rejected,
+            "matcher_accepted_ratio": matcher_accepted_ratio,
+            "matcher_processing_p99_ms": matcher_processing_p99_ms,
+            "matcher_latency_p99_ms": matcher_latency_p99_ms,
+            "matcher_queue_drop_count": matcher_queue_drop_count,
+            "snapshot_conversion_max_ms": (
+                number(odometer, "external_submap_snapshot_conversion_max_ms")
+                if odometer is not None else None
+            ),
         },
         "checks": [asdict(item) for item in checks],
         "failed_hard_checks": failed,
@@ -650,7 +677,7 @@ def synthetic_records() -> tuple[Records, dict[str, Any]]:
     raw = [Pose(index * 100_000_000, float(index), 0.0, 0.01 * index,
                 "odom", "base_link") for index in range(1, 301)]
     scans = [
-        ScanRecord((7, 1, index, raw[index - 1].stamp_ns), raw[index - 1],
+        ScanRecord((7, 1 if index < 151 else 2, index, raw[index - 1].stamp_ns), raw[index - 1],
                    raw[index - 1].stamp_ns)
         for index in range(1, 301, 5)
     ]
@@ -705,6 +732,15 @@ def self_test() -> None:
     records, runtime = synthetic_records()
     result = evaluate_records(records, runtime)
     assert result["passed"], result["failed_hard_checks"]
+    assert result["counts"]["submap_streams"] == 2
+    assert result["metrics"]["matcher_attempted"] == 57
+    assert result["metrics"]["matcher_accepted"] == 55
+    assert result["metrics"]["matcher_rejected"] == 2
+    assert math.isclose(result["metrics"]["matcher_accepted_ratio"], 55.0 / 57.0)
+    assert result["metrics"]["matcher_processing_p99_ms"] == 50.0
+    assert result["metrics"]["matcher_latency_p99_ms"] == 100.0
+    assert result["metrics"]["matcher_queue_drop_count"] == 0
+    assert result["metrics"]["snapshot_conversion_max_ms"] == 2.0
     shifted = Records(
         records.topic_types, records.topic_counts, records.raw,
         [Pose(item.stamp_ns + 2_000, item.x, item.y, item.yaw, item.frame, item.child)
@@ -720,6 +756,68 @@ def self_test() -> None:
         report = Path(directory) / "REPORT.md"
         write_markdown(report, result)
         assert "Result: **PASS**" in report.read_text(encoding="utf-8")
+        run_dir = Path(directory) / "run"
+        output_dir = run_dir / "submap_validation"
+        output_dir.mkdir(parents=True)
+        (output_dir / "validation.json").write_text("{}\n", encoding="utf-8")
+        (output_dir / "REPORT.md").write_text("generated\n", encoding="utf-8")
+        replace_canonical_output(run_dir, output_dir)
+        assert not output_dir.exists()
+        output_dir.mkdir()
+        (output_dir / "validation.json").write_text("{}\n", encoding="utf-8")
+        (output_dir / "REPORT.md").write_text("generated\n", encoding="utf-8")
+        (output_dir / "keep.txt").write_text("user data\n", encoding="utf-8")
+        try:
+            replace_canonical_output(run_dir, output_dir)
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError("mixed canonical/user contents were replaced")
+        assert (output_dir / "validation.json").is_file()
+        assert (output_dir / "REPORT.md").is_file()
+        assert (output_dir / "keep.txt").read_text(encoding="utf-8") == "user data\n"
+        other = Path(directory) / "other"
+        other.mkdir()
+        (other / "validation.json").write_text("{}\n", encoding="utf-8")
+        (other / "REPORT.md").write_text("generated\n", encoding="utf-8")
+        (other / "keep.txt").write_text("user data\n", encoding="utf-8")
+        try:
+            replace_canonical_output(run_dir, other)
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError("non-canonical output replacement was accepted")
+        assert (other / "validation.json").is_file()
+        assert (other / "REPORT.md").is_file()
+        assert (other / "keep.txt").read_text(encoding="utf-8") == "user data\n"
+
+
+def replace_canonical_output(run_dir: Path, output_dir: Path) -> None:
+    if not output_dir.exists():
+        return
+    try:
+        expected_output = run_dir.resolve() / "submap_validation"
+        requested_output = output_dir.resolve()
+    except OSError:
+        expected_output = Path()
+        requested_output = Path("different")
+    if requested_output != expected_output:
+        raise SystemExit(f"refusing to overwrite output directory: {output_dir}")
+    expected_files = {"validation.json", "REPORT.md"}
+    actual_files = {path.name for path in output_dir.iterdir()}
+    if actual_files != expected_files or any(
+        not path.is_file() for path in output_dir.iterdir()
+    ):
+        raise SystemExit(
+            "refusing to replace non-canonical contents in output directory: "
+            f"{output_dir}"
+        )
+    # The exact two-file directory is generated by this validator and is the
+    # runner's canonical destination. Validate the complete set before making
+    # any change so an unexpected user file can never cause a partial delete.
+    for name in sorted(expected_files):
+        (output_dir / name).unlink()
+    output_dir.rmdir()
 
 
 def parser() -> argparse.ArgumentParser:
@@ -746,6 +844,8 @@ def main() -> int:
         raise SystemExit("--output-dir is required")
     if args.stamp_tolerance_us < 0.0 or args.maximum_matcher_p99_ms <= 0.0:
         raise SystemExit("stamp tolerance must be non-negative and p99 limit positive")
+    if args.output_dir.exists() and args.run_dir is not None:
+        replace_canonical_output(args.run_dir, args.output_dir)
     bag = args.bag if args.bag is not None else args.run_dir
     runtime_path = args.runtime_json
     if runtime_path is None and args.run_dir is not None:

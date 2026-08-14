@@ -22,7 +22,13 @@ Yaw is observable from:
 - sufficient odometry/GNSS baseline;
 - or both, provided they agree.
 
+When only position observations are available during initialization, the node
+waits for enough corresponding GNSS and odometry motion to estimate
+map-to-odom yaw. Otherwise it requires enough independent, consistent heading
+samples before accepting an anchor.
+
 A window fails for non-finite data, timestamp gaps, insufficient samples, unobservable yaw, excessive heading dispersion, heading-source disagreement, excessive RMS, or excessive maximum residual. One isolated candidate may be removed only when the remaining window passes every gate.
+A single remaining fix is never sufficient for alignment.
 
 Full SE(2) recovery is always evaluated first. If it becomes observable while
 XY-only recovery is active, the node promotes the same candidate window to the

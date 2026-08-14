@@ -4,6 +4,20 @@
 
 `pure_nmea_gnss_conversion` accepts GGA sentences, validates checksum when enabled, maps GGA quality to `NavSatStatus`, and projects latitude/longitude with the configured Transverse Mercator origin. Altitude can use ellipsoid height derived from GGA altitude plus geoid separation.
 
+## Fusion observation model
+
+A GGA measurement is the map-frame position of the antenna, not the vehicle
+origin. The converter publishes the antenna position `p_map_antenna`, its
+horizontal covariance, an optional base yaw with yaw covariance, and the
+base-to-antenna lever arm `r_base_antenna` from calibrated TF or an explicitly
+enabled parameter source. The fusion model is
+
+`h(x, y, yaw) = [x, y] + R(yaw) r_base_antenna`.
+
+The yaw column of its Jacobian is the derivative of the rotated lever arm.
+Consequently, yaw uncertainty and position/yaw cross-covariance affect the
+position update.
+
 ## Covariance and confidence
 
 Horizontal sigma is selected from `fix_sigma_xy_table_m` by GGA quality, scaled by bounded HDOP, and inflated or invalidated according to differential-correction age. Confidence combines `fix_confidence_table`, HDOP score, and correction-age scale. Vertical sigma is `vertical_sigma_scale * sigma_xy`.

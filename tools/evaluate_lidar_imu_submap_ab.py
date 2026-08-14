@@ -25,9 +25,15 @@ import types
 from typing import Any
 
 import numpy as np
+import yaml
 
 
 RPE_DISTANCES = (10.0, 50.0, 100.0)
+PLOT_SERIES_LABELS = {
+    "control_raw": "control scan-to-scan",
+    "precision_raw": "precision-run raw",
+    "precision_local": "scan-to-submap local",
+}
 
 
 def load_module(name: str, path: Path) -> Any:
@@ -62,6 +68,81 @@ def read_env(path: Path) -> dict[str, str]:
         key, value = line.split("=", 1)
         result[key.strip()] = value.strip()
     return result
+
+
+def read_ros_parameter_artifact(path: Path, root: str) -> dict[str, Any]:
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        parameters = document[root]["ros__parameters"]
+    except (OSError, KeyError, TypeError, yaml.YAMLError) as error:
+        raise RuntimeError(f"invalid ROS parameter artifact {path}: {error}") from error
+    if not isinstance(parameters, dict):
+        raise RuntimeError(f"ROS parameter artifact is not a mapping: {path}")
+    return parameters
+
+
+def tuning_semantics_contract(control_run: Path, precision_run: Path) -> dict[str, Any]:
+    precision_env = read_env(precision_run / "run.env")
+    snapshot_interval_text = precision_env.get("snapshot_interval")
+    snapshot_interval_valid = snapshot_interval_text in {"2", "5"}
+    expected_snapshot_interval = (
+        int(snapshot_interval_text) if snapshot_interval_valid else None
+    )
+    control_odom = read_ros_parameter_artifact(
+        control_run / "artifacts/odom_tuning_override.yaml", "/**"
+    )
+    precision_odom = read_ros_parameter_artifact(
+        precision_run / "artifacts/odom_tuning_override.yaml", "/**"
+    )
+    matcher = read_ros_parameter_artifact(
+        precision_run / "artifacts/submap_matcher_override.yaml", "submap_matcher"
+    )
+    control_aux = read_ros_parameter_artifact(
+        control_run / "artifacts/odom_aux_override.yaml", "/**"
+    )
+    precision_aux = read_ros_parameter_artifact(
+        precision_run / "artifacts/odom_aux_override.yaml", "/**"
+    )
+    allowed_aux = {
+        "lidar_odom.tracking_mode",
+        "lidar_odom.external_submap_snapshot.enable",
+        "lidar_odom.external_submap_snapshot.topic",
+        "lidar_odom.external_submap_snapshot.publish_interval_frames",
+    }
+    expected_precision_aux = {
+        "lidar_odom.tracking_mode": "scan_to_scan",
+        "lidar_odom.external_submap_snapshot.enable": True,
+        "lidar_odom.external_submap_snapshot.topic": "/localization/submap_scan",
+        "lidar_odom.external_submap_snapshot.publish_interval_frames": (
+            expected_snapshot_interval
+        ),
+    }
+    snapshot_interval_matches_artifact = (
+        snapshot_interval_valid
+        and precision_aux.get(
+            "lidar_odom.external_submap_snapshot.publish_interval_frames"
+        ) == expected_snapshot_interval
+    )
+    aux_ok = (
+        snapshot_interval_valid
+        and snapshot_interval_matches_artifact
+        and not control_aux
+        and set(precision_aux) == allowed_aux
+        and precision_aux == expected_precision_aux
+    )
+    return {
+        "passed": control_odom == precision_odom and bool(matcher) and aux_ok,
+        "odometry_semantics_equal": control_odom == precision_odom,
+        "odometry_parameter_count": len(control_odom),
+        "matcher_override_nonempty": bool(matcher),
+        "matcher_parameter_count": len(matcher),
+        "odometry_aux_snapshot_only": aux_ok,
+        "snapshot_interval_source": "precision run.env",
+        "snapshot_interval_recorded": snapshot_interval_text,
+        "snapshot_interval_expected": expected_snapshot_interval,
+        "snapshot_interval_record_valid": snapshot_interval_valid,
+        "snapshot_interval_matches_artifact": snapshot_interval_matches_artifact,
+    }
 
 
 def resolve_bag(run: Path) -> Path:
@@ -227,6 +308,11 @@ def config_contract(control: dict[str, str], precision: dict[str, str], sensor: 
         "sensor", "bag", "glim_traj_sha256", "deskew",
         "use_deskew", "rate", "points_topic", "imu_topic",
         "imu_param_sha256", "odom_override_sha256", "base_odom_param_sha256",
+        "odom_tuning_override_sha256", "git_head_sha", "git_dirty_diff_sha256",
+        "git_status_sha256",
+        "input_bag_metadata_sha256", "input_bag_storage_files",
+        "input_bag_storage_sha256",
+        "imu_sensor", "imu_acceleration_scale", "deskew_success_minimum",
     )
     if sensor == "mid360":
         fields += ("gicp_epsilon", "mid_yaw_policy")
@@ -235,13 +321,35 @@ def config_contract(control: dict[str, str], precision: dict[str, str], sensor: 
         for field in fields if control.get(field) != precision.get(field)
     }
     sensor_ok = control.get("sensor") == precision.get("sensor") == sensor
+    mid_policy = (control.get("mid_yaw_policy"), control.get("gicp_epsilon"))
     mid_ok = sensor != "mid360" or (
-        control.get("mid_yaw_policy") == precision.get("mid_yaw_policy")
-        == "fixed-bias-direct" and control.get("gicp_epsilon")
-        == precision.get("gicp_epsilon") == "default"
+        mid_policy
+        == (precision.get("mid_yaw_policy"), precision.get("gicp_epsilon"))
+        and mid_policy
+        in {
+            ("fixed-bias-direct", "default"),
+            ("external-imu-adaptive", "default"),
+        }
     )
-    return {"passed": sensor_ok and mid_ok and not mismatches,
-            "mismatches": mismatches, "mid_fixed_bias_direct": mid_ok}
+    provenance_ok = all(
+        control.get(field) and precision.get(field)
+        for field in (
+            "odom_tuning_override_sha256", "git_head_sha", "git_dirty_diff_sha256",
+            "git_status_sha256",
+            "input_bag_metadata_sha256", "input_bag_storage_sha256",
+        )
+    )
+    precision_matcher_ok = all(
+        precision.get(field) and precision.get(field) != "n/a"
+        for field in ("matcher_param_sha256", "matcher_override_param_sha256")
+    )
+    return {"passed": sensor_ok and mid_ok and provenance_ok
+            and precision_matcher_ok and not mismatches,
+            "mismatches": mismatches, "mid_policy_accepted": mid_ok,
+            "provenance_present": provenance_ok,
+            "precision_matcher_provenance_present": precision_matcher_ok,
+            "mid_fixed_bias_direct": sensor != "mid360" or
+            mid_policy == ("fixed-bias-direct", "default")}
 
 
 def absolute_pass(metrics: dict[str, Any]) -> tuple[bool, list[str]]:
@@ -814,8 +922,7 @@ def write_plots(
 
     colors = {"control_raw": "#e68613", "precision_raw": "#888888",
               "precision_local": "#2764c4"}
-    labels = {"control_raw": "control scan-to-scan", "precision_raw": "precision-run raw",
-              "precision_local": "external scan-to-submap local"}
+    labels = PLOT_SERIES_LABELS
     reference = series["control_raw"]["reference"]
     fig, axis = plt.subplots(figsize=(8.5, 7.0))
     axis.plot(reference.xy[:, 0], reference.xy[:, 1], color="black", linewidth=2,
@@ -933,6 +1040,32 @@ def strip_internal(accuracy: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in accuracy.items() if key != "_series"}
 
 
+def replace_canonical_output(args: argparse.Namespace) -> None:
+    if not args.output_dir.exists():
+        return
+    try:
+        expected_parent = args.control_run.resolve().parent
+        requested = args.output_dir.resolve()
+    except OSError:
+        expected_parent = Path()
+        requested = Path("different")
+    canonical_names = {"ab_initial_pose"}
+    if requested.parent != expected_parent or requested.name not in canonical_names:
+        raise SystemExit(f"refusing to overwrite: {args.output_dir}")
+    expected_files = {
+        "trajectory_overlay.png", "position_error.png", "yaw_error.png",
+        "aligned_samples.csv", "evaluation.json", "REPORT.md",
+    }
+    actual = {path.name for path in args.output_dir.iterdir()}
+    if actual != expected_files or any(not path.is_file() for path in args.output_dir.iterdir()):
+        raise SystemExit(
+            f"refusing to replace non-canonical contents: {args.output_dir}"
+        )
+    for path in args.output_dir.iterdir():
+        path.unlink()
+    args.output_dir.rmdir()
+
+
 def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     repo = args.repo.resolve()
     canonical = load_module("lidar_imu_submap_canonical", repo / "tools/evaluate_glim_trajectory.py")
@@ -960,6 +1093,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     config = config_contract(
         read_env(control_run / "run.env"), read_env(precision_run / "run.env"), args.sensor
     )
+    tuning_semantics = tuning_semantics_contract(control_run, precision_run)
     checks = [
         {"name": "control runtime audit passes", "passed": control_runtime_pass,
          "detail": control_runtime_detail, "category": "hard"},
@@ -970,6 +1104,9 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         {"name": "control and precision sensor/configuration are identical",
          "passed": config["passed"], "detail": json.dumps(config, sort_keys=True),
          "category": "hard"},
+        {"name": "tuning parameter artifacts have identical odometry semantics",
+         "passed": tuning_semantics["passed"],
+         "detail": json.dumps(tuning_semantics, sort_keys=True), "category": "hard"},
     ]
     checks.extend(accuracy_checks(accuracy))
     passed = all(item["passed"] for item in checks if item["category"] == "hard")
@@ -980,6 +1117,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
             "glim": str((args.glim_dir / args.glim_trajectory).resolve()),
         },
         "configuration_contract": config,
+        "tuning_semantics_contract": tuning_semantics,
         "structural_validation": structural,
         "accuracy": accuracy,
         "checks": checks,
@@ -987,6 +1125,8 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def self_test(repo: Path) -> None:
+    assert PLOT_SERIES_LABELS["precision_local"] == "scan-to-submap local"
+    assert "external" not in PLOT_SERIES_LABELS["precision_local"]
     # Canonical trajectory math is deliberately reusable without a ROS graph.
     # Its bag-reader imports are stubbed only for this synthetic, read-free path
     # when the test is run from an unsourced shell.
@@ -1071,16 +1211,91 @@ def self_test(repo: Path) -> None:
         "points_topic": "/points", "imu_topic": "/imu",
         "imu_param_sha256": "b", "odom_override_sha256": "c",
         "base_odom_param_sha256": "d",
+        "odom_tuning_override_sha256": "e", "git_head_sha": "f",
+        "git_dirty_diff_sha256": "g", "input_bag_metadata_sha256": "h",
+        "git_status_sha256": "status",
+        "input_bag_storage_files": "bag.db3", "input_bag_storage_sha256": "i",
     }
-    vel_precision = dict(vel_control, mid_yaw_policy="n/a", gicp_epsilon="n/a")
+    vel_precision = dict(
+        vel_control, mid_yaw_policy="n/a", gicp_epsilon="n/a",
+        matcher_param_sha256="j", matcher_override_param_sha256="k",
+    )
     assert config_contract(vel_control, vel_precision, "velodyne")["passed"]
     mid_control = dict(vel_control, sensor="mid360", mid_yaw_policy="fixed-bias-direct",
                        gicp_epsilon="default")
-    mid_precision = dict(mid_control)
+    mid_precision = dict(
+        mid_control, matcher_param_sha256="j", matcher_override_param_sha256="k"
+    )
     assert config_contract(mid_control, mid_precision, "mid360")["passed"]
     mid_precision["mid_yaw_policy"] = "adaptive"
     assert not config_contract(mid_control, mid_precision, "mid360")["passed"]
+    external_control = dict(
+        mid_control,
+        mid_yaw_policy="external-imu-adaptive",
+        imu_sensor="external",
+        imu_acceleration_scale="1.0",
+        deskew_success_minimum="0.95",
+    )
+    external_precision = dict(
+        external_control, matcher_param_sha256="j", matcher_override_param_sha256="k"
+    )
+    assert config_contract(external_control, external_precision, "mid360")["passed"]
+    external_precision["imu_acceleration_scale"] = "9.80665"
+    assert not config_contract(external_control, external_precision, "mid360")["passed"]
     assert all(item["passed"] for item in checks if item["category"] == "hard"), checks
+    with tempfile.TemporaryDirectory() as directory:
+        parent = Path(directory)
+        control_artifact = parent / "control/artifacts"
+        precision_artifact = parent / "precision/artifacts"
+        control_artifact.mkdir(parents=True)
+        precision_artifact.mkdir(parents=True)
+        odom_text = "/**:\n  ros__parameters:\n    lidar_odom.max_range_m: 30.0\n"
+        (control_artifact / "odom_tuning_override.yaml").write_text(odom_text)
+        (precision_artifact / "odom_tuning_override.yaml").write_text(odom_text)
+        (precision_artifact / "submap_matcher_override.yaml").write_text(
+            "submap_matcher:\n  ros__parameters:\n    gate.max_fitness: 0.12\n"
+        )
+        (control_artifact / "odom_aux_override.yaml").write_text(
+            "/**:\n  ros__parameters: {}\n"
+        )
+        (precision_artifact.parent / "run.env").write_text(
+            "snapshot_interval=5\n", encoding="utf-8"
+        )
+        (precision_artifact / "odom_aux_override.yaml").write_text(
+            "/**:\n  ros__parameters:\n    lidar_odom.tracking_mode: scan_to_scan\n"
+            "    lidar_odom.external_submap_snapshot.enable: true\n"
+            "    lidar_odom.external_submap_snapshot.topic: /localization/submap_scan\n"
+            "    lidar_odom.external_submap_snapshot.publish_interval_frames: 5\n"
+        )
+        cadence_five = tuning_semantics_contract(
+            control_artifact.parent, precision_artifact.parent
+        )
+        assert cadence_five["passed"]
+        assert cadence_five["snapshot_interval_expected"] == 5
+        assert cadence_five["snapshot_interval_matches_artifact"]
+        (precision_artifact / "odom_aux_override.yaml").write_text(
+            "/**:\n  ros__parameters:\n    lidar_odom.tracking_mode: scan_to_scan\n"
+            "    lidar_odom.external_submap_snapshot.enable: true\n"
+            "    lidar_odom.external_submap_snapshot.topic: /localization/submap_scan\n"
+            "    lidar_odom.external_submap_snapshot.publish_interval_frames: 2\n"
+        )
+        cadence_mismatch = tuning_semantics_contract(
+            control_artifact.parent, precision_artifact.parent
+        )
+        assert not cadence_mismatch["passed"]
+        assert not cadence_mismatch["snapshot_interval_matches_artifact"]
+        (precision_artifact / "odom_aux_override.yaml").write_text(
+            "/**:\n  ros__parameters:\n    lidar_odom.tracking_mode: scan_to_scan\n"
+            "    lidar_odom.external_submap_snapshot.enable: true\n"
+            "    lidar_odom.external_submap_snapshot.topic: /localization/submap_scan\n"
+            "    lidar_odom.external_submap_snapshot.publish_interval_frames: 5\n"
+        )
+        (precision_artifact / "odom_tuning_override.yaml").write_text(
+            "/**:\n  ros__parameters:\n    lidar_odom.max_range_m: 20.0\n"
+        )
+        assert not tuning_semantics_contract(
+            control_artifact.parent, precision_artifact.parent
+        )["passed"]
 
     # A local-only initial offset must remain visible.  This proves that the
     # precision-local stream is not independently snapped to GLIM.
@@ -1106,6 +1321,30 @@ def self_test(repo: Path) -> None:
         assert "time_from_primary_anchor_sec" in (path / "aligned_samples.csv").read_text(
             encoding="utf-8"
         ).splitlines()[0]
+    with tempfile.TemporaryDirectory() as directory:
+        parent = Path(directory)
+        control = parent / "scan_to_scan"
+        control.mkdir()
+        output = parent / "ab_initial_pose"
+        output.mkdir()
+        for name in (
+            "trajectory_overlay.png", "position_error.png", "yaw_error.png",
+            "aligned_samples.csv", "evaluation.json", "REPORT.md",
+        ):
+            (output / name).write_bytes(b"generated")
+        replace_args = argparse.Namespace(control_run=control, output_dir=output)
+        replace_canonical_output(replace_args)
+        assert not output.exists()
+        unsafe = parent / "other"
+        unsafe.mkdir()
+        (unsafe / "user.txt").write_text("keep\n", encoding="utf-8")
+        replace_args.output_dir = unsafe
+        try:
+            replace_canonical_output(replace_args)
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError("non-canonical A/B output replacement was accepted")
 
 
 def parser() -> argparse.ArgumentParser:
@@ -1154,7 +1393,7 @@ def main() -> int:
         if getattr(args, name) is None:
             raise SystemExit(f"--{name.replace('_', '-')} is required")
     if args.output_dir.exists():
-        raise SystemExit(f"refusing to overwrite: {args.output_dir}")
+        replace_canonical_output(args)
     result = evaluate(args)
     args.output_dir.mkdir(parents=True)
     artifacts = write_plots(

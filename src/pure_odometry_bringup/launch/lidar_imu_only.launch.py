@@ -35,6 +35,7 @@ def generate_launch_description():
     odom_param = LaunchConfiguration("odom_param")
     odom_override_param = LaunchConfiguration("odom_override_param")
     odom_aux_override_param = LaunchConfiguration("odom_aux_override_param")
+    odom_tuning_override_param = LaunchConfiguration("odom_tuning_override_param")
     log_level = LaunchConfiguration("log_level")
 
     common_extra_arguments = [{"use_intra_process_comms": True}]
@@ -62,6 +63,7 @@ def generate_launch_description():
             odom_param,
             odom_override_param,
             odom_aux_override_param,
+            odom_tuning_override_param,
             {
                 "use_sim_time": use_sim_time,
                 "points_topic": deskewed_points_topic,
@@ -78,6 +80,7 @@ def generate_launch_description():
             odom_param,
             odom_override_param,
             odom_aux_override_param,
+            odom_tuning_override_param,
             {
                 "use_sim_time": use_sim_time,
                 "points_topic": points_input_topic,
@@ -125,6 +128,9 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "odom_aux_override_param", default_value=default_empty_param
+            ),
+            DeclareLaunchArgument(
+                "odom_tuning_override_param", default_value=default_empty_param
             ),
             DeclareLaunchArgument("log_level", default_value="info"),
             deskew_container,

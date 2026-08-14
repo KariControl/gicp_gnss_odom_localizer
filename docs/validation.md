@@ -1,30 +1,32 @@
 # Validation
 
-This page defines the maintained validation scope for the repository. It
-replaces the obsolete root-level RC6 migration report, which described an older
-package-renaming change rather than the current localization implementation.
+This page is the maintained checklist for validating source changes, ROS 2
+builds, the public synthetic rosbag, recording-level evaluation, and published
+documentation. Evaluation results and dataset-specific gate counts belong in
+the [evaluation pages](evaluation/README.md) and their machine-readable metrics;
+they are not duplicated here.
 
-Dated terminal logs and complete generated runs are not committed. Public
-evaluation evidence is curated under [evaluation/assets](evaluation/assets/README.md),
-while the [evaluation index](evaluation/README.md) records current acceptance
-and publication gates.
+Dated terminal logs, private recordings, and complete generated runs are not
+committed. Only curated plots, compact metrics, hashes, and reproducible public
+inputs are stored in the repository.
 
 ## Validation layers
 
-| Layer | Purpose | Required evidence |
+| Layer | Purpose | Maintained entry point |
 |---|---|---|
-| Repository checks | Detect stale package names, invalid references, and unsupported configuration combinations | `tools/check_repository.py` passes |
-| ROS-independent reference tests | Exercise numerical helpers and state-machine behavior without a ROS installation | `tools/run_reference_tests.sh` passes |
-| Numerical reference checks | Check deterministic mathematical and policy invariants | `tools/reference_checks.py` passes |
-| Launch construction | Verify launch files can be constructed with supported arguments | `tools/check_launch_construction.py` passes |
-| Docker configuration | Validate Compose files, wrapper contracts, and pinned Autoware integration | `tools/check_docker_configuration.py` passes |
-| ROS build and package tests | Compile the workspace and run package-level unit tests | `colcon build`, `colcon test`, and `colcon test-result` pass |
-| Recording-level evaluation | Check accuracy, timestamps, non-intrusion, queue behavior, GNSS outage/recovery, and runtime | Dataset-specific gates documented under `docs/evaluation/` pass |
-| Documentation publication | Ensure published pages are English, use stable assets, and do not depend on private inputs or generated output trees | Markdown/link and publication checks pass |
+| Repository checks | Detect stale package names, invalid references, and unsupported configuration combinations | `tools/check_repository.py` |
+| ROS-independent reference tests | Exercise numerical helpers and state-machine behavior without ROS | `tools/run_reference_tests.sh` |
+| Numerical reference checks | Check deterministic mathematical and policy invariants | `tools/reference_checks.py` |
+| Launch construction | Construct the supported launch files and arguments | `tools/check_launch_construction.py` |
+| Docker configuration | Validate Compose files, wrapper contracts, and pinned Autoware integration | `tools/check_docker_configuration.py` |
+| ROS build and package tests | Compile the workspace and run package-level tests | `colcon build`, `colcon test`, and `colcon test-result` |
+| Public synthetic rosbag | Validate the committed PointCloud2/IMU/TF input and exercise the local-odometry path | `tools/check_synthetic_output_pointcloud2.py` and `script/run_synthetic_lidar_imu_smoke.sh` |
+| Recording-level evaluation | Validate accuracy, timestamps, non-intrusion, GNSS behavior, and runtime on controlled recordings | [Evaluation methodology](evaluation/methodology.md) |
+| Documentation publication | Check links, stable assets, privacy, and publication boundaries | Repository and asset checks plus the checklist below |
 
 ## Fast source checks
 
-Run these from the repository root:
+Run these commands from the repository root:
 
 ```bash
 python3 tools/check_repository.py
@@ -38,7 +40,7 @@ git diff --check
 
 These checks do not replace a ROS build or recording replay.
 
-## ROS 2 build and unit tests
+## ROS 2 build and package tests
 
 ROS 2 Jazzy on Ubuntu 24.04 is the primary target.
 
@@ -51,63 +53,92 @@ colcon test --event-handlers console_direct+
 colcon test-result --verbose
 ```
 
-After changing installed YAML or launch files in a symlink build, remove only
-stale generated install links associated with the affected package or rebuild
-that package cleanly. Do not delete unrelated user artifacts.
+After changing installed YAML or launch files in a symlink build, rebuild the
+affected package. Do not remove unrelated build products or user artifacts.
 
-## Recording-level gates
+## Public synthetic rosbag
 
-Source rosbags are private and are not distributed on GitHub. A release claim
-must retain private provenance locally while publishing only compact metrics,
-plots, and hashes that do not expose host-specific paths.
+The committed [procedural fixture](../data/README.md) provides a reproducible
+PointCloud2/IMU/TF input for functional validation. It is artificial smoke-test
+data, not a real-world accuracy benchmark.
 
-At minimum, each supported dataset must verify:
+After sourcing ROS 2 Jazzy and the built workspace, validate the fixture's
+hashes, schema, timestamps, transforms, metadata, privacy constraints, and
+semantic stream:
 
-- the intended point-cloud, IMU, GNSS, and TF policy;
-- resolved parameter values and configuration hashes;
+```bash
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+python3 tools/check_synthetic_output_pointcloud2.py
+```
+
+Exercise launch, replay, output recording, and runtime validation with:
+
+```bash
+./script/run_synthetic_lidar_imu_smoke.sh
+```
+
+The fixture contract, maintained runtime gates, manual rosbag replay commands,
+and regeneration procedure are documented in [data/README.md](../data/README.md).
+
+## Recording-level requirements
+
+Private source rosbags are not distributed on GitHub. A release claim must keep
+its reproducible provenance locally while publishing only non-identifying,
+reviewable summaries.
+
+For each supported recording, verify at minimum:
+
+- the intended point-cloud, IMU, GNSS, and TF inputs and policies;
+- resolved parameter values, configuration hashes, and source revision;
 - monotonic physical timestamps and sufficient reference coverage;
-- finite poses and covariances with correct frames;
+- finite poses and covariances with the declared frames;
 - registration acceptance, rejection, reset, queue-drop, and deadline behavior;
-- baseline non-intrusion when the isolated precision overlay is enabled;
-- declared trajectory alignment and consistent A/B transforms;
-- GNSS initialization, outage, reacquisition, and bounded recovery when used;
-- 1.0x playback completion;
-- CPU/RSS only when sampled explicitly under the controlled method in
+- scan-to-scan non-intrusion when the isolated scan-to-submap path is enabled;
+- declared trajectory alignment and the same A/B transform where required;
+- GNSS initialization, unavailability, return, and bounded localization recovery
+  when GNSS is used;
+- complete 1.0x playback without silent input loss; and
+- CPU and RSS only when sampled under the controlled procedure in
   [evaluation/methodology.md](evaluation/methodology.md#runtime-latency-cpu-and-memory).
 
-Matcher processing time and end-to-end latency must never be presented as CPU
-utilization.
+Matcher processing time and end-to-end latency must not be presented as CPU
+utilization. Known failures and unmeasured quantities remain part of the
+published limitations rather than being omitted.
 
-## Current publication-specific gates
+## Published evaluation evidence
 
-- Default-projection Hesai publication runs must pass the dataset-specific
-  provenance validator, exact-initial-pose accuracy evaluation, startup gate,
-  full-rate runtime validator, and accepted-scan non-intrusion gate. The
-  published Course 2 result passed 53/53 accuracy hard gates, 20/20 startup
-  yaw-safety checks, 28/28 runtime checks, and 17/17 non-intrusion checks. Its
-  baseline/control/precision provenance suites passed 33/33, 34/34, and 40/40.
-  Accuracy and runtime validation require the guarded yaw covariance to retain
-  the active trusted-reference variance throughout an outage and bounded
-  release, with state-specific formula and clearing checks. Additional private
-  datasets may be used for internal validation without publishing their
-  identities or results.
-- The recording-specific MID-360 fixed gyro bias must be generalized and tested
-  on additional recordings before being treated as production calibration.
-- Velodyne full-recording generation recovery remains a failed robustness gate,
-  even though the valid-prefix scan-to-submap metrics improved.
-- Baseline/precision CPU and RSS measurements are still unavailable.
-- The Autoware Course 2 headless integration checks pass with the current
-  default projection. A public current-projection RViz run and video have not
-  yet been published.
+Dataset-specific conditions, results, gate status, and limitations are
+maintained at the following canonical locations:
 
-## Documentation checks
+| Evaluation target | Human-readable report | Machine-readable evidence |
+|---|---|---|
+| Velodyne 32-Line and Livox MID-360 LiDAR/IMU-only localization | [LiDAR/IMU-only evaluation](evaluation/lidar_imu.md) | [Velodyne metrics](evaluation/assets/velodyne_32line_external_imu/metrics.json), [MID-360 metrics](evaluation/assets/livox_mid360_internal_imu/metrics.json) |
+| Hesai 32-Line LiDAR/IMU/GNSS localization | [LiDAR/IMU/GNSS evaluation](evaluation/lidar_imu_gnss.md) | [Hesai metrics](evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/metrics.json) |
+| Autoware localization-interface integration | [Autoware Logging Simulation](evaluation/autoware_lsim.md) | [Autoware metrics](evaluation/assets/autoware_lsim_hesai_course_2/metrics.json) |
+
+The [evaluation index](evaluation/README.md) is the status overview. Asset
+provenance and hashes are defined by the [asset policy](evaluation/assets/README.md)
+and [`manifest.json`](evaluation/assets/manifest.json).
+
+## Documentation and publication checklist
 
 Before publishing a commit, verify that tracked project documentation:
 
 - contains no Japanese explanatory text;
-- uses descriptive sensor-and-course dataset labels rather than internal bag
-  directory names;
-- contains no absolute host paths;
-- does not link to raw test runs, Docker output directories, or private rosbags;
-- resolves every relative link and image against a clean checkout;
-- includes only curated assets and small machine-readable summaries.
+- uses `scan-to-scan` and `scan-to-submap` for user-facing mode names;
+- uses descriptive sensor-and-course labels rather than internal bag directory
+  names;
+- contains no absolute host paths, capture epochs, or private identifiers;
+- does not link to raw test runs, generated output directories, private
+  recordings, or local-only files;
+- resolves every relative link and image from a clean checkout;
+- includes only curated assets and compact machine-readable summaries;
+- distinguishes synthetic smoke testing from real-recording evaluation;
+- states alignment, reference, sampling, and known limitations for every
+  published metric; and
+- labels visualization-only media separately from evidence-producing runs.
+
+Run the fast source checks again after documentation or asset changes. Before a
+release, also review the staged file list from a clean checkout so that logs,
+raw recordings, and generated run directories are not accidentally published.

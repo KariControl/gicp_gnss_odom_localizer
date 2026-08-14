@@ -15,6 +15,29 @@
     "precision": "course_2_precision_q4_guard_variance_final"
   },
   "dataset_label": "Hesai 32-Line + IMU + RTK GNSS \u2014 Course 2",
+  "error_plot_annotations": {
+    "fusion_tracking_resume": {
+      "definition": "first global-localization diagnostic after usable GNSS returns with a finite position-fused tracking state",
+      "delay_from_rtk_q4_return_sec": 5.198460760000001,
+      "time_from_common_start_sec": 189.77501726150513
+    },
+    "rtk_q4_return": {
+      "definition": "next usable high-quality GNSS position sample",
+      "time_from_common_start_sec": 184.57655668258667
+    },
+    "rtk_q4_unavailable": {
+      "begin_time_from_common_start_sec": 67.32411003112793,
+      "definition": "interval from the two-second usable-GNSS timeout until the next usable high-quality GNSS position sample",
+      "duration_sec": 117.252446449,
+      "end_time_from_common_start_sec": 184.57655668258667
+    },
+    "time_axis": {
+      "absolute_timestamps_published": false,
+      "csv_plot_time_column": "time_from_common_start_sec",
+      "maximum_mapping_residual_sec": 3.271816382266479e-07,
+      "origin": "first common global evaluation sample"
+    }
+  },
   "global": {
     "comparison": {
       "fixed_shared_xy_rmse_improvement_percent": 70.42065313390209,
@@ -468,10 +491,9 @@
     "vertical_datum": "WGS84"
   },
   "outage": {
-    "definition": "longest post-initialization non-TRACKING interval reported by gnss_map_odom_fusion in the canonical precision run; distinct from the raw RTK-Q4-loss interval",
+    "absolute_timestamps_published": false,
+    "definition": "longest post-initialization non-TRACKING interval reported by gnss_map_odom_fusion in the canonical scan-to-submap run; distinct from the raw loss of usable GNSS input",
     "duration_sec": 122.49998718500001,
-    "end_sec": 1776828183.4773004,
-    "start_sec": 1776828060.977313,
     "streams": {
       "precision_existing": {
         "samples": 4901,
@@ -724,14 +746,13 @@
     "source_hashes_pinned": true,
     "startup_acceptance": "PASS",
     "startup_window_provenance": {
+      "absolute_timestamps_published": false,
       "association": "GLIM reference timestamps inside the inclusive explicit window; speed legacy-global yaw linearly interpolated to those GLIM timestamps",
       "common_sample_count": 400,
       "duration_sec": 20.0,
-      "end_sec": 1776828015.827213,
       "frozen_circular_yaw_offset_deg": -3.874032561702586,
       "frozen_circular_yaw_offset_rad": -0.0676146235311805,
       "maximum_interpolation_gap_sec": 0.1,
-      "start_sec": 1776827995.827213,
       "status": "PASS",
       "timestamp_source": "physical ROS header stamps",
       "window_bounds": "inclusive"
@@ -757,14 +778,13 @@
     },
     "startup": {
       "calibration_window_provenance": {
+        "absolute_timestamps_published": false,
         "association": "GLIM reference timestamps inside the inclusive explicit window; speed legacy-global yaw linearly interpolated to those GLIM timestamps",
         "common_sample_count": 400,
         "duration_sec": 20.0,
-        "end_sec": 1776828015.827213,
         "frozen_circular_yaw_offset_deg": -3.874032561702586,
         "frozen_circular_yaw_offset_rad": -0.0676146235311805,
         "maximum_interpolation_gap_sec": 0.1,
-        "start_sec": 1776827995.827213,
         "status": "PASS",
         "timestamp_source": "physical ROS header stamps",
         "window_bounds": "inclusive"

@@ -21,6 +21,17 @@
 - Added an Autoware localization-interface output bag analyzer and a native
   `--lsim-interface-test` path for environments where the official Autoware
   Docker image cannot be started.
+- Added an opt-in Docker RViz profile that renders the body-only Autoware sample
+  Lexus model from the pinned image without launching a sample sensor kit or
+  adding transforms to the localization TF tree.
+- Added a live RViz presentation view with a bounded line trajectory and a
+  dedicated custom Displays entry for pose/yaw/speed, interface and
+  `map -> base_link` state, output rate, registration state, and color-coded
+  GNSS recovery state. The 3D scene retains only spatial evidence, including a
+  2-sigma XY-only covariance ellipse sourced from kinematic-state.
+- Added a configurable visual-only Lexus Z offset. The Hesai ROSBAG2/3 default
+  of `-1.66 m` is a rounded ground-plane rendering fit and does not change TF,
+  point-cloud data, localization output, or sensor calibration.
 - Added an opt-in guarded XY-only GNSS recovery mode for a stopped
   single-antenna vehicle that regains RTK position while yaw remains
   unobservable.
@@ -47,10 +58,23 @@
 
 ### Changed
 
-- The LiDAR/IMU evaluation runner now selects the canonical interval-2 external
-  snapshot profile by default in precision mode. For its canonical MID360 bag
-  it selects the fixed-bias direct diagnostic profile; an overridden MID360 bag
-  requires an explicit yaw policy because that bias is bag-specific.
+- Restored the original MID-360 internal-IMU recording as the published
+  LiDAR/IMU-only result and selected tuned scan-to-scan and rolling
+  scan-to-submap profiles. Over 294.099 s, rolling scan-to-submap reduced
+  exact-initial-pose XY/yaw RMSE from 0.630345 m / 2.906399 deg to 0.294074 m /
+  0.602392 deg; all 20 formal A/B hard gates passed.
+- Added a serial, storage-bounded MID-360 tuning workflow covering 48 candidates
+  in nine stages across LiDAR filtering, scan registration, smoothing,
+  stop/ZUPT behavior, snapshot cadence, rolling-submap geometry, and correction
+  gates. Selection used no holdout metrics, the holdout was opened only after
+  all stages were locked, and no post-holdout retuning occurred. Because every
+  stop-detector candidate missed its classifier gates, the safe existing stop
+  thresholds were retained and ZUPT remained disabled.
+- Added accepted MID-360 odometer and submap-matcher overrides using the
+  internal IMU, recording-specific fixed gyro bias, identity sensor transform,
+  and one submap snapshot per five accepted scans. CPU utilization and RSS
+  remain unmeasured, and GLIM remains a correlated pseudo-reference rather than
+  independent ground truth.
 - Refactored `pure_nmea_gnss_conversion` by removing write-only state,
   uncalled private APIs, unused output parameters, an identity projection
   multiply, an unreachable IMU-integration branch, and duplicate buffer
@@ -70,8 +94,13 @@
   the selected sensor profile when switching tracking mode, and restores
   output ownership to the host user.
 - RViz lSIM uses a localization-specific display profile for the deskewed
-  point cloud, Autoware state trail, TF tree, and vehicle axes; an enabled
-  RViz node must remain alive through replay completion.
+  point cloud, generated trajectory, custom localization-status Display,
+  covariance ellipse, live `map -> base_link` state, and vehicle axes; the RViz and presentation
+  nodes must remain alive through replay completion. RViz's direct diagnostics
+  subscription is a runtime gate. Live-only visualization topics are excluded
+  from the output bag to prevent a growing `Path` from inflating the recording;
+  one transient-local trajectory and covariance-marker snapshot are retained as
+  run evidence.
 - The Autoware adapter treats equal simulation timestamps as expected
   duplicate timer outputs while continuing to reject true timestamp reversal.
 - Trajectory-derived NMEA headings now exclude high-position-uncertainty fixes

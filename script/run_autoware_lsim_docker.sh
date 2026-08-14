@@ -43,6 +43,13 @@ Docker/output options:
   --output <directory>          Host result root (default: ./docker_output)
   --run-name <name>             Result subdirectory name
   --rviz                        Enable RViz with CPU software rendering
+  --rviz-sample-vehicle         Show the illustrative Autoware Lexus body plus
+                                live trajectory, Displays-panel status, and
+                                XY covariance
+                                in RViz (requires --rviz)
+  --rviz-sample-vehicle-z-offset <m>
+                                Visual-only base_link-to-body Z offset
+                                (default: -1.66; range: -3.0 to 1.0 m)
   --no-record                   Do not record localization output topics
   --autoware-image <image>      Base devel image
                                 default: universe-devel-jazzy-1.9.0
@@ -102,6 +109,9 @@ initial_yaw="0.0"
 output_directory="$ROOT/docker_output"
 run_name=""
 rviz="false"
+rviz_sample_vehicle="false"
+rviz_sample_vehicle_z_offset="-1.66"
+rviz_sample_vehicle_z_offset_was_set="false"
 record_output="true"
 autoware_image="ghcr.io/autowarefoundation/autoware:universe-devel-jazzy-1.9.0"
 localizer_image="gicp-gnss-odom-localizer:autoware-1.9.0"
@@ -138,6 +148,12 @@ while (($# > 0)); do
     --output) [[ $# -ge 2 ]] || fail "--output requires a value"; output_directory="$2"; shift 2 ;;
     --run-name) [[ $# -ge 2 ]] || fail "--run-name requires a value"; run_name="$2"; shift 2 ;;
     --rviz) rviz="true"; shift ;;
+    --rviz-sample-vehicle) rviz_sample_vehicle="true"; shift ;;
+    --rviz-sample-vehicle-z-offset)
+      [[ $# -ge 2 ]] || fail "--rviz-sample-vehicle-z-offset requires a value"
+      rviz_sample_vehicle_z_offset="$2"
+      rviz_sample_vehicle_z_offset_was_set="true"
+      shift 2 ;;
     --no-record) record_output="false"; shift ;;
     --autoware-image) [[ $# -ge 2 ]] || fail "--autoware-image requires a value"; autoware_image="$2"; shift 2 ;;
     --image) [[ $# -ge 2 ]] || fail "--image requires a value"; localizer_image="$2"; shift 2 ;;
@@ -201,6 +217,21 @@ fi
 if [[ "$rviz" == true && -z "${DISPLAY:-}" ]]; then
   fail "--rviz requires DISPLAY"
 fi
+if [[ "$rviz_sample_vehicle" == true && "$rviz" != true ]]; then
+  fail "--rviz-sample-vehicle requires --rviz"
+fi
+if [[ "$rviz_sample_vehicle" == true && "$launch_vehicle" == true ]]; then
+  fail "--rviz-sample-vehicle is body-only and cannot be combined with --launch-vehicle"
+fi
+if [[ "$rviz_sample_vehicle_z_offset_was_set" == true && \
+  "$rviz_sample_vehicle" != true ]]; then
+  fail "--rviz-sample-vehicle-z-offset requires --rviz-sample-vehicle"
+fi
+if ! [[ "$rviz_sample_vehicle_z_offset" =~ ^-?([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] || \
+  ! awk -v value="$rviz_sample_vehicle_z_offset" \
+    'BEGIN { exit !(value >= -3.0 && value <= 1.0) }'; then
+  fail "--rviz-sample-vehicle-z-offset must be between -3.0 and 1.0 metres"
+fi
 
 HOST_BAG_PATH="$(normalize_path "$bag")"
 mkdir -p "$output_directory"
@@ -231,6 +262,8 @@ export LAUNCH_SENSING="false"
 export VEHICLE_MODEL="$vehicle_model"
 export SENSOR_MODEL="$sensor_model"
 export RVIZ="$rviz"
+export RVIZ_SAMPLE_VEHICLE="$rviz_sample_vehicle"
+export RVIZ_SAMPLE_VEHICLE_Z_OFFSET="$rviz_sample_vehicle_z_offset"
 export RECORD_OUTPUT="$record_output"
 export AUTO_INITIAL_POSE="$auto_initial_pose"
 export INITIAL_X="$initial_x" INITIAL_Y="$initial_y" INITIAL_Z="0.0" INITIAL_YAW="$initial_yaw"
@@ -259,6 +292,8 @@ printf 'IMU input:           %s\n' "$IMU_SOURCE_TOPIC"
 printf 'NMEA input:          %s\n' "${NMEA_SOURCE_TOPIC:-disabled}"
 printf 'TF policy:           %s\n' "$TF_POLICY"
 printf 'RViz:                %s\n' "$RVIZ"
+printf 'RViz sample vehicle: %s\n' "$RVIZ_SAMPLE_VEHICLE"
+printf 'RViz body Z offset:   %s m\n' "$RVIZ_SAMPLE_VEHICLE_Z_OFFSET"
 
 if [[ "$dry_run" == true ]]; then
   if [[ "$pull_base" == true ]]; then

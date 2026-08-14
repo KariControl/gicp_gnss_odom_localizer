@@ -34,6 +34,18 @@ require_positive_number() {
   fi
 }
 
+require_bounded_number() {
+  local name="$1"
+  local value="$2"
+  local minimum="$3"
+  local maximum="$4"
+  if ! [[ "$value" =~ ^-?([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] || \
+    ! awk -v value="$value" -v minimum="$minimum" -v maximum="$maximum" \
+      'BEGIN { exit !(value >= minimum && value <= maximum) }'; then
+    fail "$name must be between $minimum and $maximum: $value"
+  fi
+}
+
 # ROS-generated setup files are not nounset-safe.  Keep strict mode for the
 # runner itself, but suspend it only while the three overlays are sourced.
 set +u
@@ -61,6 +73,8 @@ USE_IMU_DESKEW="$(normalize_bool "${USE_IMU_DESKEW:-true}")"
 LAUNCH_VEHICLE="$(normalize_bool "${LAUNCH_VEHICLE:-false}")"
 LAUNCH_SENSING="$(normalize_bool "${LAUNCH_SENSING:-false}")"
 RVIZ="$(normalize_bool "${RVIZ:-false}")"
+RVIZ_SAMPLE_VEHICLE="$(normalize_bool "${RVIZ_SAMPLE_VEHICLE:-false}")"
+RVIZ_SAMPLE_VEHICLE_Z_OFFSET="${RVIZ_SAMPLE_VEHICLE_Z_OFFSET:--1.66}"
 RECORD_OUTPUT="$(normalize_bool "${RECORD_OUTPUT:-true}")"
 AUTO_INITIAL_POSE="$(normalize_bool "${AUTO_INITIAL_POSE:-true}")"
 KEEP_RECORDED_LOCALIZATION="$(normalize_bool "${KEEP_RECORDED_LOCALIZATION:-false}")"
@@ -84,6 +98,8 @@ require_positive_number "CLOCK_FREQUENCY" "$CLOCK_FREQUENCY"
 require_positive_number "STARTUP_WAIT_SEC" "$STARTUP_WAIT_SEC"
 require_positive_number "INITIALPOSE_WAIT_SEC" "$INITIALPOSE_WAIT_SEC"
 require_positive_number "DRAIN_WAIT_SEC" "$DRAIN_WAIT_SEC"
+require_bounded_number \
+  "RVIZ_SAMPLE_VEHICLE_Z_OFFSET" "$RVIZ_SAMPLE_VEHICLE_Z_OFFSET" -3.0 1.0
 
 FIRST_STATE_WAIT_SEC="$(awk -v base="$STARTUP_WAIT_SEC" -v rate="$PLAYBACK_RATE" \
   'BEGIN { scaled = base / rate; if (scaled < base) scaled = base; printf "%.3f", scaled }')"
@@ -98,6 +114,11 @@ esac
 BRINGUP_SHARE="${GICP_GNSS_ODOM_INSTALL}/share/pure_odometry_bringup"
 PRECISION_BRINGUP_SHARE="${GICP_GNSS_ODOM_INSTALL}/share/pure_precision_bringup"
 RVIZ_CONFIG="$BRINGUP_SHARE/config/autoware_lsim/hesai_rosbag23.rviz"
+SAMPLE_VEHICLE_RVIZ_CONFIG="$BRINGUP_SHARE/config/autoware_lsim/hesai_rosbag23_sample_vehicle.rviz"
+SAMPLE_VEHICLE_BODY_XACRO="$BRINGUP_SHARE/urdf/autoware_sample_vehicle_body.urdf.xacro"
+LOCALIZATION_STATUS_PLUGIN_XML="$BRINGUP_SHARE/localization_status_plugin.xml"
+LOCALIZATION_STATUS_PLUGIN_LIBRARY="${GICP_GNSS_ODOM_INSTALL}/lib/libpure_odometry_localization_status_rviz_plugin.so"
+SAMPLE_VEHICLE_DESCRIPTION_SHARE=""
 EMPTY_PARAM="$BRINGUP_SHARE/config/autoware_lsim/empty_params.yaml"
 SUBMAP_SNAPSHOT_OVERRIDE_PARAM="$PRECISION_BRINGUP_SHARE/config/submap_snapshot_override.yaml"
 PRECISION_MATCHER_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_lidar_submap_matcher/param/param.yaml"
@@ -164,6 +185,37 @@ if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
   done
 fi
 [[ -f "$RVIZ_CONFIG" ]] || fail "RViz config does not exist: $RVIZ_CONFIG"
+
+if [[ "$RVIZ_SAMPLE_VEHICLE" == true ]]; then
+  [[ "$RVIZ" == true ]] || fail "RVIZ_SAMPLE_VEHICLE=true requires RVIZ=true"
+  [[ "$LAUNCH_VEHICLE" != true ]] ||
+    fail "RVIZ_SAMPLE_VEHICLE=true cannot be combined with LAUNCH_VEHICLE=true"
+  command -v xacro >/dev/null 2>&1 ||
+    fail "xacro is required for the Autoware sample vehicle visualization"
+  ros2 pkg prefix robot_state_publisher >/dev/null 2>&1 ||
+    fail "robot_state_publisher is required for the Autoware sample vehicle visualization"
+  if ! SAMPLE_VEHICLE_DESCRIPTION_SHARE="$(
+    ros2 pkg prefix --share sample_vehicle_description 2>/dev/null
+  )"; then
+    fail "sample_vehicle_description is unavailable in the selected Autoware image"
+  fi
+  RVIZ_CONFIG="$SAMPLE_VEHICLE_RVIZ_CONFIG"
+  [[ -f "$RVIZ_CONFIG" ]] || fail "sample-vehicle RViz config does not exist: $RVIZ_CONFIG"
+  [[ -f "$SAMPLE_VEHICLE_BODY_XACRO" ]] ||
+    fail "sample-vehicle body wrapper does not exist: $SAMPLE_VEHICLE_BODY_XACRO"
+  [[ -f "$LOCALIZATION_STATUS_PLUGIN_XML" ]] ||
+    fail "localization-status RViz plugin description does not exist: $LOCALIZATION_STATUS_PLUGIN_XML"
+  [[ -f "$LOCALIZATION_STATUS_PLUGIN_LIBRARY" ]] ||
+    fail "localization-status RViz plugin library does not exist: $LOCALIZATION_STATUS_PLUGIN_LIBRARY"
+  for sample_vehicle_file in \
+    "$SAMPLE_VEHICLE_DESCRIPTION_SHARE/config/vehicle_info.param.yaml" \
+    "$SAMPLE_VEHICLE_DESCRIPTION_SHARE/mesh/lexus.dae" \
+    "$SAMPLE_VEHICLE_DESCRIPTION_SHARE/package.xml"
+  do
+    [[ -f "$sample_vehicle_file" ]] ||
+      fail "sample_vehicle_description asset does not exist: $sample_vehicle_file"
+  done
+fi
 
 if [[ "$USE_GNSS" == true && -z "$NMEA_SOURCE_TOPIC" ]]; then
   warn "USE_GNSS=true but NMEA_SOURCE_TOPIC is empty; GNSS initialization will not occur."
@@ -267,7 +319,11 @@ write_manifest() {
     printf 'VEHICLE_MODEL=%q\n' "$VEHICLE_MODEL"
     printf 'SENSOR_MODEL=%q\n' "$SENSOR_MODEL"
     printf 'RVIZ=%q\n' "$RVIZ"
+    printf 'RVIZ_SAMPLE_VEHICLE=%q\n' "$RVIZ_SAMPLE_VEHICLE"
+    printf 'RVIZ_SAMPLE_VEHICLE_Z_OFFSET=%q\n' "$RVIZ_SAMPLE_VEHICLE_Z_OFFSET"
     printf 'RVIZ_CONFIG=%q\n' "$RVIZ_CONFIG"
+    printf 'SAMPLE_VEHICLE_BODY_XACRO=%q\n' "$SAMPLE_VEHICLE_BODY_XACRO"
+    printf 'SAMPLE_VEHICLE_DESCRIPTION_SHARE=%q\n' "$SAMPLE_VEHICLE_DESCRIPTION_SHARE"
     printf 'RECORD_OUTPUT=%q\n' "$RECORD_OUTPUT"
     printf 'AUTO_INITIAL_POSE=%q\n' "$AUTO_INITIAL_POSE"
     printf 'INITIAL_X=%q\n' "$INITIAL_X"
@@ -283,6 +339,22 @@ write_manifest() {
     printf 'autoware_launch_prefix=%s\n' "$(ros2 pkg prefix autoware_launch)"
     printf 'autoware_launch_version=%s\n' "$(ros2 pkg xml --tag version autoware_launch)"
     printf 'ros_distro=%s\n' "${ROS_DISTRO:-jazzy}"
+    if [[ "$RVIZ_SAMPLE_VEHICLE" == true ]]; then
+      printf 'sample_vehicle_description_version=%s\n' \
+        "$(ros2 pkg xml --tag version sample_vehicle_description)"
+      printf 'sample_vehicle_visual_z_offset_m=%s\n' \
+        "$RVIZ_SAMPLE_VEHICLE_Z_OFFSET"
+      printf 'sample_vehicle_body_wrapper_sha256=%s\n' \
+        "$(sha256sum "$SAMPLE_VEHICLE_BODY_XACRO" | awk '{print $1}')"
+      printf 'localization_status_plugin_description_sha256=%s\n' \
+        "$(sha256sum "$LOCALIZATION_STATUS_PLUGIN_XML" | awk '{print $1}')"
+      printf 'localization_status_plugin_library_sha256=%s\n' \
+        "$(sha256sum "$LOCALIZATION_STATUS_PLUGIN_LIBRARY" | awk '{print $1}')"
+      printf 'sample_vehicle_parameters_sha256=%s\n' \
+        "$(sha256sum "$SAMPLE_VEHICLE_DESCRIPTION_SHARE/config/vehicle_info.param.yaml" | awk '{print $1}')"
+      printf 'sample_vehicle_mesh_sha256=%s\n' \
+        "$(sha256sum "$SAMPLE_VEHICLE_DESCRIPTION_SHARE/mesh/lexus.dae" | awk '{print $1}')"
+    fi
   } > "$run_directory/docker_runtime.txt"
   ros2 bag info "$BAG_PATH" > "$run_directory/input_bag_info.txt" 2>&1 || true
 }
@@ -311,7 +383,24 @@ gnss_fusion_base	$GNSS_FUSION_PARAM	gnss_fusion_param.yaml
 gnss_fusion_override	$GNSS_FUSION_OVERRIDE_PARAM	gnss_fusion_override_param.yaml
 diagnostic_aggregator	$DIAGNOSTIC_AGGREGATOR_PARAM	diagnostic_aggregator.yaml
 autoware_adapter_base	$AUTOWARE_ADAPTER_PARAM	autoware_adapter_param.yaml
+rviz_config	$RVIZ_CONFIG	rviz_config.rviz
 EOF
+
+  if [[ "$RVIZ_SAMPLE_VEHICLE" == true ]]; then
+    for role_path_name in \
+      "sample_vehicle_wrapper|$SAMPLE_VEHICLE_BODY_XACRO|sample_vehicle_body.urdf.xacro" \
+      "localization_status_plugin|$LOCALIZATION_STATUS_PLUGIN_XML|localization_status_plugin.xml" \
+      "sample_vehicle_parameters|$SAMPLE_VEHICLE_DESCRIPTION_SHARE/config/vehicle_info.param.yaml|upstream_vehicle_info.param.yaml" \
+      "sample_vehicle_package|$SAMPLE_VEHICLE_DESCRIPTION_SHARE/package.xml|upstream_sample_vehicle_package.xml"
+    do
+      IFS='|' read -r role source_path artifact_name <<< "$role_path_name"
+      digest="$(sha256sum "$source_path" | awk '{print $1}')"
+      install -m 0644 "$source_path" "$artifact_directory/$artifact_name"
+      printf '%s\t%s\t%s\t%s\n' \
+        "$role" "$source_path" "$digest" "$artifact_name" \
+        >> "$artifact_directory/effective_configurations.tsv"
+    done
+  fi
 
   if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
     for role_path_name in \
@@ -396,6 +485,12 @@ check_required_nodes() {
   if [[ "$RVIZ" == true ]]; then
     required+=(/rviz2)
   fi
+  if [[ "$RVIZ_SAMPLE_VEHICLE" == true ]]; then
+    required+=(
+      /sample_vehicle_body_state_publisher
+      /localization_visualization_node
+    )
+  fi
 
   local node
   local missing=()
@@ -419,6 +514,26 @@ check_required_nodes() {
       do
         if ! grep -Fxq "$required_topic" <<< "$topic_snapshot"; then
           missing+=("$required_topic")
+        fi
+      done
+    fi
+  fi
+  if [[ "$RVIZ_SAMPLE_VEHICLE" == true ]]; then
+    local visualization_topic_snapshot
+    if ! visualization_topic_snapshot="$(
+      ros2 topic list --no-daemon --spin-time 2 2>/dev/null
+    )"; then
+      missing+=("sample-vehicle ROS topic graph query failed")
+    else
+      local required_visualization_topic
+      for required_visualization_topic in \
+        /localization/visualization/robot_description \
+        /localization/visualization/trajectory \
+        /localization/visualization/status_markers
+      do
+        if ! grep -Fxq "$required_visualization_topic" \
+          <<< "$visualization_topic_snapshot"; then
+          missing+=("$required_visualization_topic")
         fi
       done
     fi
@@ -474,6 +589,10 @@ launch_command=(
   launch_vehicle:="$LAUNCH_VEHICLE"
   launch_sensing:="$LAUNCH_SENSING"
   launch_rviz:="$RVIZ"
+  launch_sample_vehicle_visualization:="$RVIZ_SAMPLE_VEHICLE"
+  launch_localization_visualization:="$RVIZ_SAMPLE_VEHICLE"
+  sample_vehicle_visual_z_offset:="$RVIZ_SAMPLE_VEHICLE_Z_OFFSET"
+  localization_visualization_covariance_z_offset_m:="$RVIZ_SAMPLE_VEHICLE_Z_OFFSET"
   rviz_config:="$RVIZ_CONFIG"
   sensor_profile:="$SENSOR_PROFILE"
   use_gnss:="$USE_GNSS"
@@ -682,6 +801,85 @@ if [[ "$RVIZ" == true && "$required_nodes_were_alive" == true ]]; then
   if ! ros2 node info /rviz2 > "$run_directory/rviz_node_info.txt" 2>&1; then
     required_nodes_were_alive="false"
     missing_required_nodes="/rviz2 node info failed"
+  fi
+fi
+if [[ "$RVIZ_SAMPLE_VEHICLE" == true && "$required_nodes_were_alive" == true ]]; then
+  if ! ros2 node info /sample_vehicle_body_state_publisher \
+    > "$run_directory/sample_vehicle_body_node_info.txt" 2>&1; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="/sample_vehicle_body_state_publisher node info failed"
+  elif ! ros2 topic info --verbose /localization/visualization/robot_description \
+    > "$run_directory/sample_vehicle_description_topic_info.txt" 2>&1; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="sample vehicle description topic info failed"
+  elif ! grep -Fq "/localization/visualization/robot_description" \
+    "$run_directory/rviz_node_info.txt"; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="/rviz2 does not subscribe to the sample vehicle description"
+  elif ! ros2 topic info --verbose /diagnostics \
+    > "$run_directory/rviz_diagnostics_topic_info.txt" 2>&1; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="diagnostics topic info failed"
+  elif ! grep -Fxq "Type: diagnostic_msgs/msg/DiagnosticArray" \
+    "$run_directory/rviz_diagnostics_topic_info.txt"; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="diagnostics topic has the wrong message type"
+  elif ! grep -Fq "/diagnostics" "$run_directory/rviz_node_info.txt"; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="/rviz2 localization-status Display does not subscribe to diagnostics"
+  elif ! ros2 node info /localization_visualization_node \
+    > "$run_directory/localization_visualization_node_info.txt" 2>&1; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="/localization_visualization_node node info failed"
+  elif ! ros2 topic info --verbose /localization/visualization/trajectory \
+    > "$run_directory/localization_trajectory_topic_info.txt" 2>&1; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="localization trajectory topic info failed"
+  elif ! grep -Fxq "Type: nav_msgs/msg/Path" \
+    "$run_directory/localization_trajectory_topic_info.txt"; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="localization trajectory has the wrong message type"
+  elif ! ros2 topic info --verbose /localization/visualization/status_markers \
+    > "$run_directory/localization_covariance_markers_topic_info.txt" 2>&1; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="localization covariance markers topic info failed"
+  elif ! grep -Fxq "Type: visualization_msgs/msg/MarkerArray" \
+    "$run_directory/localization_covariance_markers_topic_info.txt"; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="localization covariance markers have the wrong message type"
+  elif ! grep -Fq "/localization/visualization/trajectory" \
+    "$run_directory/rviz_node_info.txt"; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="/rviz2 does not subscribe to the localization trajectory"
+  elif ! grep -Fq "/localization/visualization/status_markers" \
+    "$run_directory/rviz_node_info.txt"; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="/rviz2 does not subscribe to the localization covariance markers"
+  elif ! ros2 topic echo /localization/visualization/trajectory \
+    --qos-profile default --qos-durability transient_local \
+    --qos-reliability reliable --once --timeout 10 \
+    > "$run_directory/localization_trajectory_snapshot.yaml" 2>&1; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="localization trajectory snapshot was unavailable"
+  elif ! grep -Fq "poses:" \
+    "$run_directory/localization_trajectory_snapshot.yaml" || \
+    grep -Fq "poses: []" "$run_directory/localization_trajectory_snapshot.yaml"; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="localization trajectory snapshot was empty"
+  elif ! ros2 topic echo /localization/visualization/status_markers \
+    --qos-profile default --qos-durability transient_local \
+    --qos-reliability reliable --once --timeout 10 \
+    > "$run_directory/localization_covariance_markers_snapshot.yaml" 2>&1; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="localization covariance marker snapshot was unavailable"
+  elif ! grep -Fq "xy_position_covariance_2sigma" \
+    "$run_directory/localization_covariance_markers_snapshot.yaml" || \
+    grep -Fq "localization_status_hud" \
+    "$run_directory/localization_covariance_markers_snapshot.yaml" || \
+    grep -Fq "Autoware Localization Interface:" \
+    "$run_directory/localization_covariance_markers_snapshot.yaml"; then
+    required_nodes_were_alive="false"
+    missing_required_nodes="localization covariance marker snapshot was incomplete or contained HUD text"
   fi
 fi
 stop_process "$record_pid" INT

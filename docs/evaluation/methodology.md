@@ -19,9 +19,9 @@ exact-initial-pose rule.
 ## Alignment A: exact initial pose
 
 The published results use exact-initial-pose alignment. The first physical
-timestamp shared by the baseline and comparison streams is the anchor. A
-single transform maps the baseline pose at that timestamp exactly onto the
-reference pose.
+timestamp shared by the scan-to-scan and scan-to-submap streams is the anchor.
+A single transform maps the scan-to-scan pose at that timestamp exactly onto
+the reference pose.
 
 For initial control position `p0`, initial control yaw `yaw0`, reference
 position `p_ref0`, and reference yaw `yaw_ref0`:
@@ -33,13 +33,13 @@ p'    = R(theta) * p + t
 yaw'  = yaw + theta
 ```
 
-The same transform is fixed for both A/B streams. The precision output is not
-fitted independently, so subsequent drift and correction differences remain in
-the score. For GNSS evaluation, local and global pairs use separate anchors
-because they are different coordinate streams, but each pair shares exactly
-one transform. Earlier exploratory full-trajectory, first-20-metre, and frozen
-calibration-window fits are not used for published RMSE values or acceptance
-decisions.
+The same transform is fixed for both A/B streams. The scan-to-submap output is
+not fitted independently, so subsequent drift and correction differences
+remain in the score. For GNSS evaluation, local and global pairs use separate
+anchors because they are different coordinate streams, but each pair shares
+exactly one transform. Earlier exploratory full-trajectory, first-20-metre,
+and frozen calibration-window fits are not used for published RMSE values or
+acceptance decisions.
 
 ## Metrics
 
@@ -76,7 +76,7 @@ A publishable CPU/RSS A/B measurement must fix the following conditions:
 - the same recording at 1.0x, repeated at least three times with identical
   recording and monitoring overhead;
 - separate accounting for the base component container, submap matcher,
-  precision-global process, bag player, and recorder;
+  scan-to-submap global process, bag player, and recorder;
 - per-process CPU mean/p95/max, RSS peak, host CPU, deadline misses, and queue
   drops;
 - explicit container-level attribution when composable nodes are not split into

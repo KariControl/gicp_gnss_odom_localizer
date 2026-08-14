@@ -11,7 +11,7 @@ lidar_odom.tracking_mode: scan_to_scan
 The parameter is retained for configuration compatibility and diagnostics, but
 any other value is rejected at startup. The former in-node scan-to-submap path,
 its rolling local map, and the optional periodic local-map factor have been
-retired. High-precision localization is provided by a separate process branch;
+retired. Scan-to-submap localization is provided by a separate process branch;
 it does not change the production odometer's registration source.
 
 Every accepted scan is downsampled and registered against the previous accepted
@@ -98,7 +98,7 @@ wheel_speed.observability_assist.power: 2.0
 The public profiles keep this assist disabled. There is no threshold that turns
 it on automatically.
 
-## Isolated precision snapshot bridge
+## Isolated scan-to-submap snapshot bridge
 
 The optional `lidar_odom.external_submap_snapshot.*` publisher is deliberately
 not a registration path. When enabled by
@@ -148,13 +148,13 @@ The former binary `/localization/lidar_degenerate` and
 available in `/diagnostics`; an optional verbose string stream can be enabled at
 `/localization/lidar_observability_debug`.
 
-The external matcher and precision-global localizer publish their own
+The external matcher and scan-to-submap global localizer publish their own
 diagnostics. Use those statuses for submap acceptance/rebuild and global-anchor
 health instead of expecting internal-submap counters from the odometer.
 
 ## Scope
 
-The baseline remains local scan-to-scan dead reckoning. The isolated rolling
+The primary mode remains local scan-to-scan dead reckoning. The isolated rolling
 submap reduces short-horizon accumulation but supplies no global absolute
 observation. Without GNSS, another external anchor, or loop closure,
 long-duration global drift remains possible in both local outputs.

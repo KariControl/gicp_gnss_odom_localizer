@@ -3,7 +3,7 @@
   <name>pure_gnss_msgs</name>
   <version>0.3.0</version>
   <description>Message definitions for explicit GNSS observation semantics in the GICP-GNSS odometry localization stack.</description>
-  <maintainer email="maintainers@users.noreply.github.com">gicp_gnss_odom_localizer maintainers</maintainer>
+  <maintainer email="118587431+KariControl@users.noreply.github.com">KariControl</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>rosidl_default_generators</buildtool_depend>

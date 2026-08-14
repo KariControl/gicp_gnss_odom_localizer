@@ -16,8 +16,15 @@ from launch.launch_description_sources import (
     AnyLaunchDescriptionSource,
     PythonLaunchDescriptionSource,
 )
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
+from launch.substitutions import (
+    Command,
+    FindExecutable,
+    LaunchConfiguration,
+    PathJoinSubstitution,
+    PythonExpression,
+)
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -55,6 +62,18 @@ def generate_launch_description():
     launch_vehicle = LaunchConfiguration("launch_vehicle")
     launch_sensing = LaunchConfiguration("launch_sensing")
     launch_rviz = LaunchConfiguration("launch_rviz")
+    launch_sample_vehicle_visualization = LaunchConfiguration(
+        "launch_sample_vehicle_visualization"
+    )
+    launch_localization_visualization = LaunchConfiguration(
+        "launch_localization_visualization"
+    )
+    sample_vehicle_visual_z_offset = LaunchConfiguration(
+        "sample_vehicle_visual_z_offset"
+    )
+    localization_visualization_covariance_z_offset_m = LaunchConfiguration(
+        "localization_visualization_covariance_z_offset_m"
+    )
     rviz_config = LaunchConfiguration("rviz_config")
     pointcloud_container_name = LaunchConfiguration("pointcloud_container_name")
     sensor_profile = LaunchConfiguration("sensor_profile")
@@ -171,6 +190,76 @@ def generate_launch_description():
         arguments=["-d", rviz_config],
     )
 
+    sample_vehicle_body_xacro = PathJoinSubstitution(
+        [
+            FindPackageShare("pure_odometry_bringup"),
+            "urdf",
+            "autoware_sample_vehicle_body.urdf.xacro",
+        ]
+    )
+    sample_vehicle_description = ParameterValue(
+        Command(
+            [
+                FindExecutable(name="xacro"),
+                " ",
+                sample_vehicle_body_xacro,
+                " visual_z_offset:=",
+                sample_vehicle_visual_z_offset,
+            ]
+        ),
+        value_type=str,
+    )
+    sample_vehicle_visualization_condition = IfCondition(
+        PythonExpression(
+            [
+                "'",
+                launch_sample_vehicle_visualization,
+                "' == 'true' and '",
+                launch_vehicle,
+                "' != 'true'",
+            ]
+        )
+    )
+    sample_vehicle_visualization = Node(
+        condition=sample_vehicle_visualization_condition,
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        name="sample_vehicle_body_state_publisher",
+        output="screen",
+        parameters=[
+            {
+                "use_sim_time": True,
+                "robot_description": sample_vehicle_description,
+            }
+        ],
+        remappings=[
+            (
+                "robot_description",
+                "/localization/visualization/robot_description",
+            ),
+            ("/tf", "/localization/visualization/tf"),
+            ("/tf_static", "/localization/visualization/tf_static"),
+        ],
+    )
+
+    localization_visualization = Node(
+        condition=IfCondition(launch_localization_visualization),
+        package="pure_odometry_bringup",
+        executable="localization_visualization_node",
+        name="localization_visualization_node",
+        output="screen",
+        parameters=[
+            {
+                "use_sim_time": True,
+                "covariance_z_offset_m": ParameterValue(
+                    localization_visualization_covariance_z_offset_m,
+                    value_type=float,
+                ),
+            }
+        ],
+        arguments=["--ros-args", "--log-level", log_level],
+    )
+
     hesai_profile_condition = IfCondition(
         PythonExpression(["'", sensor_profile, "' == 'hesai_rosbag23'"])
     )
@@ -233,6 +322,40 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument("launch_rviz", default_value="true"),
+            DeclareLaunchArgument(
+                "launch_sample_vehicle_visualization",
+                default_value="false",
+                description=(
+                    "Publish the Autoware sample Lexus body for RViz only. "
+                    "The body is illustrative, not recorded vehicle geometry "
+                    "or sensor calibration, and requires launch_vehicle=false."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "sample_vehicle_visual_z_offset",
+                default_value="-1.66",
+                description=(
+                    "Visualization-only vertical mesh offset from the estimated "
+                    "base_link (the Hesai profile places base_link at the roof LiDAR)."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "launch_localization_visualization",
+                default_value="false",
+                description=(
+                    "Publish a downsampled trajectory and XY-only covariance "
+                    "ellipse; status is shown in the RViz Displays panel."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "localization_visualization_covariance_z_offset_m",
+                default_value="0.0",
+                description=(
+                    "Vertical offset for the XY covariance ellipse only. "
+                    "Use sample_vehicle_visual_z_offset when aligning it to the "
+                    "illustrative sample vehicle ground plane."
+                ),
+            ),
             DeclareLaunchArgument("rviz_config", default_value=default_rviz_config),
             DeclareLaunchArgument(
                 "pointcloud_container_name", default_value="pointcloud_container"
@@ -288,6 +411,8 @@ def generate_launch_description():
             DeclareLaunchArgument("log_level", default_value="info"),
             autoware,
             rviz,
+            sample_vehicle_visualization,
+            localization_visualization,
             *hesai_static_transforms,
             localizer,
             adapter,

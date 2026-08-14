@@ -13,14 +13,18 @@ Options:
   --deskew <mode>           Velodyne: off | 41ms | 61ms (default: 41ms)
                             MID360: off | on (default: on)
   --gicp-epsilon <mode>     MID360: strict | default
-                            (adaptive default: strict; fixed requires default)
+                            (all accepted MID360 policies use default)
   --mid-yaw-policy <mode>   MID360: fixed-bias-direct | adaptive
-                            (default bag: fixed-bias-direct; adaptive is experimental)
+                            (default bag: fixed-bias-direct, internal /livox/imu)
   --localization-mode <m>   baseline | precision (default: baseline)
                             precision adds the isolated external submap branch
-  --snapshot-interval <n>   Precision snapshot interval: 2 | 5 (default: 2)
+  --snapshot-interval <n>   Precision snapshot interval: 2 | 5
+                            (default: 5 for canonical MID360; otherwise 2)
+  --odom-tuning-override <yaml>
+                            Optional final odometry parameter override
   --matcher-override <yaml> Optional precision matcher parameter override
   --bag <directory>         Override the sensor's default input bag
+  --glim-dir <directory>    Override the GLIM reference directory
   --rate <factor>           rosbag playback rate (default: 1.0)
   --playback-duration <s>   Limit playback for a smoke test
   --no-evaluate             Skip GLIM evaluation after recording
@@ -40,8 +44,10 @@ gicp_epsilon=""
 mid_yaw_policy=""
 localization_mode="baseline"
 snapshot_interval=""
+odom_tuning_override=""
 matcher_override=""
 bag_override=""
+glim_override=""
 rate="1.0"
 playback_duration=""
 evaluate=true
@@ -70,12 +76,18 @@ while (($# > 0)); do
     --snapshot-interval)
       [[ $# -ge 2 ]] || { echo "--snapshot-interval requires a value" >&2; exit 2; }
       snapshot_interval="$2"; shift 2 ;;
+    --odom-tuning-override)
+      [[ $# -ge 2 ]] || { echo "--odom-tuning-override requires a value" >&2; exit 2; }
+      odom_tuning_override="$2"; shift 2 ;;
     --matcher-override)
       [[ $# -ge 2 ]] || { echo "--matcher-override requires a value" >&2; exit 2; }
       matcher_override="$2"; shift 2 ;;
     --bag)
       [[ $# -ge 2 ]] || { echo "--bag requires a value" >&2; exit 2; }
       bag_override="$2"; shift 2 ;;
+    --glim-dir)
+      [[ $# -ge 2 ]] || { echo "--glim-dir requires a value" >&2; exit 2; }
+      glim_override="$2"; shift 2 ;;
     --rate)
       [[ $# -ge 2 ]] || { echo "--rate requires a value" >&2; exit 2; }
       rate="$2"; shift 2 ;;
@@ -105,7 +117,15 @@ if [[ "$localization_mode" == "baseline" && -n "$snapshot_interval" ]]; then
   exit 2
 fi
 if [[ "$localization_mode" == "precision" ]]; then
-  [[ -n "$snapshot_interval" ]] || snapshot_interval=2
+  if [[ -z "$snapshot_interval" ]]; then
+    if [[ "$sensor" == mid360 && -z "$bag_override" &&
+      ( -z "$mid_yaw_policy" || "$mid_yaw_policy" == fixed-bias-direct ) ]]
+    then
+      snapshot_interval=5
+    else
+      snapshot_interval=2
+    fi
+  fi
   [[ "$snapshot_interval" == 2 || "$snapshot_interval" == 5 ]] || {
     echo "--snapshot-interval must be 2 or 5" >&2; exit 2;
   }
@@ -128,7 +148,7 @@ fi
 
 odometry_evaluation_root="$ROOT/src/pure_odometry_bringup/config/evaluation/lidar_imu"
 velodyne_profile_root="$odometry_evaluation_root/velodyne/rosbag2_2025_02_20-16_06_35_vel"
-mid360_profile_root="$odometry_evaluation_root/mid360/rosbag2_2026_04_08-22_52_42"
+mid360_internal_profile_root="$odometry_evaluation_root/mid360/rosbag2_2026_04_08-22_52_42"
 empty_odom_override="$ROOT/src/pure_odometry_bringup/config/autoware_lsim/empty_params.yaml"
 precision_config_root="$ROOT/src/pure_precision_bringup/config"
 precision_evaluation_root="$precision_config_root/evaluation/lidar_imu"
@@ -163,6 +183,9 @@ case "$sensor" in
     glim_dir="/home/motoya/loc_ws/glim_map/vel_dense_20260812_135437"
     points_topic=/velodyne_points
     imu_topic=/imu/data_raw
+    imu_sensor=external
+    imu_acceleration_scale=1.0
+    deskew_success_minimum=0.90
     default_domain=131
     tf_commands=(
       "0 0 0 0 0 0 base_link velodyne"
@@ -178,7 +201,7 @@ case "$sensor" in
     esac
     if [[ -z "$mid_yaw_policy" ]]; then
       if [[ -n "$bag_override" ]]; then
-        echo "MID360 --bag requires an explicit --mid-yaw-policy; the fixed bias is bag-specific" >&2
+        echo "MID360 --bag requires an explicit --mid-yaw-policy; IMU calibration is bag-specific" >&2
         exit 2
       fi
       mid_yaw_policy=fixed-bias-direct
@@ -188,10 +211,10 @@ case "$sensor" in
         [[ -n "$gicp_epsilon" ]] || gicp_epsilon=strict
         case "$gicp_epsilon" in
           strict)
-            odom_override="$mid360_profile_root/experimental/odom_adaptive_strict.yaml"
+            odom_override="$mid360_internal_profile_root/experimental/odom_adaptive_strict.yaml"
             ;;
           default)
-            odom_override="$mid360_profile_root/experimental/odom_adaptive_default_epsilon.yaml"
+            odom_override="$mid360_internal_profile_root/experimental/odom_adaptive_default_epsilon.yaml"
             ;;
           *) echo "MID360 --gicp-epsilon must be strict or default" >&2; exit 2 ;;
         esac
@@ -202,25 +225,50 @@ case "$sensor" in
           echo "MID360 fixed-bias-direct requires --gicp-epsilon default" >&2
           exit 2
         }
-        odom_override="$mid360_profile_root/accepted/odom_fixed_bias_direct.yaml"
+        odom_override="$mid360_internal_profile_root/accepted/odom_fixed_bias_direct.yaml"
         ;;
       *)
         echo "MID360 --mid-yaw-policy must be adaptive or fixed-bias-direct" >&2
         exit 2
         ;;
     esac
-    imu_param="$mid360_profile_root/accepted/deskew.yaml"
+    imu_param="$mid360_internal_profile_root/accepted/deskew.yaml"
+    imu_sensor=internal
+    imu_acceleration_scale=9.80665
+    deskew_success_minimum=0.99
     bag="$ROOT/rosbag/rosbag2_2026_04_08-22_52_42"
     glim_dir="/home/motoya/loc_ws/glim_map/mid360_dense_20260812_142237"
     points_topic=/livox/lidar
     imu_topic=/livox/imu
-    default_domain=132
     tf_commands=("0 0 0 0 0 0 base_link livox_frame")
+    default_domain=132
     ;;
 esac
 
+canonical_mid360_internal=false
+if [[ "$sensor" == mid360 && -z "$bag_override" &&
+  "$mid_yaw_policy" == fixed-bias-direct ]]
+then
+  canonical_mid360_internal=true
+fi
+if [[ -n "$odom_tuning_override" ]]; then
+  odom_tuning_override_param="$odom_tuning_override"
+elif [[ "$canonical_mid360_internal" == true ]]; then
+  odom_tuning_override_param="$mid360_internal_profile_root/accepted/odom_tuned.yaml"
+else
+  odom_tuning_override_param="$empty_odom_override"
+fi
+odom_tuning_override_param="$(realpath -m "$odom_tuning_override_param")"
+
 if [[ -n "$bag_override" ]]; then
   bag="$(realpath -m "$bag_override")"
+fi
+if [[ -n "$glim_override" ]]; then
+  glim_dir="$(realpath -m "$glim_override")"
+fi
+if [[ "$sensor" == mid360 && -n "$bag_override" && -z "$glim_override" ]]; then
+  echo "MID360 --bag requires --glim-dir; refusing to evaluate against the default bag's reference" >&2
+  exit 2
 fi
 
 odom_aux_override="$empty_odom_override"
@@ -237,7 +285,13 @@ if [[ "$localization_mode" == "precision" ]]; then
   esac
   odom_aux_override="$snapshot_override"
   matcher_param="$ROOT/src/pure_lidar_submap_matcher/param/param.yaml"
-  matcher_override_param="${matcher_override:-$precision_config_root/empty_params.yaml}"
+  if [[ -n "$matcher_override" ]]; then
+    matcher_override_param="$matcher_override"
+  elif [[ "$canonical_mid360_internal" == true ]]; then
+    matcher_override_param="$mid360_internal_profile_root/accepted/submap_matcher_tuned.yaml"
+  else
+    matcher_override_param="$precision_config_root/empty_params.yaml"
+  fi
   global_param="$ROOT/src/pure_precision_global_localizer/param/param.yaml"
   global_override_param="$precision_evaluation_root/accepted_scan_local_only.yaml"
   evaluation_topic=/localization/precision_local_odom
@@ -247,7 +301,9 @@ fi
 [[ -f "$glim_dir/traj_lidar.txt" ]] || {
   echo "GLIM trajectory does not exist: $glim_dir/traj_lidar.txt" >&2; exit 2;
 }
-required_configs=("$imu_param" "$odom_override" "$odom_aux_override")
+required_configs=(
+  "$imu_param" "$odom_override" "$odom_aux_override" "$odom_tuning_override_param"
+)
 if [[ "$localization_mode" == "precision" ]]; then
   required_configs+=(
     "$matcher_param" "$matcher_override_param" "$global_param" "$global_override_param"
@@ -275,6 +331,7 @@ launch_command=(
   odom_param:="$ROOT/src/pure_lidar_gyro_odometer/param/param.yaml"
   odom_override_param:="$odom_override"
   odom_aux_override_param:="$odom_aux_override"
+  odom_tuning_override_param:="$odom_tuning_override_param"
   log_level:=info
 )
 precision_launch_command=()
@@ -337,15 +394,39 @@ fi
 mkdir -p "$output/ros_logs"
 export ROS_LOG_DIR="$output/ros_logs"
 mkdir -p "$output/artifacts"
+git_head_sha="$(git -C "$ROOT" rev-parse HEAD)"
+read -r git_dirty_diff_sha256 _ < <(git -C "$ROOT" diff --binary HEAD | sha256sum)
+read -r git_status_sha256 _ < <(
+  git -C "$ROOT" status --porcelain=v1 --untracked-files=all | sha256sum
+)
+[[ -f "$bag/metadata.yaml" ]] || { echo "bag metadata missing: $bag" >&2; exit 1; }
+read -r input_bag_metadata_sha256 _ < <(sha256sum "$bag/metadata.yaml")
+shopt -s nullglob
+input_bag_storage_paths=("$bag"/*.db3 "$bag"/*.mcap)
+shopt -u nullglob
+[[ ${#input_bag_storage_paths[@]} -gt 0 ]] || {
+  echo "bag contains no db3 or MCAP storage file: $bag" >&2; exit 1;
+}
+input_bag_storage_files=""
+input_bag_storage_sha256=""
+for storage_path in "${input_bag_storage_paths[@]}"; do
+  read -r storage_sha256 _ < <(sha256sum "$storage_path")
+  storage_name="$(basename -- "$storage_path")"
+  input_bag_storage_files+="${input_bag_storage_files:+,}$storage_name"
+  input_bag_storage_sha256+="${input_bag_storage_sha256:+,}$storage_sha256"
+done
 base_odom_param="$ROOT/src/pure_lidar_gyro_odometer/param/param.yaml"
 install -m 0644 "$imu_param" "$output/artifacts/imu_param.yaml"
 install -m 0644 "$odom_override" "$output/artifacts/odom_override.yaml"
 install -m 0644 "$base_odom_param" "$output/artifacts/base_odom_param.yaml"
 install -m 0644 "$odom_aux_override" "$output/artifacts/odom_aux_override.yaml"
+install -m 0644 "$odom_tuning_override_param" \
+  "$output/artifacts/odom_tuning_override.yaml"
 read -r imu_param_sha256 _ < <(sha256sum "$imu_param")
 read -r odom_override_sha256 _ < <(sha256sum "$odom_override")
 read -r base_odom_param_sha256 _ < <(sha256sum "$base_odom_param")
 read -r odom_aux_override_sha256 _ < <(sha256sum "$odom_aux_override")
+read -r odom_tuning_override_sha256 _ < <(sha256sum "$odom_tuning_override_param")
 read -r glim_traj_sha256 _ < <(sha256sum "$glim_dir/traj_lidar.txt")
 snapshot_override_sha256=n/a
 matcher_param_sha256=n/a
@@ -375,6 +456,12 @@ bag=$bag
 glim_dir=$glim_dir
 glim_traj=$glim_dir/traj_lidar.txt
 glim_traj_sha256=$glim_traj_sha256
+git_head_sha=$git_head_sha
+git_dirty_diff_sha256=$git_dirty_diff_sha256
+git_status_sha256=$git_status_sha256
+input_bag_metadata_sha256=$input_bag_metadata_sha256
+input_bag_storage_files=$input_bag_storage_files
+input_bag_storage_sha256=$input_bag_storage_sha256
 deskew=$deskew
 gicp_epsilon=$gicp_epsilon
 mid_yaw_policy=${mid_yaw_policy:-n/a}
@@ -383,6 +470,9 @@ rate=$rate
 playback_duration=$playback_duration
 points_topic=$points_topic
 imu_topic=$imu_topic
+imu_sensor=$imu_sensor
+imu_acceleration_scale=$imu_acceleration_scale
+deskew_success_minimum=$deskew_success_minimum
 imu_param=$imu_param
 imu_param_sha256=$imu_param_sha256
 odom_override=$odom_override
@@ -391,6 +481,8 @@ base_odom_param=$base_odom_param
 base_odom_param_sha256=$base_odom_param_sha256
 odom_aux_override=$odom_aux_override
 odom_aux_override_sha256=$odom_aux_override_sha256
+odom_tuning_override=$odom_tuning_override_param
+odom_tuning_override_sha256=$odom_tuning_override_sha256
 snapshot_override=$snapshot_override
 snapshot_override_sha256=$snapshot_override_sha256
 matcher_param=$matcher_param

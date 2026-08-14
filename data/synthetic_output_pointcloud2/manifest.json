@@ -1,0 +1,181 @@
+{
+  "dataset_id": "synthetic_output_pointcloud2_smoke_v1",
+  "generator": {
+    "cdr_alignment_padding_zeroed": true,
+    "path": "tools/generate_synthetic_output_pointcloud2.py",
+    "ros_distro": "jazzy",
+    "semantic_output_deterministic": true,
+    "source_sha256": "f9b7f71553d05155c9ed984f1ac8864ec3941db733864696f2bcef28cb0d13ef",
+    "stochastic_seed": null,
+    "version": 1
+  },
+  "integrity": {
+    "canonical_semantic_stream_contract": "topic, type, record stamp, and explicit ROS fields; excludes CDR padding",
+    "canonical_semantic_stream_sha256": "de32be04c9b68d07dbf74733cb1e118d5d033fb3ecd3f9d5379cbbdecab18eb4",
+    "files": [
+      {
+        "bytes": 6685690,
+        "path": "synthetic_output_pointcloud2_0.mcap",
+        "sha256": "74e86c5f10857954eaff5f29f99e0eca29b779af1ba74650f76130710bdbe912"
+      },
+      {
+        "bytes": 3112,
+        "path": "metadata.yaml",
+        "sha256": "529b627be8626a30cc2d36be5518d05c4e73c30d8d19e67b3ffc37906ea77e85"
+      }
+    ]
+  },
+  "interfaces": {
+    "gnss_present": false,
+    "raw_packets_present": false,
+    "static_transforms": [
+      "base_link -> lidar/0",
+      "base_link -> imu"
+    ]
+  },
+  "license": "Apache-2.0",
+  "pointcloud": {
+    "fields": [
+      {
+        "count": 1,
+        "datatype": 7,
+        "name": "x",
+        "offset": 0
+      },
+      {
+        "count": 1,
+        "datatype": 7,
+        "name": "y",
+        "offset": 4
+      },
+      {
+        "count": 1,
+        "datatype": 7,
+        "name": "z",
+        "offset": 8
+      },
+      {
+        "count": 1,
+        "datatype": 7,
+        "name": "intensity",
+        "offset": 16
+      },
+      {
+        "count": 1,
+        "datatype": 4,
+        "name": "ring",
+        "offset": 20
+      },
+      {
+        "count": 1,
+        "datatype": 7,
+        "name": "azimuth",
+        "offset": 24
+      },
+      {
+        "count": 1,
+        "datatype": 7,
+        "name": "distance",
+        "offset": 28
+      },
+      {
+        "count": 1,
+        "datatype": 2,
+        "name": "return_type",
+        "offset": 32
+      },
+      {
+        "count": 1,
+        "datatype": 8,
+        "name": "time_stamp",
+        "offset": 40
+      }
+    ],
+    "frame_id": "lidar/0",
+    "little_endian": true,
+    "point_step": 48,
+    "point_time_span_sec": 0.05,
+    "points_per_scan_max": 3766,
+    "points_per_scan_min": 3665,
+    "scan_period_sec": 0.05,
+    "topic": "/pandar_points_ex"
+  },
+  "provenance": {
+    "generation": "fully_procedural",
+    "generator_has_input_bag_option": false,
+    "private_timestamp_used": false,
+    "reference_scope": [
+      "PointCloud2 field names, offsets, datatypes, and point_step",
+      "rounded 20 Hz LiDAR and 200 Hz IMU rates"
+    ],
+    "source_coordinates_used": false,
+    "source_gnss_used": false,
+    "source_messages_used": false,
+    "source_trajectory_used": false
+  },
+  "purpose": "Public deterministic LiDAR/IMU localization smoke fixture.",
+  "scene": {
+    "coordinate_source": "procedural_scene()",
+    "model": "analytic asymmetric corridor with ground, walls, poles, and boxes"
+  },
+  "schema_version": 1,
+  "time": {
+    "duration_sec": 6.3,
+    "first_record_ns": 800000000,
+    "last_record_ns": 7100000000,
+    "origin": "fixed synthetic ROS time; not a recording epoch",
+    "point_time_semantics": "scan-relative seconds"
+  },
+  "topics": [
+    {
+      "message_count": 1,
+      "name": "/tf_static",
+      "qos": {
+        "depth": 1,
+        "durability": "transient_local",
+        "history": "keep_last",
+        "reliability": "reliable"
+      },
+      "type": "tf2_msgs/msg/TFMessage"
+    },
+    {
+      "message_count": 1241,
+      "name": "/sensor/imu/data_raw",
+      "qos": {
+        "depth": 10,
+        "durability": "volatile",
+        "history": "keep_last",
+        "reliability": "reliable"
+      },
+      "type": "sensor_msgs/msg/Imu"
+    },
+    {
+      "message_count": 121,
+      "name": "/synthetic/ground_truth",
+      "qos": {
+        "depth": 10,
+        "durability": "volatile",
+        "history": "keep_last",
+        "reliability": "reliable"
+      },
+      "type": "nav_msgs/msg/Odometry"
+    },
+    {
+      "message_count": 121,
+      "name": "/pandar_points_ex",
+      "qos": {
+        "depth": 10,
+        "durability": "volatile",
+        "history": "keep_last",
+        "reliability": "reliable"
+      },
+      "type": "sensor_msgs/msg/PointCloud2"
+    }
+  ],
+  "trajectory": {
+    "ground_truth_topic": "/synthetic/ground_truth",
+    "model": "constant-speed planar circular arc",
+    "speed_mps": 0.5,
+    "yaw_rate_radps": 0.05
+  }
+}

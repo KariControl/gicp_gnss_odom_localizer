@@ -42,6 +42,8 @@ services:
       VEHICLE_MODEL: ${VEHICLE_MODEL:-sample_vehicle}
       SENSOR_MODEL: ${SENSOR_MODEL:-sample_sensor_kit}
       RVIZ: ${RVIZ:-false}
+      RVIZ_SAMPLE_VEHICLE: ${RVIZ_SAMPLE_VEHICLE:-false}
+      RVIZ_SAMPLE_VEHICLE_Z_OFFSET: ${RVIZ_SAMPLE_VEHICLE_Z_OFFSET:--1.66}
       RECORD_OUTPUT: ${RECORD_OUTPUT:-true}
       AUTO_INITIAL_POSE: ${AUTO_INITIAL_POSE:-true}
       INITIAL_X: ${INITIAL_X:-0.0}

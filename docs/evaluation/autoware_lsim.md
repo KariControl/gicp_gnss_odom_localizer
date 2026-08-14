@@ -5,7 +5,7 @@
 On 2026-08-12, the private Hesai Course 2 recording was replayed end to end at
 1.0x with the current packaged default NMEA projection and Autoware 1.9.0 in a
 localization-interface-only configuration. The headless output-bag validation
-passed 35 checks with no failures and one warning.
+passed with no failures and one bounded-step warning.
 
 This evidence verifies compatibility with Autoware localization topics, TF,
 simulation time, full-rate replay, and GNSS-outage recovery. It does not launch
@@ -19,9 +19,14 @@ origin `35.681236, 139.767125` and scale `0.9996` to
 accuracy results are documented separately in the
 [LiDAR/IMU/GNSS evaluation](lidar_imu_gnss.md).
 
+The coordinates above are the configured projection origin needed to reproduce
+the parameter/metadata equivalence check; they are not asserted to be the
+recording location.
+
 Additional private recordings may be exercised internally, but their
 identities, measurements, and artifacts are not part of the public evaluation.
-No public RViz screenshot or video is currently available.
+A representative visualization-only RViz poster and replay are published. They
+are not additional accuracy, CPU, or passing-run evidence.
 
 ## Current headless test conditions
 
@@ -46,7 +51,7 @@ A/B test.
 
 | Dataset | Analyzed messages | Kinematic states | Evaluated span | Effective output rate | Maximum XY step | Automated validation |
 |---|---:|---:|---:|---:|---:|---|
-| Hesai 32-Line + IMU + RTK GNSS — Course 2 | 238,367 | 19,554 | 197.280 s | 99.113 Hz | 0.515010 m | Pass: 35 pass, 0 fail, 1 warning |
+| Hesai 32-Line + IMU + RTK GNSS — Course 2 | 238,367 | 19,554 | 197.280 s | 99.113 Hz | 0.515010 m | Pass with one warning |
 
 The run passed finite-pose, covariance, `map -> base_link` TF, monotonic
 timestamp, final-time coverage, and adapter-consistency checks.
@@ -69,39 +74,20 @@ CPU utilization and RSS were not recorded.
 
 ## RViz and video publication status
 
-A public RViz recording has not been produced. A future publication should be
-generated from a fresh passing Course 2 run using the current default
-projection, with projection provenance validation enabled, and a command of
-this form:
+A [representative RViz poster](assets/autoware_lsim_hesai_course_2/rviz_poster.png)
+is published as visualization only. It is not an additional accuracy, CPU, or
+passing-run measurement, and its sample Lexus mesh does not represent the
+recorded vehicle, its geometry, or its sensor calibration.
 
-```bash
-ROS_DOMAIN_ID=84 ./script/run_autoware_lsim_docker.sh \
-  --bag <hesai_course_2_bag> \
-  --profile hesai-rosbag23 \
-  --tracking-mode scan_to_scan \
-  --run-name hesai_course_2_lsim_rviz_publication \
-  --rviz
-```
+The corresponding [RViz replay](assets/autoware_lsim_hesai_course_2/rviz_replay.webm)
+is a 75.250-second, 898x539, 2,138-frame VP8/WebM visualization with no audio.
+The stream does not declare a fixed frame rate. Its capture timestamp was
+removed from the public container metadata. It is committed for demonstration,
+not treated as evidence from the separately validated headless run.
 
-The recording should:
-
-- capture only the RViz window, not the full desktop;
-- use a representative 20-to-40-second interval after the relevant RViz
-  statuses become `Ok`;
-- show the deskewed cloud, moving kinematic-state trail, and `base_link` axes;
-- avoid notifications, personal information, terminals containing secrets,
-  and unnecessary audio;
-- record duration, resolution, frame rate, codec, file size, SHA-256, repository
-  commit, container image, playback rate, ROS time interval, and runner options;
-- state explicitly that visualization is functional evidence, not a CPU or
-  absolute-accuracy measurement;
-- record a passing provenance result that confirms the runtime NMEA parameters
-  match `map_projector_info.yaml` and that no evaluation-origin override was
-  applied.
-
-The video should be published as an external release asset rather than
-committed to Git. Its version-controlled poster and manifest belong under
-`docs/evaluation/assets/`.
+Any replacement must be privacy-reviewed and update the poster, WebM metadata,
+hashes, and publication manifest together. The maintainer procedure is in the
+[published-asset policy](assets/README.md).
 
 ## Related documentation and implementation
 

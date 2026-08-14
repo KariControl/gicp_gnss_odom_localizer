@@ -21,6 +21,7 @@ import shlex
 from typing import Any
 
 import numpy as np
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -28,8 +29,124 @@ ASSETS = ROOT / "docs" / "evaluation" / "assets"
 
 VELODYNE_LABEL = "Velodyne 32-Line + External IMU — LiDAR/IMU-Only (No GNSS)"
 MID360_LABEL = "Livox MID-360 + Internal IMU — LiDAR/IMU-Only (No GNSS)"
+MID360_PLOT_TITLE = "MID-360 + Internal IMU (No GNSS)"
 COURSE_LABELS = {
     "course_2": "Hesai 32-Line + IMU + RTK GNSS — Course 2",
+}
+
+MID360_RESULT_SET = "mid360_internal_imu_tuning_20260814_final"
+MID360_RESULT_ROOT = ROOT / "test_results" / MID360_RESULT_SET
+MID360_DATASET_ID = "livox_mid360_internal_imu"
+MID360_RETIRED_DATASET_ID = "livox_mid360_external_imu"
+MID360_GLIM_TRAJECTORY_SHA256 = (
+    "ae9d148a098236251ee79ba8e17e3d18bd664af5adffa5b6ef025f274c50aa6c"
+)
+MID360_SOURCE_CONTRACT: dict[str, tuple[str, str]] = {
+    "final_status": (
+        "final/FINAL_STATUS.json",
+        "8cc66bf6807f0889b416e8461483126db003104a9b0379fe31d695537d0895be",
+    ),
+    "status_revalidation": (
+        "final/FINAL_STATUS_REVALIDATION.json",
+        "3cc0d026b6c24cdad83ea05f6a936a099051ee189a143506435d9c052292d228",
+    ),
+    "evaluation": (
+        "final/ab_initial_pose/evaluation.json",
+        "875d431c4351541ea3243e281f1d5c79840ed2d00a979e847e5b670e3f2175a9",
+    ),
+    "aligned_samples": (
+        "final/ab_initial_pose/aligned_samples.csv",
+        "010decd3d41be904f73ba64eb5cb78bd8f3a88858d82ef10fe56cdf9c457bbfe",
+    ),
+    "holdout_metrics": (
+        "final/holdout_metrics.json",
+        "1cc1e1814fa96932e7331e9516ad57c497e1babc11a9f422122d3b0fc155b05e",
+    ),
+    "normalized_plan": (
+        "plan.normalized.json",
+        "b9892698bf38092002c422a197c5c8fd9862fc82c348ead928b1e2edc65c3942",
+    ),
+    "control_run_environment": (
+        "final/scan_to_scan/run.env",
+        "72f16f7fce5b9225099bc21da81a15ef081eb1d9de5331181a555f3e8ef39d00",
+    ),
+    "control_runtime_metrics": (
+        "final/scan_to_scan/runtime_analysis/runtime_metrics.json",
+        "ce60e426459cf7b8f8ab0ce7027027d61d7a8bf0541c817c201d2497110ca936",
+    ),
+    "control_lidar_transform_log": (
+        "final/scan_to_scan/tf_livox_frame.log",
+        "7c794994d90eefd762895849dcd35bbfc69a8159e6cda1914bdf4dc7115ee181",
+    ),
+    "control_imu_parameters": (
+        "final/scan_to_scan/artifacts/imu_param.yaml",
+        "6ae5389fb60b192dcc7509343e37d2d9df83049ad898822e42f517cf6af83700",
+    ),
+    "control_odometry_override": (
+        "final/scan_to_scan/artifacts/odom_override.yaml",
+        "8c5e3e6c66502fe963ba72224655da1c91fd0ce1c607e33cf1058249717f8504",
+    ),
+    "control_odometry_tuning": (
+        "final/scan_to_scan/artifacts/odom_tuning_override.yaml",
+        "465101aeb98d0eefddd2f41d6baf56e821b5b939b5e49127535bb78320ddeefc",
+    ),
+    "precision_run_environment": (
+        "final/scan_to_submap/run.env",
+        "a8928a44e33308e59a17167fde2cfabed7014226869adcd02bd37b66979cc067",
+    ),
+    "precision_runtime_metrics": (
+        "final/scan_to_submap/runtime_analysis/runtime_metrics.json",
+        "8501ec8cafdaeab7dd4c59e47c88c7bcfa4ca1b5c04cace1d64e4a91db40e9a1",
+    ),
+    "precision_structural_validation": (
+        "final/scan_to_submap/submap_validation/validation.json",
+        "e68f02299fea4a1251a32c579d52e7ba2aeb6a0722e5a37d246389059c2bcdef",
+    ),
+    "precision_lidar_transform_log": (
+        "final/scan_to_submap/tf_livox_frame.log",
+        "aca3fb9405f7c624ce45ce26cb6b5f0c30ea7d722ccce6c5f4279a4e746960f4",
+    ),
+    "precision_imu_parameters": (
+        "final/scan_to_submap/artifacts/imu_param.yaml",
+        "6ae5389fb60b192dcc7509343e37d2d9df83049ad898822e42f517cf6af83700",
+    ),
+    "precision_odometry_override": (
+        "final/scan_to_submap/artifacts/odom_override.yaml",
+        "8c5e3e6c66502fe963ba72224655da1c91fd0ce1c607e33cf1058249717f8504",
+    ),
+    "precision_odometry_tuning": (
+        "final/scan_to_submap/artifacts/odom_tuning_override.yaml",
+        "465101aeb98d0eefddd2f41d6baf56e821b5b939b5e49127535bb78320ddeefc",
+    ),
+    "precision_snapshot_parameters": (
+        "final/scan_to_submap/artifacts/odom_aux_override.yaml",
+        "537eb9636a7ff7312ee72af74ba8bbe5f8fd7b71a0b5a088d8f4efc5a7935c88",
+    ),
+    "precision_matcher_parameters": (
+        "final/scan_to_submap/artifacts/submap_matcher_param.yaml",
+        "e4618d3eb5070b1890a15a3822423cda7ad54fad58e7eedb1dae36433d8a0aa7",
+    ),
+    "precision_matcher_tuning": (
+        "final/scan_to_submap/artifacts/submap_matcher_override.yaml",
+        "7db51bec16ed2a4bad41857bf51dde33ae04c08efa94b0ef90f614341f39f821",
+    ),
+}
+MID360_STAGE_SUMMARY_CONTRACT: dict[str, str] = {
+    "fixed_bias": "2fa215fdb37124ada3f1c4a66c1627a40cac3e0c7aeee9416c82c4511dea757b",
+    "lidar_filter": "5af50da7ec378e5beaa37ba2b9fb2af1d32f2554bf8e3103b91a5f56df2edef5",
+    "scan_acceptance": "652624898e9f207be4334e39dc67386579c9ceba5af9274e937678fae56dfa32",
+    "scan_vgicp": "a1708766dd251721bce48542490e8b6a80a6904b1d75e59d630a338d32d7c28d",
+    "smoother": "c459243b12fc7d81838a2fcb2f5feb1b95fc26027ad8094319e8bd9f6c288c63",
+    "snapshot_cadence": "9fa22956b8e2a869e4f25826368b076dc3ba4b10f1484cd1b41bcb51efc4c500",
+    "stop_detection": "6f4f84b814c5df9c0d7fa117e0fddbd98945f6d34d90fdc09e663856002b044f",
+    "submap_correction": "c67483b1257919d13139269d04c9f83c674ad84a8712a0c957f44add90d0a5b3",
+    "submap_geometry": "8a245ccdcf13404cd64628be6781fa799f05eb1a28ce828ba0496fba091847ef",
+}
+MID360_PUBLICATION_FILENAMES = {
+    "metrics.json",
+    "trajectory.png",
+    "xy_error.png",
+    "yaw_error.png",
 }
 
 GNSS_RESULT_SET = "gnss_outage_yaw_guard_20260812_final"
@@ -100,6 +217,23 @@ GNSS_RUNTIME_INTENTIONAL_WARNING_LABEL = (
     "raw odom intentional startup zero stamps"
 )
 LSIM_CURRENT_EVIDENCE_SCOPE = ["interface", "runtime"]
+LSIM_POSTER_FILENAME = "rviz_poster.png"
+LSIM_POSTER_SHA256 = (
+    "2d944f70f3b352ef0014e94428fb96ac89b107cbfe3171ac581ab394be5aaea2"
+)
+LSIM_REPLAY_FILENAME = "rviz_replay.webm"
+LSIM_REPLAY_SHA256 = (
+    "c8762b5a264f49b14240eea01760c955c98e45596000a00b6ae6bd21fe2739e3"
+)
+LSIM_REPLAY_BYTES = 62_245_501
+LSIM_REPLAY_DURATION_SEC = 75.250293115
+LSIM_REPLAY_RESOLUTION = [898, 539]
+LSIM_REPLAY_FRAME_COUNT = 2_138
+LSIM_PUBLICATION_FILENAMES = {
+    "metrics.json",
+    LSIM_POSTER_FILENAME,
+    LSIM_REPLAY_FILENAME,
+}
 
 # ``None`` hashes keep LSim regeneration fail closed until the public
 # headless run finishes and its report has been reviewed.  Only then are the
@@ -160,6 +294,13 @@ GNSS_SOURCE_CONTRACTS: dict[str, dict[str, Any]] = {
         "expected_nonintrusion_hard_gate_count": 14,
         "expected_nonintrusion_failed_warning_count": 0,
         "expected_failed_hard_gates": [],
+        "expected_error_plot_timeline": {
+            "rtk_q4_unavailable_begin_time_sec": 67.32411003112793,
+            "rtk_q4_unavailable_end_time_sec": 184.57655668258667,
+            "rtk_q4_unavailable_duration_sec": 117.252446449,
+            "fusion_tracking_resume_time_sec": 189.77501726150513,
+            "fusion_tracking_resume_delay_sec": 5.198460760000001,
+        },
         "expected_runtime": {
             "scans": 851,
             "corrections": 613,
@@ -210,6 +351,14 @@ GNSS_SOURCE_CONTRACTS: dict[str, dict[str, Any]] = {
     },
 }
 
+GNSS_PUBLICATION_FILENAMES = {
+    "global_xy_error.png",
+    "global_yaw_error.png",
+    "local_xy_error.png",
+    "local_yaw_error.png",
+    "metrics.json",
+}
+
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -231,6 +380,25 @@ def write_json(path: Path, value: Any) -> None:
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise RuntimeError(message)
+
+
+def png_chunk_types(path: Path) -> list[str]:
+    data = path.read_bytes()
+    require(
+        data[:8] == b"\x89PNG\r\n\x1a\n",
+        f"invalid PNG signature: {path}",
+    )
+    offset = 8
+    chunks: list[str] = []
+    while offset < len(data):
+        require(offset + 12 <= len(data), f"truncated PNG chunk: {path}")
+        length = int.from_bytes(data[offset : offset + 4], "big")
+        end = offset + 12 + length
+        require(end <= len(data), f"truncated PNG payload: {path}")
+        chunks.append(data[offset + 4 : offset + 8].decode("ascii"))
+        offset = end
+    require(offset == len(data), f"unexpected trailing PNG data: {path}")
+    return chunks
 
 
 def require_gnss_contract_adopted() -> None:
@@ -465,8 +633,7 @@ def validate_startup_window_provenance(
         "status": "PASS",
         "timestamp_source": calibration["timestamp_source"],
         "window_bounds": calibration["window_bounds"],
-        "start_sec": start,
-        "end_sec": end,
+        "absolute_timestamps_published": False,
         "duration_sec": duration,
         "common_sample_count": calibration["common_sample_count"],
         "maximum_interpolation_gap_sec": calibration[
@@ -1632,6 +1799,101 @@ def load_wide_csv(
     return reference, series
 
 
+def gnss_error_plot_timeline(
+    csv_path: Path,
+    result: dict[str, Any],
+    expected: dict[str, Any],
+) -> dict[str, Any]:
+    reference, _ = load_wide_csv(
+        csv_path, ("precision_existing", "precision_global")
+    )
+    require(
+        len(reference["stamp_sec"]) >= 2,
+        f"{csv_path}: global error CSV has too few samples",
+    )
+    axis_origins = reference["stamp_sec"] - reference["time"]
+    require(
+        bool(np.all(np.isfinite(axis_origins))),
+        f"{csv_path}: non-finite timestamp-to-plot-axis mapping",
+    )
+    axis_origin_sec = float(np.median(axis_origins))
+    mapping_residual = (
+        reference["stamp_sec"] - axis_origin_sec - reference["time"]
+    )
+    maximum_mapping_residual_sec = float(np.max(np.abs(mapping_residual)))
+    require(
+        maximum_mapping_residual_sec <= 1.0e-6,
+        f"{csv_path}: timestamp-to-plot-axis mapping is not constant",
+    )
+    outage = result.get("precision_timeline", {}).get("longest_q4_outage")
+    require(isinstance(outage, dict), "missing longest RTK-Q4 outage evidence")
+    begin_ns = outage.get("begin_ns")
+    end_ns = outage.get("end_ns")
+    recovery_delay_sec = outage.get("recovery_delay_sec")
+    require(
+        isinstance(begin_ns, int)
+        and isinstance(end_ns, int)
+        and isinstance(recovery_delay_sec, (int, float))
+        and math.isfinite(recovery_delay_sec),
+        "invalid RTK-Q4 outage/recovery timestamps",
+    )
+    resume_ns = end_ns + int(round(recovery_delay_sec * 1.0e9))
+    def plot_time(stamp_ns: int) -> float:
+        return stamp_ns * 1.0e-9 - axis_origin_sec
+
+    begin_plot_sec = plot_time(begin_ns)
+    end_plot_sec = plot_time(end_ns)
+    resume_plot_sec = plot_time(resume_ns)
+    observed = {
+        "rtk_q4_unavailable_begin_time_sec": begin_plot_sec,
+        "rtk_q4_unavailable_end_time_sec": end_plot_sec,
+        "rtk_q4_unavailable_duration_sec": (end_ns - begin_ns) * 1.0e-9,
+        "fusion_tracking_resume_time_sec": resume_plot_sec,
+        "fusion_tracking_resume_delay_sec": recovery_delay_sec,
+    }
+    require(
+        observed == expected,
+        "RTK-Q4 error-plot timeline changed from the reviewed source contract: "
+        f"observed={observed!r} expected={expected!r}",
+    )
+    require(
+        float(reference["time"][0]) <= begin_plot_sec
+        < end_plot_sec
+        < resume_plot_sec
+        <= float(reference["time"][-1]),
+        "RTK-Q4 error-plot annotations are outside the global CSV time axis",
+    )
+    return {
+        "time_axis": {
+            "csv_plot_time_column": "time_from_common_start_sec",
+            "origin": "first common global evaluation sample",
+            "absolute_timestamps_published": False,
+            "maximum_mapping_residual_sec": maximum_mapping_residual_sec,
+        },
+        "rtk_q4_unavailable": {
+            "begin_time_from_common_start_sec": begin_plot_sec,
+            "end_time_from_common_start_sec": end_plot_sec,
+            "duration_sec": (end_ns - begin_ns) * 1.0e-9,
+            "definition": (
+                "interval from the two-second usable-GNSS timeout until "
+                "the next usable high-quality GNSS position sample"
+            ),
+        },
+        "rtk_q4_return": {
+            "time_from_common_start_sec": end_plot_sec,
+            "definition": "next usable high-quality GNSS position sample",
+        },
+        "fusion_tracking_resume": {
+            "time_from_common_start_sec": resume_plot_sec,
+            "delay_from_rtk_q4_return_sec": recovery_delay_sec,
+            "definition": (
+                "first global-localization diagnostic after usable GNSS "
+                "returns with a finite position-fused tracking state"
+            ),
+        },
+    }
+
+
 def pyplot() -> Any:
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/publication_assets_matplotlib")
     import matplotlib
@@ -1697,43 +1959,40 @@ def render_lidar(
         plt.close(figure)
 
 
-def render_gnss(csv_path: Path, output: Path, title: str, group: str) -> None:
+def render_gnss_errors(
+    csv_path: Path,
+    output: Path,
+    title: str,
+    group: str,
+    plot_timeline: dict[str, Any] | None = None,
+) -> None:
     plt = pyplot()
     if group == "local":
         names = ("precision_raw", "precision_local")
         display = {
             "precision_raw": "Scan-to-scan",
-            "precision_local": "Scan-to-submap local",
+            "precision_local": "Scan-to-submap",
         }
     else:
         names = ("precision_existing", "precision_global")
         display = {
-            "precision_existing": "Existing GNSS fusion",
-            "precision_global": "Precision global",
+            "precision_existing": "Scan-to-scan",
+            "precision_global": "Scan-to-submap",
         }
     colors = {names[0]: "#e68613", names[1]: "#2764c4"}
+    linestyles = {names[0]: "-", names[1]: "--"}
     reference, series = load_wide_csv(csv_path, names)
     output.mkdir(parents=True, exist_ok=True)
-
-    figure, axis = plt.subplots(figsize=(10.5, 4.8))
-    axis.plot(reference["x"], reference["y"], color="black", linewidth=2.0, label="GLIM reference")
-    for name in names:
-        axis.plot(series[name]["x"], series[name]["y"], color=colors[name], linewidth=1.2, label=display[name])
-    axis.scatter(reference["x"][0], reference["y"][0], color="#24933d", s=35, label="start", zorder=5)
-    axis.set_aspect("equal", adjustable="box")
-    axis.set_xlabel("Reference x [m]")
-    axis.set_ylabel("Reference y [m]")
-    axis.set_title(
-        f"{title}\n{group.capitalize()} trajectory "
-        "(exact initial-pose alignment)"
-    )
-    axis.grid(True, alpha=0.25)
-    axis.legend(fontsize=8)
-    figure.tight_layout()
-    figure.savefig(
-        output / f"{group}_trajectory.png", dpi=150, bbox_inches="tight"
-    )
-    plt.close(figure)
+    if group == "global":
+        require(
+            plot_timeline is not None,
+            "global GNSS error plots require the reviewed outage timeline",
+        )
+    else:
+        require(
+            plot_timeline is None,
+            "the GNSS outage timeline belongs only on global error plots",
+        )
 
     for key, ylabel, suffix, caption in (
         ("xy_error", "Absolute XY error [m]", "xy_error", "Absolute XY error"),
@@ -1743,7 +2002,48 @@ def render_gnss(csv_path: Path, output: Path, title: str, group: str) -> None:
         for name in names:
             values = series[name][key]
             rmse = float(np.sqrt(np.mean(values ** 2)))
-            axis.plot(reference["time"], values, color=colors[name], linewidth=1.0, label=f"{display[name]} (RMSE {rmse:.3f})")
+            axis.plot(
+                reference["time"],
+                values,
+                color=colors[name],
+                linestyle=linestyles[name],
+                linewidth=1.1,
+                label=f"{display[name]} (RMSE {rmse:.3f})",
+            )
+        if plot_timeline is not None:
+            unavailable = plot_timeline["rtk_q4_unavailable"]
+            returned = plot_timeline["rtk_q4_return"]
+            resumed = plot_timeline["fusion_tracking_resume"]
+            axis.axvspan(
+                unavailable["begin_time_from_common_start_sec"],
+                unavailable["end_time_from_common_start_sec"],
+                facecolor="#d9d9d9",
+                edgecolor="#555555",
+                alpha=0.38,
+                hatch="///",
+                linewidth=0.8,
+                zorder=0,
+                label=f"GNSS unavailable ({unavailable['duration_sec']:.1f} s)",
+            )
+            axis.axvline(
+                returned["time_from_common_start_sec"],
+                color="#9d2035",
+                linestyle="-.",
+                linewidth=1.5,
+                zorder=3,
+                label="GNSS returns",
+            )
+            axis.axvline(
+                resumed["time_from_common_start_sec"],
+                color="#23713c",
+                linestyle=":",
+                linewidth=2.0,
+                zorder=3,
+                label=(
+                    "Localization resumes "
+                    f"(+{resumed['delay_from_rtk_q4_return_sec']:.1f} s)"
+                ),
+            )
         axis.set_xlabel("Time from common start [s]")
         axis.set_ylabel(ylabel)
         axis.set_title(
@@ -1751,7 +2051,7 @@ def render_gnss(csv_path: Path, output: Path, title: str, group: str) -> None:
             "(same-run exact estimator stamps)"
         )
         axis.grid(True, alpha=0.25)
-        axis.legend(fontsize=8)
+        axis.legend(fontsize=8, ncol=2)
         figure.tight_layout()
         figure.savefig(
             output / f"{group}_{suffix}.png", dpi=150, bbox_inches="tight"
@@ -1759,11 +2059,650 @@ def render_gnss(csv_path: Path, output: Path, title: str, group: str) -> None:
         plt.close(figure)
 
 
+MID360_RUNTIME_CHECKS = (
+    "clock_monotonic",
+    "one_x_realtime",
+    "corrected_imu_exact_stamp_coverage",
+    "corrected_imu_strict_stamp_order",
+    "corrected_imu_si_acceleration",
+    "local_odom_stamp_order",
+    "local_odom_finite_unit_quaternion",
+    "local_odom_time_coverage",
+    "local_odom_frames",
+    "accepted_scan_odom_strict_stamps",
+    "accepted_scan_odom_physical_reference_stamp",
+    "accepted_scan_odom_frames",
+    "accepted_scan_odom_finite_unit_quaternion",
+    "deskew_diagnostic_input_coverage",
+    "deskew_success_rate",
+    "deskew_time_contract",
+    "imu_acceleration_scale_contract",
+    "scan_registration_density",
+    "accepted_scan_odom_diagnostic_contract",
+    "accepted_scan_odom_final_count",
+    "scan_to_scan_only",
+)
+
+MID360_STRUCTURAL_CHECKS = (
+    "base LiDAR/IMU runtime audit passes",
+    "raw accepted-scan poses are unique and strictly increasing",
+    "precision-local poses are unique and strictly increasing",
+    "raw accepted-scan frame contract",
+    "precision-local frame contract",
+    "SubmapScan exact keys and physical stamps are valid",
+    "SubmapScan snapshots map one-to-one to accepted physical scans",
+    "SubmapCorrection exact-key and full-SE2 contracts are valid",
+    "submap initialization and correction coverage are bounded",
+    "precision-local covers accepted physical scans without interpolation",
+    "precision-local starts only after the first SubmapScan epoch",
+    "precision global outputs are discovered but publish zero messages",
+    "odometer snapshot diagnostics are consistent",
+    "matcher runtime and counter contracts pass",
+    "local compositor counters and global isolation pass",
+)
+
+
+def pinned_mid360_sources() -> dict[str, Path]:
+    sources: dict[str, Path] = {}
+    for source_id, (relative, expected_hash) in MID360_SOURCE_CONTRACT.items():
+        require(
+            re.fullmatch(r"[0-9a-f]{64}", expected_hash) is not None,
+            f"MID-360 source hash has not been adopted: {source_id}",
+        )
+        path = MID360_RESULT_ROOT / relative
+        require(path.is_file(), f"missing pinned MID-360 source: {path}")
+        actual_hash = sha256(path)
+        require(
+            actual_hash == expected_hash,
+            f"pinned MID-360 source hash mismatch for {source_id}: "
+            f"expected={expected_hash} actual={actual_hash}",
+        )
+        sources[source_id] = path
+    for stage, expected_hash in MID360_STAGE_SUMMARY_CONTRACT.items():
+        source_id = f"stage_summary_{stage}"
+        path = MID360_RESULT_ROOT / "summaries" / f"{stage}.json"
+        require(path.is_file(), f"missing pinned MID-360 source: {path}")
+        require(
+            sha256(path) == expected_hash,
+            f"pinned MID-360 source hash mismatch for {source_id}",
+        )
+        sources[source_id] = path
+    return sources
+
+
+def parse_run_environment(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line_number, raw_line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), 1
+    ):
+        if not raw_line or raw_line.startswith("#"):
+            continue
+        match = re.fullmatch(r"([a-z][a-z0-9_]*)=(.*)", raw_line)
+        require(match is not None, f"{path}:{line_number}: malformed run.env line")
+        key, value = match.groups()
+        require(key not in values, f"{path}:{line_number}: duplicate key {key}")
+        require("\x00" not in value, f"{path}:{line_number}: invalid NUL byte")
+        values[key] = value
+    require(values, f"{path}: empty run environment")
+    return values
+
+
+def require_mid360_runtime(runtime: dict[str, Any], context: str) -> None:
+    checks = runtime.get("checks")
+    require(isinstance(checks, list), f"{context}: missing runtime checks")
+    require(
+        tuple(item.get("name") for item in checks) == MID360_RUNTIME_CHECKS,
+        f"{context}: runtime check schema changed",
+    )
+    require(
+        all(item.get("category") == "hard" and item.get("passed") is True for item in checks),
+        f"{context}: every runtime hard check must pass",
+    )
+    inputs = runtime.get("inputs", {})
+    frames = inputs.get("frames", {})
+    clock = runtime.get("clock", {})
+    deskew = runtime.get("deskew", {})
+    imu = runtime.get("imu", {})
+    odometry = runtime.get("odometry", {})
+    require(
+        runtime.get("passed") is True
+        and runtime.get("sensor") == "mid360"
+        and inputs.get("points_topic") == "/livox/lidar"
+        and inputs.get("imu_topic") == "/livox/imu"
+        and inputs.get("recorded_tf_used") == "false"
+        and frames == {"imu": "livox_frame", "points": "livox_frame"}
+        and abs(float(clock.get("observed_sim_over_wall_rate")) - 1.0) <= 1.0e-5
+        and deskew.get("enabled") is True
+        and float(deskew.get("success_rate")) >= 0.99
+        and int(deskew.get("accepted")) >= 2942
+        and int(deskew.get("rejected")) <= 11
+        and float(imu.get("exact_stamp_coverage")) == 1.0
+        and abs(float(imu.get("corrected_acceleration_norm_median_mps2")) - 9.754307250256623)
+        <= 1.0e-12
+        and int(odometry.get("accepted_scan_messages")) > 0
+        and float(odometry.get("scan_registration_density")) >= 0.95,
+        f"{context}: runtime evidence does not satisfy the MID-360 contract",
+    )
+
+
+def require_identity_transform_log(path: Path, child_frame: str) -> None:
+    text = path.read_text(encoding="utf-8", errors="strict")
+    translation_matches = re.findall(r"translation:\s*(\([^\n]+\))", text)
+    rotation_matches = re.findall(r"rotation:\s*(\([^\n]+\))", text)
+    frame_matches = re.findall(r"from '([^']+)' to '([^']+)'", text)
+    require(
+        len(translation_matches) == len(rotation_matches) == len(frame_matches) == 1,
+        f"{path}: transform evidence must contain exactly one published transform",
+    )
+    translation = tuple(float(value) for value in ast.literal_eval(translation_matches[0]))
+    rotation = tuple(float(value) for value in ast.literal_eval(rotation_matches[0]))
+    require(
+        translation == (0.0, 0.0, 0.0)
+        and rotation == (0.0, 0.0, 0.0, 1.0)
+        and frame_matches[0] == ("base_link", child_frame),
+        f"{path}: expected identity base_link->{child_frame} transform",
+    )
+
+
+def require_mid360_parameter_contract(
+    imu_path: Path, odometry_path: Path, environment: dict[str, str], context: str
+) -> None:
+    require(
+        sha256(imu_path) == environment.get("imu_param_sha256")
+        and sha256(odometry_path) == environment.get("odom_override_sha256"),
+        f"{context}: run.env parameter hashes do not match copied artifacts",
+    )
+    imu_document = yaml.safe_load(imu_path.read_text(encoding="utf-8"))
+    odometry_document = yaml.safe_load(odometry_path.read_text(encoding="utf-8"))
+    require(isinstance(imu_document, dict), f"{context}: invalid IMU YAML")
+    require(isinstance(odometry_document, dict), f"{context}: invalid odometry YAML")
+    imu_parameters = imu_document.get("imu_undistorter", {}).get("ros__parameters", {})
+    odometry_parameters = odometry_document.get("/**", {}).get("ros__parameters", {})
+    required_imu_parameters = {
+        "base_frame": "base_link",
+        "imu_frame": "livox_frame",
+        "scan_frame": "livox_frame",
+        "imu_topic": "/imu",
+        "time_fields": ["timestamp"],
+        "prefer_relative_time": False,
+        "time_scale": 1.0e-9,
+        "allow_linear_time_fallback": False,
+        "cloud_stamp_is_start": True,
+        "reference_time": "start",
+        "max_imu_gap_sec": 0.02,
+        "max_imu_boundary_gap_sec": 0.02,
+        "use_translation": False,
+        "use_twist_speed": False,
+        "allow_default_speed_fallback": False,
+    }
+    require(
+        all(imu_parameters.get(key) == value for key, value in required_imu_parameters.items()),
+        f"{context}: internal-IMU deskew frame/time/gap policy changed",
+    )
+    required_odometry_parameters = {
+        "imu_corrected.linear_acceleration_scale": 9.80665,
+        "imu_corrected.max_sample_gap_sec": 0.02,
+        "imu_corrected.max_boundary_gap_sec": 0.02,
+        "lidar_odom.accepted_scan_odom.enable": True,
+        "lidar_odom.accepted_scan_odom.topic": "/localization/gyro_lidar_odom_scan",
+        "gyro_bias.enable": False,
+        "gyro_bias.initial_bg_rad_s": 0.006959692,
+        "lidar_odom.smoother.enable": False,
+    }
+    require(
+        all(
+            odometry_parameters.get(key) == value
+            for key, value in required_odometry_parameters.items()
+        ),
+        f"{context}: internal-IMU odometry scale/gap/bias policy changed",
+    )
+
+
+def require_mid360_structural_validation(validation: dict[str, Any]) -> None:
+    checks = validation.get("checks")
+    require(isinstance(checks, list), "MID-360 structural validation lacks checks")
+    require(
+        tuple(item.get("name") for item in checks) == MID360_STRUCTURAL_CHECKS
+        and all(
+            item.get("category") == "hard" and item.get("passed") is True
+            for item in checks
+        ),
+        "MID-360 structural validation must pass every reviewed hard check",
+    )
+    expected_counts = {
+        "global_topics": {
+            "/localization/precision_global_odom": 0,
+            "/localization/precision_global_pose": 0,
+        },
+        "precision_local": 2926,
+        "precision_local_coverage": 0.9996583532627263,
+        "precision_local_eligible_raw": 2927,
+        "precision_local_matched": 2926,
+        "raw_accepted": 2927,
+        "submap_corrections": 444,
+        "submap_scans": 586,
+        "submap_streams": 1,
+    }
+    expected_method = {
+        "association": (
+            "one-to-one accepted physical header stamps; nearest <=1us only for "
+            "epoch/double serialization ULP; no odometry interpolation"
+        ),
+        "global_policy": "precision global outputs and all global authorities stay zero",
+        "precision_coverage_denominator": (
+            "raw accepted-scan poses at/after first SubmapScan epoch"
+        ),
+        "precision_local_topic": "/localization/precision_local_odom",
+        "raw_topic": "/localization/gyro_lidar_odom_scan",
+    }
+    expected_metrics = {
+        "matcher_accepted": 463,
+        "matcher_accepted_ratio": 0.847985347985348,
+        "matcher_attempted": 546,
+        "matcher_latency_p99_ms": 140.265841,
+        "matcher_processing_p99_ms": 26.278551,
+        "matcher_queue_drop_count": 0,
+        "matcher_rejected": 83,
+        "post_warmup_correction_ratio": 0.7668393782383419,
+        "precision_local_stamp_delta_ns_maximum": 0,
+        "scan_stamp_delta_ns_maximum": 0,
+        "snapshot_conversion_max_ms": 0.026284,
+        "warmup_sec": 3.400035072,
+    }
+    require(
+        validation.get("passed") is True
+        and validation.get("failed_hard_checks") == []
+        and validation.get("counts") == expected_counts
+        and validation.get("method") == expected_method
+        and validation.get("metrics") == expected_metrics,
+        "MID-360 structural counters/method/metrics differ from reviewed evidence",
+    )
+
+
+def validate_mid360_evidence(sources: dict[str, Path]) -> dict[str, Any]:
+    evaluation = read_json(sources["evaluation"])
+    final_status = read_json(sources["final_status"])
+    revalidation = read_json(sources["status_revalidation"])
+    holdout = read_json(sources["holdout_metrics"])
+    plan = read_json(sources["normalized_plan"])
+    structural = read_json(sources["precision_structural_validation"])
+    control_runtime = read_json(sources["control_runtime_metrics"])
+    precision_runtime = read_json(sources["precision_runtime_metrics"])
+    control_environment = parse_run_environment(sources["control_run_environment"])
+    precision_environment = parse_run_environment(sources["precision_run_environment"])
+
+    shared_environment = {
+        "sensor": "mid360",
+        "glim_traj_sha256": MID360_GLIM_TRAJECTORY_SHA256,
+        "deskew": "on",
+        "gicp_epsilon": "default",
+        "mid_yaw_policy": "fixed-bias-direct",
+        "use_deskew": "true",
+        "rate": "1.0",
+        "points_topic": "/livox/lidar",
+        "imu_topic": "/livox/imu",
+        "imu_sensor": "internal",
+        "imu_acceleration_scale": "9.80665",
+        "deskew_success_minimum": "0.99",
+        "input_bag_metadata_sha256": (
+            "0be5944b5482b4ab22038f97782984d53ce96cefc013229e5ac772401ec4155b"
+        ),
+        "input_bag_storage_files": "rosbag2_2026_04_08-22_52_42_0.mcap",
+        "input_bag_storage_sha256": (
+            "b2e7d0bc155c880526dcb9e4a1f496d438d5c1c0cde605fe658da39c1b24b856"
+        ),
+        "imu_param_sha256": MID360_SOURCE_CONTRACT["control_imu_parameters"][1],
+        "odom_override_sha256": MID360_SOURCE_CONTRACT[
+            "control_odometry_override"
+        ][1],
+        "odom_tuning_override_sha256": MID360_SOURCE_CONTRACT[
+            "control_odometry_tuning"
+        ][1],
+        "recorded_tf_used": "false",
+        "gnss_started": "false",
+        "map_odom_fusion_started": "false",
+        "runtime_analysis_status": "0",
+        "evaluation_status": "0",
+    }
+    for context, environment in (
+        ("control", control_environment),
+        ("precision", precision_environment),
+    ):
+        require(
+            all(environment.get(key) == value for key, value in shared_environment.items()),
+            f"MID-360 {context} run.env violates the reviewed internal-IMU contract",
+        )
+    require(
+        control_environment.get("localization_mode") == "baseline"
+        and control_environment.get("snapshot_interval") == "n/a"
+        and control_environment.get("evaluation_topic")
+        == "/localization/gyro_lidar_odom_scan"
+        and control_environment.get("submap_validation_executed") == "false"
+        and control_environment.get("snapshot_override_sha256") == "n/a"
+        and control_environment.get("matcher_param_sha256") == "n/a"
+        and control_environment.get("matcher_override_param_sha256") == "n/a"
+        and precision_environment.get("localization_mode") == "precision"
+        and precision_environment.get("snapshot_interval") == "5"
+        and precision_environment.get("evaluation_topic")
+        == "/localization/precision_local_odom"
+        and precision_environment.get("submap_validation_executed") == "true"
+        and precision_environment.get("submap_validation_status") == "0"
+        and precision_environment.get("snapshot_override_sha256")
+        == MID360_SOURCE_CONTRACT["precision_snapshot_parameters"][1]
+        and precision_environment.get("matcher_param_sha256")
+        == MID360_SOURCE_CONTRACT["precision_matcher_parameters"][1]
+        and precision_environment.get("matcher_override_param_sha256")
+        == MID360_SOURCE_CONTRACT["precision_matcher_tuning"][1],
+        "MID-360 control/precision mode or interval-5 snapshot policy changed",
+    )
+    for shared_path_key in ("bag", "glim_dir", "glim_traj"):
+        require(
+            control_environment.get(shared_path_key)
+            == precision_environment.get(shared_path_key),
+            f"MID-360 A/B runs use different {shared_path_key}",
+        )
+
+    require_mid360_runtime(control_runtime, "MID-360 control")
+    require_mid360_runtime(precision_runtime, "MID-360 precision")
+    require_mid360_structural_validation(structural)
+    require(
+        evaluation.get("structural_validation") == structural,
+        "MID-360 A/B result embeds a different structural validation result",
+    )
+
+    for prefix, environment in (
+        ("control", control_environment),
+        ("precision", precision_environment),
+    ):
+        require_identity_transform_log(
+            sources[f"{prefix}_lidar_transform_log"], "livox_frame"
+        )
+        require_mid360_parameter_contract(
+            sources[f"{prefix}_imu_parameters"],
+            sources[f"{prefix}_odometry_override"],
+            environment,
+            f"MID-360 {prefix}",
+        )
+    require(
+        sha256(sources["control_imu_parameters"])
+        == sha256(sources["precision_imu_parameters"])
+        and sha256(sources["control_odometry_override"])
+        == sha256(sources["precision_odometry_override"]),
+        "MID-360 control and precision runs used different IMU/odometry artifacts",
+    )
+    require(
+        sha256(sources["control_odometry_tuning"])
+        == sha256(sources["precision_odometry_tuning"])
+        and sha256(sources["control_odometry_tuning"])
+        == "465101aeb98d0eefddd2f41d6baf56e821b5b939b5e49127535bb78320ddeefc"
+        and sha256(sources["precision_matcher_tuning"])
+        == "7db51bec16ed2a4bad41857bf51dde33ae04c08efa94b0ef90f614341f39f821",
+        "MID-360 accepted tuning artifacts changed",
+    )
+    accepted_root = (
+        ROOT
+        / "src/pure_odometry_bringup/config/evaluation/lidar_imu/mid360"
+        / "rosbag2_2026_04_08-22_52_42/accepted"
+    )
+    packaged_profiles = {
+        accepted_root / "deskew.yaml": sources["control_imu_parameters"],
+        accepted_root / "odom_fixed_bias_direct.yaml": sources[
+            "control_odometry_override"
+        ],
+        accepted_root / "odom_tuned.yaml": sources["control_odometry_tuning"],
+        accepted_root / "submap_matcher_tuned.yaml": sources[
+            "precision_matcher_tuning"
+        ],
+        ROOT / "src/pure_precision_bringup/config/submap_snapshot_override.yaml": sources[
+            "precision_snapshot_parameters"
+        ],
+        ROOT / "src/pure_lidar_submap_matcher/param/param.yaml": sources[
+            "precision_matcher_parameters"
+        ],
+    }
+    require(
+        all(
+            packaged.is_file() and sha256(packaged) == sha256(source)
+            for packaged, source in packaged_profiles.items()
+        ),
+        "MID-360 packaged accepted profiles differ from final-run artifacts",
+    )
+
+    stage_selection = {
+        stage: read_json(sources[f"stage_summary_{stage}"])
+        for stage in MID360_STAGE_SUMMARY_CONTRACT
+    }
+    require(
+        final_status.get("status") == "ACCEPTED"
+        and final_status.get("completed") is True
+        and final_status.get("candidate_adopted") is True
+        and final_status.get("formal_ab_passed") is True
+        and final_status.get("formal_ab_status") == 0
+        and final_status.get("adopted_winner", {}).get("id") == "c08"
+        and final_status.get("adopted_winner", {}).get("effective_runner")
+        == {"snapshot_interval": 5}
+        and final_status.get("status_revalidation", {}).get("receipt_sha256")
+        == MID360_SOURCE_CONTRACT["status_revalidation"][1]
+        and revalidation.get("operation") == "final-status-only-revalidation"
+        and revalidation.get("replay_executed") is False
+        and revalidation.get("candidate_metrics_recomputed") is False
+        and revalidation.get("candidate_selection_changed") is False
+        and revalidation.get("no_parameter_or_data_changes") is True
+        and revalidation.get("formal_ab", {}).get("all_hard_checks_passed") is True
+        and revalidation.get("formal_ab", {}).get("hard_check_count") == 20
+        and revalidation.get("formal_ab", {}).get("cadence_expected") == 5
+        and holdout.get("opened_after_all_stages_completed") is True
+        and holdout.get("selection_score_used_holdout") is False
+        and plan.get("dataset", {}).get("id") == "mid360_internal_imu_2026_04_08"
+        and sum(item.get("candidate_count", 0) for item in stage_selection.values())
+        == 48
+        and all(
+            item.get("completed") is True
+            and item.get("candidate_adopted") is True
+            and item.get("selection_status") == "ADOPTED"
+            for item in stage_selection.values()
+        ),
+        "MID-360 tuning selection, holdout, or status-revalidation contract changed",
+    )
+
+    checks = evaluation.get("checks")
+    require(isinstance(checks, list), "MID-360 A/B result lacks hard gates")
+    failed_hard = [
+        {"name": item.get("name"), "detail": item.get("detail")}
+        for item in checks
+        if item.get("category") == "hard" and item.get("passed") is not True
+    ]
+    require(
+        evaluation.get("passed") is True
+        and evaluation.get("sensor") == "mid360"
+        and evaluation.get("label") == "Livox MID-360 + internal IMU"
+        and sum(item.get("category") == "hard" for item in checks) == 20
+        and failed_hard == []
+        and all(
+            item.get("passed") is True
+            for item in checks
+            if item.get("category") != "hard"
+        ),
+        "MID-360 A/B must pass every reviewed hard gate",
+    )
+    require(
+        evaluation.get("configuration_contract")
+        == {
+            "mid_fixed_bias_direct": True,
+            "mid_policy_accepted": True,
+            "mismatches": {},
+            "passed": True,
+            "precision_matcher_provenance_present": True,
+            "provenance_present": True,
+        },
+        "MID-360 A/B configuration contract changed",
+    )
+    accuracy = evaluation.get("accuracy", {})
+    metrics = accuracy.get("metrics", {})
+    primary_alignment = accuracy.get("primary_alignment", {})
+    require(
+        set(metrics) == {"control_raw", "precision_raw", "precision_local"}
+        and primary_alignment.get("type") == "single_pose_exact_se2"
+        and primary_alignment.get("anchor_native_common_all_streams") is True
+        and primary_alignment.get("anchor_physical_stamp_common_all_streams") is True
+        and primary_alignment.get("scale_estimated_or_applied") is False
+        and primary_alignment.get("shared_across")
+        == ["control_raw", "precision_raw", "precision_local"]
+        and primary_alignment.get("exact_anchor_residual", {}).get("same_stamp") is True
+        and primary_alignment.get("exact_anchor_residual", {}).get("position_m")
+        <= 1.0e-12
+        and primary_alignment.get("exact_anchor_residual", {}).get("yaw_rad")
+        <= 1.0e-12
+        and all(
+            float(metrics[name].get("glim_association_coverage")) >= 0.95
+            for name in metrics
+        )
+        and 0.95 <= float(metrics["precision_local"]["path_ratio_estimate_over_reference"])
+        <= 1.05,
+        "MID-360 alignment, association, or accepted path-ratio contract changed",
+    )
+    gain = accuracy.get("comparison", {}).get("end_to_end_gain", {})
+    require(
+        float(gain.get("position_rmse_m", {}).get("improvement_percent")) > 0.0
+        and float(gain.get("yaw_rmse_deg", {}).get("improvement_percent")) > 0.0
+        and float(gain.get("endpoint_position_error_m", {}).get("improvement_percent"))
+        > 0.0
+        and float(
+            gain.get("rpe", {})
+            .get("10", {})
+            .get("translation_rmse_m", {})
+            .get("improvement_percent")
+        )
+        > 0.0
+        and float(
+            gain.get("rpe", {})
+            .get("10", {})
+            .get("yaw_rmse_deg", {})
+            .get("improvement_percent")
+        )
+        > 0.0,
+        "MID-360 scan-to-submap improvement contract changed",
+    )
+
+    csv_streams: dict[str, list[tuple[float, float, float, float]]] = {}
+    with sources["aligned_samples"].open(newline="", encoding="utf-8") as stream:
+        reader = csv.DictReader(stream)
+        require(
+            reader.fieldnames
+            == [
+                "stream",
+                "stamp_ns",
+                "time_from_primary_anchor_sec",
+                "reference_x",
+                "reference_y",
+                "reference_yaw_rad",
+                "aligned_x",
+                "aligned_y",
+                "aligned_yaw_rad",
+                "position_error_m",
+                "yaw_error_deg",
+            ],
+            "MID-360 aligned CSV schema changed",
+        )
+        for row in reader:
+            require(
+                row["stream"]
+                in {"control_raw", "precision_raw", "precision_local"},
+                "MID-360 aligned CSV contains an unexpected stream",
+            )
+            numeric_values = [float(row[column]) for column in reader.fieldnames[1:]]
+            require(
+                all(math.isfinite(value) for value in numeric_values),
+                "MID-360 aligned CSV contains a non-finite numeric value",
+            )
+            csv_streams.setdefault(row["stream"], []).append(
+                (
+                    numeric_values[2],
+                    numeric_values[3],
+                    numeric_values[5],
+                    numeric_values[6],
+                )
+            )
+    require(
+        set(csv_streams) == {"control_raw", "precision_raw", "precision_local"},
+        "MID-360 aligned CSV lacks one of the reviewed A/B streams",
+    )
+    require(
+        all(
+            len(csv_streams[stream_name]) == int(metrics[stream_name]["samples"])
+            for stream_name in ("control_raw", "precision_raw", "precision_local")
+        ),
+        "MID-360 aligned CSV row counts differ from the A/B metrics",
+    )
+
+    micro_motion: dict[str, dict[str, Any]] = {}
+    for stream_name in ("control_raw", "precision_local"):
+        samples = csv_streams[stream_name]
+        interval_count = 0
+        reference_path_m = 0.0
+        estimate_path_m = 0.0
+        for previous, current in zip(samples, samples[1:]):
+            reference_step = math.hypot(
+                current[0] - previous[0], current[1] - previous[1]
+            )
+            if reference_step >= 0.002:
+                continue
+            interval_count += 1
+            reference_path_m += reference_step
+            estimate_path_m += math.hypot(
+                current[2] - previous[2], current[3] - previous[3]
+            )
+        micro_motion[stream_name] = {
+            "interval_count": interval_count,
+            "reference_path_m": reference_path_m,
+            "estimate_path_m": estimate_path_m,
+        }
+    expected_micro_motion = {
+        "control_raw": {
+            "interval_count": 263,
+            "reference_path_m": 0.16677875544589313,
+            "estimate_path_m": 0.5608420287798032,
+        },
+        "precision_local": {
+            "interval_count": 263,
+            "reference_path_m": 0.16677875544589313,
+            "estimate_path_m": 0.6077103925815106,
+        },
+    }
+    require(
+        micro_motion == expected_micro_motion,
+        "MID-360 micro-motion path audit changed from the reviewed CSV",
+    )
+    return {
+        "evaluation": evaluation,
+        "structural": structural,
+        "control_runtime": control_runtime,
+        "precision_runtime": precision_runtime,
+        "micro_motion": micro_motion,
+        "holdout": holdout,
+    }
+
+
+def retire_mid360_assets() -> None:
+    directory = ASSETS / MID360_RETIRED_DATASET_ID
+    if not directory.exists():
+        return
+    require(directory.is_dir() and not directory.is_symlink(), "unsafe retired MID-360 path")
+    entries = list(directory.iterdir())
+    require(
+        all(path.is_file() and not path.is_symlink() for path in entries)
+        and {path.name for path in entries} == MID360_PUBLICATION_FILENAMES,
+        "retired MID-360 directory contains an unexpected file",
+    )
+    for path in entries:
+        path.unlink()
+    directory.rmdir()
+
+
 def curate_lidar() -> list[dict[str, Any]]:
     result_root = ROOT / "test_results"
     vel_run = result_root / "lidar_imu_clean_prefix_20260812" / "velodyne_pre_first_tracking_fatal_precision_i2" / "ab_initial_pose"
     vel_full = result_root / "lidar_imu_submap_20260812" / "velodyne_default_i2_full" / "ab_initial_pose_v4"
-    mid_run = result_root / "lidar_imu_submap_20260812" / "mid360_default_i2_full" / "ab_initial_pose_v4"
     records: list[dict[str, Any]] = []
 
     vel_output = ASSETS / "velodyne_32line_external_imu"
@@ -1820,35 +2759,197 @@ def curate_lidar() -> list[dict[str, Any]]:
         }
     )
 
-    mid_output = ASSETS / "livox_mid360_internal_imu"
-    mid = read_json(mid_run / "evaluation.json")
+    mid_sources = pinned_mid360_sources()
+    mid_evidence = validate_mid360_evidence(mid_sources)
+    mid = mid_evidence["evaluation"]
+    mid_output = ASSETS / MID360_DATASET_ID
+    if mid_output.is_dir():
+        unexpected_files = {
+            path.name for path in mid_output.iterdir() if path.is_file()
+        } - MID360_PUBLICATION_FILENAMES
+        require(
+            not unexpected_files,
+            f"{MID360_DATASET_ID}: unexpected publication files: "
+            f"{sorted(unexpected_files)}",
+        )
     render_lidar(
-        mid_run / "aligned_samples.csv", mid_output, MID360_LABEL,
-        ("control_raw",), {"control_raw": "Scan-to-scan"},
+        mid_sources["aligned_samples"],
+        mid_output,
+        MID360_PLOT_TITLE,
+        ("control_raw", "precision_local"),
+        {
+            "control_raw": "Scan-to-scan",
+            "precision_local": "Scan-to-submap",
+        },
     )
+    metrics = mid["accuracy"]["metrics"]
+    gain = mid["accuracy"]["comparison"]["end_to_end_gain"]
+    structural = mid_evidence["structural"]
+
+    def runtime_summary(runtime: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "status": "PASS",
+            "playback_rate_observed": runtime["clock"][
+                "observed_sim_over_wall_rate"
+            ],
+            "deskew": {
+                "successful": runtime["deskew"]["accepted"],
+                "rejected": runtime["deskew"]["rejected"],
+                "success_rate": runtime["deskew"]["success_rate"],
+            },
+            "imu": {
+                "exact_stamp_coverage": runtime["imu"]["exact_stamp_coverage"],
+                "corrected_acceleration_norm_median_mps2": runtime["imu"][
+                    "corrected_acceleration_norm_median_mps2"
+                ],
+            },
+            "accepted_scan_odometry": {
+                "messages": runtime["odometry"]["accepted_scan_messages"],
+                "registration_density": runtime["odometry"][
+                    "scan_registration_density"
+                ],
+            },
+        }
+
+    micro_motion = mid_evidence["micro_motion"]
     write_json(
         mid_output / "metrics.json",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "dataset_label": MID360_LABEL,
-            "reference": {"method": "GLIM trajectory", "independent_ground_truth": False},
-            "publication_status": "scan-to-scan accepted for reporting; scan-to-submap rejected and excluded from figures",
+            "publication_status": "ACCEPTED",
+            "accepted": True,
+            "reference": {
+                "method": "GLIM trajectory",
+                "independent_ground_truth": False,
+                "shares_lidar_and_imu_observations": True,
+            },
+            "sensor_configuration": {
+                "lidar": "Livox MID-360",
+                "imu": "MID-360 internal IMU",
+                "points_topic": "/livox/lidar",
+                "imu_topic": "/livox/imu",
+                "imu_acceleration_scale": 9.80665,
+                "gyro_z_bias_rad_s": 0.006959692,
+                "gyro_bias_adaptation_enabled": False,
+                "gnss_used": False,
+                "recorded_tf_used": False,
+                "static_transforms": {
+                    "base_link_to_livox_frame": {
+                        "translation_m": [0.0, 0.0, 0.0],
+                        "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+                    },
+                },
+                "playback_rate": 1.0,
+                "submap_snapshot_interval_frames": 5,
+            },
             "alignment": {
                 "type": "single shared exact first-common-pose SE(2)",
                 "position_and_yaw_share_transform": True,
                 "scale_applied": False,
+                "estimate_interpolation": False,
+                "reference_interpolation": "GLIM only",
             },
-            "scan_to_scan": lidar_stream(mid["accuracy"]["metrics"]["control_raw"]),
-            "rejected_scan_to_submap_summary": {
-                "included_in_figures": False,
-                "overall_ab_passed": mid["passed"],
-                "position_rmse_m": mid["accuracy"]["metrics"]["precision_local"]["position_error_m"]["rmse"],
-                "yaw_rmse_deg": mid["accuracy"]["metrics"]["precision_local"]["yaw_error_deg"]["rmse"],
-                "reason": "The external scan-to-submap branch regressed XY and translation RPE on this dataset.",
+            "evaluation": {
+                "overall_ab_passed": True,
+                "hard_gate_count": 20,
+                "failed_hard_gates": [],
+                "duration_sec": mid["accuracy"]["common_interval"]["duration_sec"],
+                "streams": {
+                    "scan_to_scan": lidar_stream(metrics["control_raw"]),
+                    "scan_to_submap": lidar_stream(metrics["precision_local"]),
+                },
+                "scan_to_submap_gain": gain,
+            },
+            "holdout_validation": {
+                "selection_score_used_holdout": False,
+                "opened_after_all_stages_completed": True,
+                "scan_to_scan": mid_evidence["holdout"]["scan_to_scan"]["holdout"],
+                "scan_to_submap": mid_evidence["holdout"]["scan_to_submap"]["holdout"],
+            },
+            "micro_motion_path_audit": {
+                "reference_step_threshold_m_exclusive": 0.002,
+                "definition": (
+                    "Consecutive samples whose GLIM reference XY step is below "
+                    "the threshold; reference and estimate paths are summed "
+                    "independently within each published stream."
+                ),
+                "streams": {
+                    "scan_to_scan": micro_motion["control_raw"],
+                    "scan_to_submap": micro_motion["precision_local"],
+                },
+            },
+            "runtime_validation": {
+                "control_scan_to_scan": runtime_summary(
+                    mid_evidence["control_runtime"]
+                ),
+                "precision_scan_to_submap": runtime_summary(
+                    mid_evidence["precision_runtime"]
+                ),
+            },
+            "structural_validation": {
+                "status": "PASS",
+                "failed_hard_checks": [],
+                "counts": structural["counts"],
+                "matcher": {
+                    key: structural["metrics"][key]
+                    for key in (
+                        "matcher_attempted",
+                        "matcher_accepted",
+                        "matcher_rejected",
+                        "matcher_accepted_ratio",
+                        "matcher_processing_p99_ms",
+                        "matcher_latency_p99_ms",
+                        "matcher_queue_drop_count",
+                        "post_warmup_correction_ratio",
+                    )
+                },
+            },
+            "source_validation": {
+                "source_hashes_pinned": True,
+                "configuration_contract": "PASS",
+                "packaged_profile_contract": "PASS",
+                "control_runtime": "PASS",
+                "precision_runtime": "PASS",
+                "precision_structure": "PASS",
+                "identity_transform_contract": "PASS",
+                "tuning_candidate_count": 48,
+                "tuning_stage_count": 9,
+                "holdout_selection_isolation": "PASS",
+                "status_revalidated_without_replay": True,
+                "a_b_hard_gate_status": "PASS",
             },
         },
     )
-    records.append({"directory": mid_output, "sources": [mid_run / "evaluation.json", mid_run / "aligned_samples.csv"], "provenance": {"source_run_id": "mid360_default_i2_full"}})
+    require(
+        {path.name for path in mid_output.iterdir() if path.is_file()}
+        == MID360_PUBLICATION_FILENAMES,
+        f"{MID360_DATASET_ID}: publication must contain exactly four files",
+    )
+    retire_mid360_assets()
+    records.append(
+        {
+            "directory": mid_output,
+            "sources": [
+                (source_id, path) for source_id, path in mid_sources.items()
+            ],
+            "provenance": {
+                "publication_status": "ACCEPTED",
+                "accepted": True,
+                "failed_hard_gates": [],
+                "sensor_contract": "MID-360 internal IMU; identity LiDAR/IMU frame; no GNSS",
+                "submap_snapshot_policy": "interval 5 accepted frames",
+                "canonical_modes": {
+                    "control": "scan_to_scan",
+                    "candidate": "rolling_scan_to_submap_interval_5_frames",
+                },
+                "evaluation_method": (
+                    "shared exact initial pose; native accepted-scan estimates; "
+                    "GLIM-only reference interpolation"
+                ),
+            },
+        }
+    )
     return records
 
 
@@ -1865,8 +2966,28 @@ def curate_gnss() -> list[dict[str, Any]]:
         output = ASSETS / f"hesai_32line_imu_rtk_gnss_{course}"
         local_csv = sources["aligned_local_samples"]
         global_csv = sources["aligned_global_samples"]
-        render_gnss(local_csv, output, label, "local")
-        render_gnss(global_csv, output, label, "global")
+        if output.is_dir():
+            unexpected_files = {
+                path.name for path in output.iterdir() if path.is_file()
+            } - GNSS_PUBLICATION_FILENAMES
+            require(
+                not unexpected_files,
+                f"{output.name}: forbidden Hesai publication files: "
+                f"{sorted(unexpected_files)}",
+            )
+        error_plot_timeline = gnss_error_plot_timeline(
+            global_csv,
+            data,
+            contract["expected_error_plot_timeline"],
+        )
+        render_gnss_errors(local_csv, output, label, "local")
+        render_gnss_errors(
+            global_csv,
+            output,
+            label,
+            "global",
+            error_plot_timeline,
+        )
         evaluations = data["evaluations"]
         failed_hard_gate_details = [
             {"name": item["name"], "detail": item["detail"]}
@@ -1990,16 +3111,16 @@ def curate_gnss() -> list[dict[str, Any]]:
                 },
             },
             "outage": {
-                "start_sec": data["outage"]["start_sec"],
-                "end_sec": data["outage"]["end_sec"],
+                "absolute_timestamps_published": False,
                 "duration_sec": data["outage"]["duration_sec"],
                 "definition": (
                     "longest post-initialization non-TRACKING interval reported "
-                    "by gnss_map_odom_fusion in the canonical precision run; "
-                    "distinct from the raw RTK-Q4-loss interval"
+                    "by gnss_map_odom_fusion in the canonical scan-to-submap "
+                    "run; distinct from the raw loss of usable GNSS input"
                 ),
                 "streams": outage_accuracy,
             },
+            "error_plot_annotations": error_plot_timeline,
             "supporting_acceptance": {
                 "startup": {
                     "status": "PASS",
@@ -2426,6 +3547,14 @@ def parse_lsim_validation_report(
     warning_details = re.findall(
         r"^\s*\[WARN\]\s+(.+?)\s*$", text, re.MULTILINE
     )
+    public_warning_details = [
+        re.sub(
+            r"\s+at\s+[-+0-9.eE]+(?=\s+\()",
+            "",
+            detail,
+        )
+        for detail in warning_details
+    ]
     return {
         "status": (
             "PASS"
@@ -2435,7 +3564,7 @@ def parse_lsim_validation_report(
         "passed_checks": passed,
         "warnings": warnings,
         "failures": failures,
-        "warning_details": warning_details,
+        "warning_details": public_warning_details,
         "messages_read": int(read_match.group(1)),
         "topic_count": int(read_match.group(2)),
         "kinematic_state_samples": int(state_match.group(1)),
@@ -2516,6 +3645,31 @@ def curate_lsim() -> list[dict[str, Any]]:
     current_run = validate_current_lsim_run(course, current_sources)
     output = ASSETS / "autoware_lsim_hesai_course_2"
     output.mkdir(parents=True, exist_ok=True)
+    poster = output / LSIM_POSTER_FILENAME
+    require(poster.is_file(), f"missing reviewed RViz poster: {poster}")
+    require(
+        sha256(poster) == LSIM_POSTER_SHA256,
+        "the reviewed RViz poster changed without updating its contract",
+    )
+    require(
+        not set(png_chunk_types(poster))
+        & {"tEXt", "zTXt", "iTXt", "eXIf", "tIME"},
+        "the reviewed RViz poster contains publication metadata",
+    )
+    replay = output / LSIM_REPLAY_FILENAME
+    require(replay.is_file(), f"missing reviewed RViz replay: {replay}")
+    require(
+        replay.stat().st_size == LSIM_REPLAY_BYTES,
+        "the reviewed RViz replay size changed without updating its contract",
+    )
+    require(
+        sha256(replay) == LSIM_REPLAY_SHA256,
+        "the reviewed RViz replay changed without updating its contract",
+    )
+    require(
+        replay.read_bytes()[:4] == b"\x1aE\xdf\xa3",
+        "the reviewed RViz replay does not have a WebM/EBML signature",
+    )
     write_json(
         output / "metrics.json",
         {
@@ -2535,12 +3689,44 @@ def curate_lsim() -> list[dict[str, Any]]:
                 ),
                 "runs": {course: current_run},
             },
+            "representative_rviz_poster": {
+                "status": "PUBLISHED",
+                "visualization_only": True,
+                "passing_run_evidence": False,
+                "accuracy_evaluated": False,
+                "sample_vehicle_model": (
+                    "illustrative Autoware Lexus mesh; not the recorded vehicle, "
+                    "its geometry, or its sensor calibration"
+                ),
+                "absolute_timestamps_published": False,
+                "embedded_metadata_removed": True,
+            },
+            "representative_rviz_replay": {
+                "status": "PUBLISHED",
+                "visualization_only": True,
+                "passing_run_evidence": False,
+                "accuracy_evaluated": False,
+                "container": "WebM",
+                "video_codec": "VP8",
+                "audio_present": False,
+                "declared_frame_rate_hz": None,
+                "variable_or_unspecified_frame_rate": True,
+                "frame_count": LSIM_REPLAY_FRAME_COUNT,
+                "duration_sec": LSIM_REPLAY_DURATION_SEC,
+                "resolution_px": LSIM_REPLAY_RESOLUTION,
+                "bytes": LSIM_REPLAY_BYTES,
+                "sha256": LSIM_REPLAY_SHA256,
+                "capture_timestamp_published": False,
+                "embedded_capture_datetime_removed": True,
+            },
         },
     )
     sources: list[tuple[str, Path]] = [
         (f"current_{course}_{source_id}", path)
         for source_id, path in current_sources.items()
     ]
+    sources.append(("representative_rviz_poster", poster))
+    sources.append(("representative_rviz_replay", replay))
     return [
         {
             "directory": output,
@@ -2550,6 +3736,27 @@ def curate_lsim() -> list[dict[str, Any]]:
                     "source_run_id": LSIM_CURRENT_RUN_CONTRACTS[course]["run_id"],
                     "current_default_projection_equivalent": True,
                     "evidence_scope": LSIM_CURRENT_EVIDENCE_SCOPE,
+                },
+                "representative_rviz_poster": {
+                    "visualization_only": True,
+                    "passing_run_evidence": False,
+                    "accuracy_evaluated": False,
+                    "embedded_metadata_removed": True,
+                },
+                "representative_rviz_replay": {
+                    "visualization_only": True,
+                    "passing_run_evidence": False,
+                    "accuracy_evaluated": False,
+                    "container": "WebM",
+                    "video_codec": "VP8",
+                    "audio_present": False,
+                    "declared_frame_rate_hz": None,
+                    "variable_or_unspecified_frame_rate": True,
+                    "frame_count": LSIM_REPLAY_FRAME_COUNT,
+                    "duration_sec": LSIM_REPLAY_DURATION_SEC,
+                    "resolution_px": LSIM_REPLAY_RESOLUTION,
+                    "capture_timestamp_published": False,
+                    "embedded_capture_datetime_removed": True,
                 },
             },
         }
@@ -2586,8 +3793,10 @@ def manifest_entry(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_manifest(
-    records: list[dict[str, Any]], *, preserve_unmentioned: bool = False
+    records: list[dict[str, Any]], *, preserve_unmentioned: bool = False,
+    retired_datasets: set[str] | None = None,
 ) -> None:
+    retired_datasets = retired_datasets or set()
     new_entries = {
         record["directory"].name: manifest_entry(record) for record in records
     }
@@ -2615,16 +3824,225 @@ def build_manifest(
                 f"invalid or duplicate existing manifest dataset: {dataset!r}",
             )
             seen.add(dataset)
+            if dataset in retired_datasets:
+                continue
             entries.append(new_entries.pop(dataset, entry))
     entries.extend(new_entries.values())
+    entries.sort(key=lambda item: item["dataset"])
     write_json(
         ASSETS / "manifest.json",
         {
             "schema_version": 1,
             "generated_by": "tools/evaluation/curate_publication_assets.py",
-            "content_policy": "Compact plots and normalized JSON only; no bags, raw logs, or sample CSV files.",
+            "content_policy": (
+                "Curated plots, normalized JSON, and the single pinned RViz "
+                "WebM only; no bags, raw logs, or sample CSV files."
+            ),
             "datasets": entries,
         },
+    )
+
+
+def check_mid360_publication_contract(manifest: dict[str, Any]) -> None:
+    datasets = {
+        item.get("dataset"): item for item in manifest.get("datasets", [])
+    }
+    require(
+        MID360_RETIRED_DATASET_ID not in datasets
+        and not (ASSETS / MID360_RETIRED_DATASET_ID).exists(),
+        "retired external-IMU MID-360 evidence must not remain public",
+    )
+    require(MID360_DATASET_ID in datasets, "missing internal-IMU MID-360 dataset")
+    dataset = datasets[MID360_DATASET_ID]
+    expected_paths = {
+        f"{MID360_DATASET_ID}/{filename}"
+        for filename in MID360_PUBLICATION_FILENAMES
+    }
+    actual_paths = {item.get("path") for item in dataset.get("files", [])}
+    require(
+        actual_paths == expected_paths,
+        "internal-IMU MID-360 dataset must contain exactly four reviewed files",
+    )
+    expected_source_hashes = {
+        source_id: expected_hash
+        for source_id, (_, expected_hash) in MID360_SOURCE_CONTRACT.items()
+    }
+    expected_source_hashes.update(
+        {
+            f"stage_summary_{stage}": expected_hash
+            for stage, expected_hash in MID360_STAGE_SUMMARY_CONTRACT.items()
+        }
+    )
+    actual_source_hashes = {
+        item.get("local_source_id"): item.get("sha256")
+        for item in dataset.get("source_artifacts", [])
+    }
+    require(
+        actual_source_hashes == expected_source_hashes,
+        "internal-IMU MID-360 manifest source contract mismatch",
+    )
+    provenance = dataset.get("provenance", {})
+    require(
+        provenance.get("publication_status") == "ACCEPTED"
+        and provenance.get("accepted") is True
+        and provenance.get("failed_hard_gates") == []
+        and provenance.get("sensor_contract")
+        == "MID-360 internal IMU; identity LiDAR/IMU frame; no GNSS"
+        and provenance.get("submap_snapshot_policy")
+        == "interval 5 accepted frames"
+        and provenance.get("canonical_modes")
+        == {
+            "control": "scan_to_scan",
+            "candidate": "rolling_scan_to_submap_interval_5_frames",
+        }
+        and provenance.get("evaluation_method")
+        == (
+            "shared exact initial pose; native accepted-scan estimates; "
+            "GLIM-only reference interpolation"
+        )
+        and "source_result_set" not in provenance,
+        "internal-IMU MID-360 manifest provenance changed",
+    )
+
+    metrics_path = ASSETS / MID360_DATASET_ID / "metrics.json"
+    metrics = read_json(metrics_path)
+    require(
+        metrics.get("schema_version") == 2
+        and metrics.get("dataset_label") == MID360_LABEL
+        and metrics.get("publication_status") == "ACCEPTED"
+        and metrics.get("accepted") is True,
+        "internal-IMU MID-360 metrics status/schema/label changed",
+    )
+    require(
+        metrics.get("reference")
+        == {
+            "method": "GLIM trajectory",
+            "independent_ground_truth": False,
+            "shares_lidar_and_imu_observations": True,
+        }
+        and metrics.get("alignment")
+        == {
+            "type": "single shared exact first-common-pose SE(2)",
+            "position_and_yaw_share_transform": True,
+            "scale_applied": False,
+            "estimate_interpolation": False,
+            "reference_interpolation": "GLIM only",
+        },
+        "internal-IMU MID-360 reference/alignment disclosure changed",
+    )
+    sensor = metrics.get("sensor_configuration", {})
+    expected_transforms = {
+        "base_link_to_livox_frame": {
+            "translation_m": [0.0, 0.0, 0.0],
+            "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+        },
+    }
+    require(
+        sensor
+        == {
+            "lidar": "Livox MID-360",
+            "imu": "MID-360 internal IMU",
+            "points_topic": "/livox/lidar",
+            "imu_topic": "/livox/imu",
+            "imu_acceleration_scale": 9.80665,
+            "gyro_z_bias_rad_s": 0.006959692,
+            "gyro_bias_adaptation_enabled": False,
+            "gnss_used": False,
+            "recorded_tf_used": False,
+            "static_transforms": expected_transforms,
+            "playback_rate": 1.0,
+            "submap_snapshot_interval_frames": 5,
+        },
+        "internal-IMU MID-360 public sensor/TF contract changed",
+    )
+    evaluation = metrics.get("evaluation", {})
+    streams = evaluation.get("streams", {})
+    require(
+        evaluation.get("overall_ab_passed") is True
+        and evaluation.get("hard_gate_count") == 20
+        and evaluation.get("failed_hard_gates") == []
+        and set(streams) == {"scan_to_scan", "scan_to_submap"}
+        and streams["scan_to_scan"]["samples"] == 2917
+        and streams["scan_to_submap"]["samples"] == 2916
+        and streams["scan_to_scan"]["position_error_m"]["rmse"]
+        == 0.6303449121594672
+        and streams["scan_to_submap"]["position_error_m"]["rmse"]
+        == 0.2940738154352217
+        and streams["scan_to_scan"]["yaw_error_deg"]["rmse"]
+        == 2.9063988030589183
+        and streams["scan_to_submap"]["yaw_error_deg"]["rmse"]
+        == 0.6023916185230034
+        and streams["scan_to_submap"]["path_ratio_estimate_over_reference"]
+        == 1.0057248435050143,
+        "internal-IMU MID-360 published headline streams/metrics changed",
+    )
+    holdout = metrics.get("holdout_validation", {})
+    require(
+        holdout.get("selection_score_used_holdout") is False
+        and holdout.get("opened_after_all_stages_completed") is True
+        and holdout.get("scan_to_scan", {}).get("position_error_m", {}).get("rmse")
+        == 0.5940821978291224
+        and holdout.get("scan_to_submap", {}).get("position_error_m", {}).get("rmse")
+        == 0.3066361711828477
+        and holdout.get("scan_to_scan", {}).get("yaw_error_deg", {}).get("rmse")
+        == 3.07764842104325
+        and holdout.get("scan_to_submap", {}).get("yaw_error_deg", {}).get("rmse")
+        == 0.6737415550073956,
+        "internal-IMU MID-360 holdout contract changed",
+    )
+    micro_motion = metrics.get("micro_motion_path_audit", {})
+    require(
+        micro_motion.get("reference_step_threshold_m_exclusive") == 0.002
+        and micro_motion.get("streams")
+        == {
+            "scan_to_scan": {
+                "interval_count": 263,
+                "reference_path_m": 0.16677875544589313,
+                "estimate_path_m": 0.5608420287798032,
+            },
+            "scan_to_submap": {
+                "interval_count": 263,
+                "reference_path_m": 0.16677875544589313,
+                "estimate_path_m": 0.6077103925815106,
+            },
+        },
+        "internal-IMU MID-360 micro-motion evidence changed",
+    )
+    source_validation = metrics.get("source_validation", {})
+    require(
+        source_validation
+        == {
+            "source_hashes_pinned": True,
+            "configuration_contract": "PASS",
+            "packaged_profile_contract": "PASS",
+            "control_runtime": "PASS",
+            "precision_runtime": "PASS",
+            "precision_structure": "PASS",
+            "identity_transform_contract": "PASS",
+            "tuning_candidate_count": 48,
+            "tuning_stage_count": 9,
+            "holdout_selection_isolation": "PASS",
+            "status_revalidated_without_replay": True,
+            "a_b_hard_gate_status": "PASS",
+        },
+        "internal-IMU MID-360 public source validation changed",
+    )
+    normalized = json.dumps(metrics, sort_keys=True).lower()
+    private_markers = (
+        "/home/",
+        "rosbag2_2026_04_08-22_52_42",
+        "mid360_dense_20260812_142237",
+        "rosbag2_2026_05_07-19_19_36_first250s",
+        "mid360_dense_first250s_20260813_113422",
+        "mid360_external_imu_20260813_final",
+        "traj_lidar.txt",
+        "stamp_ns",
+        "precision_raw",
+        MID360_RESULT_SET.lower(),
+    )
+    require(
+        not any(marker in normalized for marker in private_markers),
+        "private/retired MID-360 identifiers leaked into public metrics",
     )
 
 
@@ -2651,6 +4069,17 @@ def check_gnss_publication_contract(manifest: dict[str, Any]) -> None:
         dataset_id = f"hesai_32line_imu_rtk_gnss_{course}"
         require(dataset_id in datasets, f"missing GNSS publication dataset: {dataset_id}")
         dataset = datasets[dataset_id]
+        expected_publication_paths = {
+            f"{dataset_id}/{filename}"
+            for filename in GNSS_PUBLICATION_FILENAMES
+        }
+        actual_publication_paths = {
+            item.get("path") for item in dataset.get("files", [])
+        }
+        require(
+            actual_publication_paths == expected_publication_paths,
+            f"{dataset_id}: only XY/yaw error figures and metrics may be published",
+        )
         expected_hashes = {
             source_id: expected_hash
             for source_id, (_, expected_hash) in contract["sources"].items()
@@ -2698,6 +4127,45 @@ def check_gnss_publication_contract(manifest: dict[str, Any]) -> None:
         require(
             metrics.get("canonical_runs") == expected_runs,
             f"{dataset_id}: metrics canonical-run mismatch",
+        )
+        expected_timeline = contract["expected_error_plot_timeline"]
+        annotations = metrics.get("error_plot_annotations", {})
+        time_axis = annotations.get("time_axis", {})
+        unavailable = annotations.get("rtk_q4_unavailable", {})
+        returned = annotations.get("rtk_q4_return", {})
+        resumed = annotations.get("fusion_tracking_resume", {})
+        expected_begin_sec = expected_timeline[
+            "rtk_q4_unavailable_begin_time_sec"
+        ]
+        expected_end_sec = expected_timeline[
+            "rtk_q4_unavailable_end_time_sec"
+        ]
+        expected_resume_sec = expected_timeline[
+            "fusion_tracking_resume_time_sec"
+        ]
+        require(
+            time_axis.get("csv_plot_time_column")
+            == "time_from_common_start_sec"
+            and time_axis.get("origin")
+            == "first common global evaluation sample"
+            and time_axis.get("absolute_timestamps_published") is False
+            and isinstance(
+                time_axis.get("maximum_mapping_residual_sec"), (int, float)
+            )
+            and 0.0 <= time_axis["maximum_mapping_residual_sec"] <= 1.0e-6
+            and unavailable.get("begin_time_from_common_start_sec")
+            == expected_begin_sec
+            and unavailable.get("end_time_from_common_start_sec")
+            == expected_end_sec
+            and unavailable.get("duration_sec")
+            == expected_timeline["rtk_q4_unavailable_duration_sec"]
+            and returned.get("time_from_common_start_sec")
+            == expected_end_sec
+            and resumed.get("time_from_common_start_sec")
+            == expected_resume_sec
+            and resumed.get("delay_from_rtk_q4_return_sec")
+            == expected_timeline["fusion_tracking_resume_delay_sec"],
+            f"{dataset_id}: GNSS error-plot annotation contract mismatch",
         )
         require(
             [
@@ -2818,14 +4286,12 @@ def check_gnss_publication_contract(manifest: dict[str, Any]) -> None:
             and startup_window.get("timestamp_source")
             == "physical ROS header stamps"
             and startup_window.get("window_bounds") == "inclusive"
+            and startup_window.get("absolute_timestamps_published") is False
             and startup_window.get("duration_sec") == 20.0
             and startup_window.get("common_sample_count") == 400
             and startup_window.get("maximum_interpolation_gap_sec") == 0.1
-            and type(startup_window.get("start_sec")) in (int, float)
-            and type(startup_window.get("end_sec")) in (int, float)
-            and math.isfinite(startup_window["start_sec"])
-            and math.isfinite(startup_window["end_sec"])
-            and startup_window["start_sec"] < startup_window["end_sec"]
+            and "start_sec" not in startup_window
+            and "end_sec" not in startup_window
             and metrics.get("supporting_acceptance", {})
             .get("startup", {})
             .get("calibration_window_provenance") == startup_window,
@@ -2920,6 +4386,14 @@ def check_lsim_publication_contract(manifest: dict[str, Any]) -> None:
         None,
     )
     require(dataset is not None, f"missing LSim publication dataset: {dataset_id}")
+    actual_paths = {item.get("path") for item in dataset.get("files", [])}
+    expected_paths = {
+        f"{dataset_id}/{filename}" for filename in LSIM_PUBLICATION_FILENAMES
+    }
+    require(
+        actual_paths == expected_paths,
+        "LSim publication dataset must contain exactly metrics, poster, and replay",
+    )
     provenance = dataset.get("provenance", {})
     current_provenance = provenance.get(
         "current_default_projection_headless", {}
@@ -2932,11 +4406,44 @@ def check_lsim_publication_contract(manifest: dict[str, Any]) -> None:
         == LSIM_CURRENT_EVIDENCE_SCOPE,
         "LSim manifest does not identify the current-default headless run",
     )
+    poster_provenance = provenance.get("representative_rviz_poster", {})
+    require(
+        poster_provenance
+        == {
+            "visualization_only": True,
+            "passing_run_evidence": False,
+            "accuracy_evaluated": False,
+            "embedded_metadata_removed": True,
+        },
+        "LSim poster provenance is missing or overstated",
+    )
+    replay_provenance = provenance.get("representative_rviz_replay", {})
+    require(
+        replay_provenance
+        == {
+            "visualization_only": True,
+            "passing_run_evidence": False,
+            "accuracy_evaluated": False,
+            "container": "WebM",
+            "video_codec": "VP8",
+            "audio_present": False,
+            "declared_frame_rate_hz": None,
+            "variable_or_unspecified_frame_rate": True,
+            "frame_count": LSIM_REPLAY_FRAME_COUNT,
+            "duration_sec": LSIM_REPLAY_DURATION_SEC,
+            "resolution_px": LSIM_REPLAY_RESOLUTION,
+            "capture_timestamp_published": False,
+            "embedded_capture_datetime_removed": True,
+        },
+        "LSim replay provenance is missing or overstated",
+    )
 
     expected_source_hashes = {
         f"current_{course}_{source_id}": expected_hash
         for source_id, (_, expected_hash) in contract["sources"].items()
     }
+    expected_source_hashes["representative_rviz_poster"] = LSIM_POSTER_SHA256
+    expected_source_hashes["representative_rviz_replay"] = LSIM_REPLAY_SHA256
     actual_source_hashes = {
         item.get("local_source_id"): item.get("sha256")
         for item in dataset.get("source_artifacts", [])
@@ -2949,6 +4456,8 @@ def check_lsim_publication_contract(manifest: dict[str, Any]) -> None:
     metrics = read_json(ASSETS / dataset_id / "metrics.json")
     require(metrics.get("schema_version") == 2, "unexpected LSim metrics schema")
     current = metrics.get("current_default_projection_headless", {})
+    poster = metrics.get("representative_rviz_poster", {})
+    replay = metrics.get("representative_rviz_replay", {})
     require(
         current.get("status") == "PASS"
         and current.get("current_default_projection_equivalent") is True
@@ -2956,6 +4465,35 @@ def check_lsim_publication_contract(manifest: dict[str, Any]) -> None:
         and current.get("rviz_evaluated") is False
         and current.get("accuracy_evaluated") is False,
         "LSim metrics do not qualify the current-default headless scope",
+    )
+    require(
+        poster.get("status") == "PUBLISHED"
+        and poster.get("visualization_only") is True
+        and poster.get("passing_run_evidence") is False
+        and poster.get("accuracy_evaluated") is False
+        and poster.get("absolute_timestamps_published") is False
+        and poster.get("embedded_metadata_removed") is True
+        and "not the recorded vehicle" in poster.get("sample_vehicle_model", ""),
+        "LSim poster scope or privacy contract is incomplete",
+    )
+    require(
+        replay.get("status") == "PUBLISHED"
+        and replay.get("visualization_only") is True
+        and replay.get("passing_run_evidence") is False
+        and replay.get("accuracy_evaluated") is False
+        and replay.get("container") == "WebM"
+        and replay.get("video_codec") == "VP8"
+        and replay.get("audio_present") is False
+        and replay.get("declared_frame_rate_hz") is None
+        and replay.get("variable_or_unspecified_frame_rate") is True
+        and replay.get("frame_count") == LSIM_REPLAY_FRAME_COUNT
+        and replay.get("duration_sec") == LSIM_REPLAY_DURATION_SEC
+        and replay.get("resolution_px") == LSIM_REPLAY_RESOLUTION
+        and replay.get("bytes") == LSIM_REPLAY_BYTES
+        and replay.get("sha256") == LSIM_REPLAY_SHA256
+        and replay.get("capture_timestamp_published") is False
+        and replay.get("embedded_capture_datetime_removed") is True,
+        "LSim replay scope or media contract is incomplete",
     )
     runs = current.get("runs", {})
     require(
@@ -3041,6 +4579,7 @@ def check_published_assets() -> None:
     )
 
     check_gnss_publication_contract(manifest)
+    check_mid360_publication_contract(manifest)
     check_lsim_publication_contract(manifest)
 
     listed: set[Path] = set()
@@ -3074,8 +4613,24 @@ def check_published_assets() -> None:
                     f"non-public or cross-course evidence leaked into {relative}",
                 )
             elif path.suffix == ".png":
-                if path.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
-                    raise RuntimeError(f"invalid PNG signature: {relative}")
+                chunks = png_chunk_types(path)
+                if relative == Path(
+                    "autoware_lsim_hesai_course_2/rviz_poster.png"
+                ):
+                    require(
+                        not set(chunks)
+                        & {"tEXt", "zTXt", "iTXt", "eXIf", "tIME"},
+                        "the public RViz poster contains embedded metadata",
+                    )
+            elif path.suffix == ".webm":
+                require(
+                    relative
+                    == Path("autoware_lsim_hesai_course_2/rviz_replay.webm")
+                    and path.stat().st_size == LSIM_REPLAY_BYTES
+                    and sha256(path) == LSIM_REPLAY_SHA256
+                    and path.read_bytes()[:4] == b"\x1aE\xdf\xa3",
+                    f"unsupported or changed published WebM: {relative}",
+                )
             else:
                 raise RuntimeError(f"unsupported published asset type: {relative}")
 
@@ -3115,6 +4670,14 @@ def main() -> int:
     )
     scope_group = parser.add_mutually_exclusive_group()
     scope_group.add_argument(
+        "--lidar-only",
+        action="store_true",
+        help=(
+            "regenerate only the public LiDAR/IMU-only datasets and preserve "
+            "the existing GNSS and Autoware manifest entries"
+        ),
+    )
+    scope_group.add_argument(
         "--gnss-only",
         action="store_true",
         help=(
@@ -3132,7 +4695,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     if args.check:
-        if args.gnss_only or args.lsim_only:
+        if args.lidar_only or args.gnss_only or args.lsim_only:
             parser.error("dataset scopes are only meaningful while regenerating")
         check_published_assets()
         return 0
@@ -3146,7 +4709,9 @@ def main() -> int:
         if args.check_regeneration
         else {}
     )
-    if args.gnss_only:
+    if args.lidar_only:
+        records = curate_lidar()
+    elif args.gnss_only:
         records = curate_gnss()
     elif args.lsim_only:
         records = curate_lsim()
@@ -3154,7 +4719,10 @@ def main() -> int:
         records = curate_lidar() + curate_gnss() + curate_lsim()
     build_manifest(
         records,
-        preserve_unmentioned=args.gnss_only or args.lsim_only,
+        preserve_unmentioned=args.lidar_only or args.gnss_only or args.lsim_only,
+        retired_datasets=(
+            {MID360_RETIRED_DATASET_ID} if args.lidar_only else set()
+        ),
     )
     check_published_assets()
     if args.check_regeneration:

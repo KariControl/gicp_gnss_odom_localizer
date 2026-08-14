@@ -1,4 +1,4 @@
-# Rosbag and Autoware Logging-Simulation Evaluation
+# Rosbag and Autoware Logging-Simulation Workflow
 
 > Canonical result tables and publication status are indexed at
 > [docs/evaluation](evaluation/README.md). This page defines the reusable
@@ -87,10 +87,10 @@ ros2 launch pure_odometry_bringup odometry_standalone.launch.py \
 
 Do not enable the point-order timing fallback for a quantitative comparison.
 
-### 2.2 Add the isolated precision overlay
+### 2.2 Add the isolated scan-to-submap overlay
 
 Keep the odometer in `scan_to_scan`, load the accepted-scan snapshot override,
-and launch the precision processes separately:
+and launch the scan-to-submap processes separately:
 
 ```bash
 ros2 launch pure_odometry_bringup odometry_standalone.launch.py \
@@ -103,19 +103,19 @@ ros2 launch pure_precision_bringup precision_overlay.launch.py \
   use_sim_time:=true
 ```
 
-Use the identical bag, replay rate, input remaps, TFs, baseline odometer YAML,
+Use the identical bag, replay rate, input remaps, TFs, scan-to-scan odometer YAML,
 and metric code for both runs. Compare at least:
 
 - relative pose error and endpoint error;
 - yaw error, especially after turns and long corridors;
 - registration rejection count;
-- accepted-snapshot key coverage and baseline non-intrusion;
+- accepted-snapshot key coverage and scan-to-scan non-intrusion;
 - external matcher acceptance, robust commits, and recovery rebuilds;
 - real-time factor and callback latency;
 - CPU and memory use.
 
-The external matcher publishes only separate precision topics and no TF. A
-submap result is not automatically better; retain baseline output until
+The external matcher publishes only separate scan-to-submap topics and no TF. A
+submap result is not automatically better; retain scan-to-scan output until
 representative bags pass both accuracy and non-intrusion gates.
 
 ### 2.3 Add GNSS only after LiDAR-IMU odometry is stable
@@ -194,11 +194,11 @@ docker_output/<bag>_<tracking-mode>_<date>/
 It contains launch/replay/record logs, the resolved run settings, input bag
 information, and a `localization_output` rosbag.
 
-### 3.2 Compare baseline and isolated precision
+### 3.2 Compare scan-to-scan and isolated scan-to-submap
 
 Run the same bag twice and change only the localization mode. The production
-odometer remains scan-to-scan in both runs; precision mode enables its output-only
-snapshot bridge and starts the external matcher/global overlay:
+odometer remains scan-to-scan in both runs; scan-to-submap mode enables its
+output-only snapshot bridge and starts the external matcher/global overlay:
 
 ```bash
 ./script/run_autoware_lsim_docker.sh \
@@ -206,7 +206,7 @@ snapshot bridge and starts the external matcher/global overlay:
   --points /sensing/lidar/top/pointcloud_raw \
   --imu /sensing/imu/tamagawa/imu_raw \
   --tracking-mode scan_to_scan \
-  --run-name lsim_baseline
+  --run-name lsim_scan_to_scan
 ```
 
 ```bash
@@ -215,7 +215,7 @@ snapshot bridge and starts the external matcher/global overlay:
   --points /sensing/lidar/top/pointcloud_raw \
   --imu /sensing/imu/tamagawa/imu_raw \
   --tracking-mode scan_to_submap \
-  --run-name lsim_precision
+  --run-name lsim_scan_to_submap
 ```
 
 The image build is cached. Add `--no-build` after the first successful build to
@@ -296,6 +296,38 @@ This adds `compose.rviz.yaml`, forwards X11, and sets
 `LIBGL_ALWAYS_SOFTWARE=1`. Keep RViz disabled when measuring estimator timing or
 CPU utilization.
 
+For a presentation view with the Autoware sample Lexus body, add
+`--rviz-sample-vehicle`. In addition to the body, the presentation profile shows
+a generated line trajectory, current pose/yaw/speed, output rate,
+`map -> base_link` state, live interface/registration status, a color-coded GNSS
+state, and a bounded 2-sigma XY-only position-covariance ellipse at the visual
+ground offset. The live status values appear under the dedicated
+`Autoware Localization Status` item in RViz's Displays panel instead of over the
+3D scene. The trajectory and status properties come from the actual
+kinematic-state, TF, and diagnostic streams; stale data is not reported as
+healthy.
+
+The standard 3D odometry covariance display remains off because the planar
+interface intentionally carries a very large Z variance. The runner stores
+single transient-local trajectory and covariance-marker snapshots for evidence
+instead of recording the continuously growing presentation topics into the
+output bag. It also requires RViz to subscribe directly to `/diagnostics`, which
+fails the run if the custom status Display was not loaded.
+
+For `hesai-rosbag23`, `base_link` is colocated with the LiDAR frame. Robust
+ground-plane fits evaluated at the Lexus wheel-contact locations gave median Z
+values of `-1.6641 m` for ROSBAG2 and `-1.6565 m` for ROSBAG3. After accounting
+for the mesh's approximately `+0.00394 m` minimum Z, the rounded default
+visual-only body offset is `-1.66 m`. This is a rendering fit, not a physical
+sensor-height calibration. Override it for another recording with
+`--rviz-sample-vehicle-z-offset <metres>` after measuring its ground plane. The
+offset changes only the mesh rendering, not localization or sensor transforms.
+
+This is a visualization-only integration: it neither launches the sample sensor
+kit nor changes the calibrated TF tree. The Lexus is an illustrative Autoware
+sample model; it does not represent the recorded vehicle, its geometry, or its
+sensor calibration, and the option cannot be combined with `--launch-vehicle`.
+
 ### 3.7 Docker controls
 
 Useful options are:
@@ -309,6 +341,8 @@ Useful options are:
 --shell            open a shell in the prepared image
 --no-record        disable the output rosbag
 --output <dir>     select the host result root
+--rviz-sample-vehicle-z-offset <m>
+                   override the visual-only body/ellipse ground height
 ```
 
 The Compose service uses host networking and host IPC. It is privileged because
@@ -336,7 +370,7 @@ The fusion node's own TF output is disabled in this launch so that there is no
 second `map -> odom` chain competing with the adapter's direct
 `map -> base_link` TF.
 
-## 5. Recorded results
+## 5. Inspect recorded outputs
 
 By default the Docker runner records:
 
@@ -359,13 +393,15 @@ By default the Docker runner records:
 The replay helper moves known recorded localization outputs to `/reference/...`,
 so metric code can consume both reference and newly computed results in one
 output bag. Confirm reference topic and frame semantics before treating any
-recorded estimator result as ground truth.
+recorded estimator result as ground truth. Published measurements and
+limitations are kept in the [evaluation pages](evaluation/README.md), rather
+than duplicated in this operating guide.
 
-For baseline and precision runs compare at least:
+For scan-to-scan and scan-to-submap runs compare at least:
 
 - relative pose error and endpoint/outage error;
 - yaw error after turns and in corridors;
-- baseline registration rejection and accepted-snapshot non-intrusion;
+- scan-to-scan registration rejection and accepted-snapshot non-intrusion;
 - external matcher acceptance, commit, and rebuild counts;
 - GNSS recovery convergence, peak correction rate, and post-return error;
 - CPU, memory, callback latency, and real-time factor.

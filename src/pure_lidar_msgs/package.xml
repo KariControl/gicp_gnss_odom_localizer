@@ -3,7 +3,7 @@
   <name>pure_lidar_msgs</name>
   <version>0.1.0</version>
   <description>Exact-key messages for asynchronous LiDAR submap matching.</description>
-  <maintainer email="motoya@example.com">motoya</maintainer>
+  <maintainer email="118587431+KariControl@users.noreply.github.com">KariControl</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>rosidl_default_generators</buildtool_depend>

@@ -50,7 +50,7 @@
           "status": "PASS with 1 warning",
           "topic_count": 17,
           "warning_details": [
-            "consecutive XY step: maximum consecutive XY step=0.515010 m at 1776828183.227277346 (practical limit 0.55 m)"
+            "consecutive XY step: maximum consecutive XY step=0.515010 m (practical limit 0.55 m)"
           ],
           "warnings": 1
         },
@@ -81,5 +81,35 @@
     "status": "PASS"
   },
   "dataset_label": "Autoware LSim \u2014 Hesai 32-Line + IMU + RTK GNSS \u2014 Course 2",
+  "representative_rviz_poster": {
+    "absolute_timestamps_published": false,
+    "accuracy_evaluated": false,
+    "embedded_metadata_removed": true,
+    "passing_run_evidence": false,
+    "sample_vehicle_model": "illustrative Autoware Lexus mesh; not the recorded vehicle, its geometry, or its sensor calibration",
+    "status": "PUBLISHED",
+    "visualization_only": true
+  },
+  "representative_rviz_replay": {
+    "accuracy_evaluated": false,
+    "audio_present": false,
+    "bytes": 62245501,
+    "capture_timestamp_published": false,
+    "container": "WebM",
+    "declared_frame_rate_hz": null,
+    "duration_sec": 75.250293115,
+    "embedded_capture_datetime_removed": true,
+    "frame_count": 2138,
+    "passing_run_evidence": false,
+    "resolution_px": [
+      898,
+      539
+    ],
+    "sha256": "c8762b5a264f49b14240eea01760c955c98e45596000a00b6ae6bd21fe2739e3",
+    "status": "PUBLISHED",
+    "variable_or_unspecified_frame_rate": true,
+    "video_codec": "VP8",
+    "visualization_only": true
+  },
   "schema_version": 2
 }

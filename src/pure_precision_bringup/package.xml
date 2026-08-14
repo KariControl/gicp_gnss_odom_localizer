@@ -3,7 +3,7 @@
   <name>pure_precision_bringup</name>
   <version>0.1.0</version>
   <description>Additive precision-localization overlay for the existing scan-to-scan and GNSS stack.</description>
-  <maintainer email="maintainers@users.noreply.github.com">gicp_gnss_odom_localizer maintainers</maintainer>
+  <maintainer email="118587431+KariControl@users.noreply.github.com">KariControl</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

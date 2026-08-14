@@ -3,7 +3,7 @@
   <name>pure_nmea_gnss_conversion</name>
   <version>0.3.0</version>
   <description>NMEA GGA projection and GNSS heading estimation with explicit antenna-observation semantics.</description>
-  <maintainer email="maintainers@users.noreply.github.com">gicp_gnss_odom_localizer maintainers</maintainer>
+  <maintainer email="118587431+KariControl@users.noreply.github.com">KariControl</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>eigen3_cmake_module</buildtool_depend>

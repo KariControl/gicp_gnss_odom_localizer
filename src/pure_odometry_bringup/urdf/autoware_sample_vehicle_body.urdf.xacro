@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+  Visualization-only use of Autoware's sample Lexus body.
+
+  The Hesai recording places base_link at the roof-LiDAR origin, while the
+  upstream sample body assumes a ground-level vehicle base.  Keep the model as
+  one base_link visual and move only its rendered origin.  No sensor kit,
+  joint, collision geometry, or calibrated transform is added here.
+-->
+<robot name="autoware_sample_vehicle_body_visualization"
+       xmlns:xacro="http://ros.org/wiki/xacro">
+  <xacro:arg name="visual_z_offset" default="-1.66"/>
+  <xacro:property
+    name="vehicle_info"
+    value="${xacro.load_yaml('$(find sample_vehicle_description)/config/vehicle_info.param.yaml')}"/>
+
+  <link name="base_link">
+    <visual>
+      <origin
+        xyz="${vehicle_info['/**']['ros__parameters']['wheel_base']/2.0} 0 $(arg visual_z_offset)"
+        rpy="${pi/2.0} 0 ${pi}"/>
+      <geometry>
+        <mesh
+          filename="package://sample_vehicle_description/mesh/lexus.dae"
+          scale="1 1 1"/>
+      </geometry>
+    </visual>
+  </link>
+</robot>

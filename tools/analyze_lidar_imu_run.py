@@ -43,7 +43,9 @@ def resolve_bag(path: Path) -> Path:
 def open_bag(path: Path) -> rosbag2_py.SequentialReader:
     reader = rosbag2_py.SequentialReader()
     reader.open(
-        rosbag2_py.StorageOptions(uri=str(resolve_bag(path)), storage_id="mcap"),
+        # Let rosbag2 select the storage plugin from metadata or file magic.
+        # Evaluation inputs may be sqlite3 while recorded outputs use MCAP.
+        rosbag2_py.StorageOptions(uri=str(resolve_bag(path)), storage_id=""),
         rosbag2_py.ConverterOptions(
             input_serialization_format="cdr", output_serialization_format="cdr"
         ),
@@ -235,6 +237,29 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
     if not points_topic or not imu_topic:
         raise RuntimeError("run.env does not contain points_topic and imu_topic")
     use_deskew = env.get("use_deskew") == "true"
+    try:
+        expected_acceleration_scale = float(
+            env.get(
+                "imu_acceleration_scale",
+                "9.80665" if args.sensor == "mid360" else "1.0",
+            )
+        )
+        required_deskew_success = float(
+            env.get(
+                "deskew_success_minimum",
+                "0.99" if args.sensor == "mid360" else "0.90",
+            )
+        )
+    except ValueError as error:
+        raise RuntimeError(
+            "run.env contains a non-numeric IMU scale or deskew threshold"
+        ) from error
+    if not math.isfinite(expected_acceleration_scale) or expected_acceleration_scale <= 0.0:
+        raise RuntimeError("run.env imu_acceleration_scale must be positive and finite")
+    if not math.isfinite(required_deskew_success) or not (
+        0.0 < required_deskew_success <= 1.0
+    ):
+        raise RuntimeError("run.env deskew_success_minimum must be in (0, 1]")
     source_points, source_imu, source_acceleration_norm, input_frames = read_input(
         args.input_bag, points_topic, imu_topic
     )
@@ -442,7 +467,6 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
     deskew_diag_coverage = len(deskew_diagnostics) / max(1, len(source_points_run))
     deskew_success_rate = len(deskew_ok) / max(1, len(deskew_diagnostics))
     if use_deskew:
-        required_success = 0.99 if args.sensor == "mid360" else 0.90
         checks.extend(
             [
                 Check(
@@ -452,8 +476,8 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
                 ),
                 Check(
                     "deskew_success_rate",
-                    deskew_success_rate >= required_success,
-                    f"rate={deskew_success_rate:.6%} ({len(deskew_ok)}/{len(deskew_diagnostics)}), threshold={required_success:.2%}",
+                    deskew_success_rate >= required_deskew_success,
+                    f"rate={deskew_success_rate:.6%} ({len(deskew_ok)}/{len(deskew_diagnostics)}), threshold={required_deskew_success:.2%}",
                 ),
             ]
         )
@@ -487,7 +511,6 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
         else None
     )
     latest_odom_diag = final_odom_diagnostic["values"] if final_odom_diagnostic else {}
-    expected_scale = 9.80665 if args.sensor == "mid360" else 1.0
     try:
         diagnosed_scale = float(latest_odom_diag.get("imu_corrected.linear_acceleration_scale", "nan"))
         accepted_sequence = int(latest_odom_diag.get("external_submap_snapshot_sequence", "0"))
@@ -521,8 +544,8 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
             Check(
                 "imu_acceleration_scale_contract",
                 math.isfinite(diagnosed_scale)
-                and abs(diagnosed_scale - expected_scale) <= 1.0e-6,
-                f"diagnosed={diagnosed_scale}, expected={expected_scale}",
+                and abs(diagnosed_scale - expected_acceleration_scale) <= 1.0e-6,
+                f"diagnosed={diagnosed_scale}, expected={expected_acceleration_scale}",
             ),
             Check(
                 "scan_registration_density",

@@ -1,17 +1,17 @@
-# Tuning and validation
+# Tuning guide
 
 ## Order of work
 
 1. Verify timestamps, frame IDs, and calibrated static TFs.
 2. Tune strict deskew and inspect moving vertical edges before registration.
-3. Establish a stable `scan_to_scan` baseline.
+3. Establish stable `scan_to_scan` odometry.
 4. Validate corrected-IMU yaw and bias during stationary and turning segments.
 5. Tune the fixed-lag smoother with ZUPT, NHC, and wheel assistance disabled.
-6. Evaluate the isolated precision overlay against the same baseline bags.
+6. Evaluate the isolated scan-to-submap overlay with the same bags.
 7. Calibrate GNSS covariance tables and validate initialization/outage return.
 8. Enable robot-specific ZUPT, NHC, or wheel factors one at a time.
 
-## Baseline contract
+## Scan-to-scan contract
 
 The odometer supports only:
 
@@ -22,7 +22,7 @@ lidar_odom.tracking_mode: scan_to_scan
 Do not use retired `lidar_odom.scan_to_submap.*` or
 `lidar_odom.local_map.*` parameters. Submap matching now belongs to
 `pure_lidar_submap_matcher` and consumes the optional exact-key accepted-scan
-stream without changing the baseline odometer.
+stream without changing the scan-to-scan odometer.
 
 The generic profile is intentionally conservative. The following
 vehicle-specific or control-oriented features are disabled and must be enabled
@@ -50,7 +50,7 @@ suppress rejections; add or convert the actual per-point time field.
 
 ## Common LiDAR metrics
 
-For baseline and precision runs record:
+For scan-to-scan and scan-to-submap runs record:
 
 - absolute trajectory error where a trusted reference is available;
 - relative pose error over fixed time and distance intervals;
@@ -65,9 +65,9 @@ Do not tune only on one straight sequence. Include turns, long corridors, open
 spaces, repeated structures, stop/start, people or vehicles, and degraded
 point clouds.
 
-## Isolated precision matcher
+## Isolated scan-to-submap matcher
 
-The odometer snapshot bridge is enabled only for precision evaluation:
+The odometer snapshot bridge is enabled only for scan-to-submap evaluation:
 
 ```yaml
 lidar_odom.tracking_mode: scan_to_scan
@@ -76,7 +76,7 @@ lidar_odom.external_submap_snapshot.publish_interval_frames: 5
 ```
 
 Keep the bridge's interval fixed while tuning the external matcher. Validate
-that accepted-scan publication does not change the baseline raw trajectory and
+that accepted-scan publication does not change the scan-to-scan trajectory and
 that every matcher correction uses the exact session/generation/sequence/stamp
 contract.
 
@@ -140,13 +140,13 @@ publish count.
 
 `match_every: 1` attempts an external match for every received snapshot. The
 snapshot publisher itself may already downsample accepted scans by its interval,
-so measure both settings together. The baseline scan-to-scan registration still
+so measure both settings together. The primary scan-to-scan registration still
 runs once in the odometer; the external matcher is additional CPU work isolated
 in another process.
 
 ## Continuous directional-information weighting
 
-Keep Hessian weighting enabled for the LiDAR–IMU baseline:
+Keep Hessian weighting enabled for scan-to-scan LiDAR–IMU odometry:
 
 ```yaml
 wheel_speed.use: false
@@ -182,9 +182,9 @@ guaranteed accuracy. Validate at least startup with and without observable yaw,
 good Fix to outage to good Fix, isolated outliers, inconsistent heading return,
 multipath, stationary return, moving return, and reverse motion where relevant.
 
-Run every representative outage bag once in baseline mode and once with the
-isolated precision overlay. Acceptance must cover no unbounded pose jump,
+Run every representative outage bag once with scan-to-scan and once with the
+isolated scan-to-submap overlay. Acceptance must cover no unbounded pose jump,
 stable initial global yaw, exact anchor freeze outside strict fusion health,
-bounded recovery, baseline non-intrusion, local/global GLIM error, and runtime
-health. Use the evaluators in `pure_precision_bringup` rather than comparing only
-endpoint error.
+bounded recovery, scan-to-scan non-intrusion, local/global GLIM error, and
+runtime health. Use the evaluators in `pure_precision_bringup` rather than
+comparing only endpoint error.
