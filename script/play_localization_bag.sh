@@ -153,6 +153,7 @@ if [[ "$keep_recorded_localization" != true ]]; then
     /localization/is_stopped
     /localization/ekf_odom
     /localization/ekf_pose
+    /localization/gnss_map_odom_fusion_authority
     /localization/gnss_fusion_input
     /localization/gnss_odometry
     /localization/global_pose

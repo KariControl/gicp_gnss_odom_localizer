@@ -43,6 +43,58 @@ The compatibility parameters `allow_linear_time_fallback` and
 Do not enable them to hide a timestamp, driver, TF, or speed-source defect in a
 quantitative evaluation.
 
+## Event-time stop decision
+
+Only a valid, strictly newer IMU sample advances the stop-state machine. At IMU
+time $t_k$, the detector uses up to 0.3 s of causal base-frame IMU samples and
+requires at least 10 samples. For acceleration sample
+$\mathbf{a}_i=[a_{x,i},a_{y,i},a_{z,i}]^T$ and raw base-frame yaw rate
+$\omega_{z,i}$, it computes
+
+$$
+V_a=\frac{1}{N-1}\sum_{i=1}^{N}\lVert\mathbf{a}_i-\bar{\mathbf{a}}\rVert^2,
+\qquad
+\bar{\omega}_z=\frac{1}{N}\sum_{i=1}^{N}\omega_{z,i}.
+$$
+
+Here $N$ is the number of causal samples in the window and
+$\bar{\mathbf{a}}=N^{-1}\sum_i\mathbf{a}_i$ is their three-axis mean
+acceleration.
+
+With the supplied thresholds, the IMU gate is
+
+$$
+q_{\mathrm{imu}}=
+\left(V_a<0.0225\ (\mathrm{m/s^2})^2\right)
+\land\left(|\bar{\omega}_z|<0.05\ \mathrm{rad/s}\right).
+$$
+
+The variance is the summed three-axis sample variance shown above; it is not a
+per-axis maximum. The yaw-rate gate uses the raw transformed measurement before
+subtracting the adaptive bias estimate.
+
+For the same IMU timestamp, the node first tries the newest causal, fresh
+wheel-speed sample when wheel input is enabled. If no such wheel sample is
+available, it tries the latest causal, fresh LiDAR speed estimate. Let $v_k$ be
+that selected value. The stop candidate is
+
+$$
+q_k=
+\begin{cases}
+q_{\mathrm{imu}}\land(|v_k|<0.15\ \mathrm{m/s}), & \text{fresh speed available},\\
+q_{\mathrm{imu}}, & \text{no speed available}.
+\end{cases}
+$$
+
+Thus the absence of even a LiDAR speed estimate intentionally falls back to an
+IMU-only decision. A candidate must remain continuously true for 0.5 s before
+`stopped=true`; any failed gate clears the candidate and stop latch. An IMU gap
+strictly greater than `imu_corrected.max_sample_gap_sec` also clears the window,
+candidate, and latch. The packaged base and XT profiles set this limit to
+0.03 s; recording-specific evaluation overrides may make it stricter or looser.
+LiDAR and timer callbacks only query the immutable causal decision history at
+their timestamp, so they cannot rewind or advance this state machine.
+
 ## Fixed-lag SE(2) graph
 
 The graph contains poses `(x, y, yaw)` and relative factors for:

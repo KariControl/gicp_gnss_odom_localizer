@@ -105,6 +105,13 @@ public:
     return rejected_reference_count_;
   }
   [[nodiscard]] uint64_t outageCount() const {return outage_count_;}
+  // Monotonic identifier for the lineage of the active reference snapshot.
+  // It advances only when READY starts a new outage and snapshots a new
+  // reference. A re-outage during RECOVERY_RELEASE remains in the same epoch.
+  [[nodiscard]] uint64_t activeReferenceEpoch() const
+  {
+    return active_reference_epoch_;
+  }
   [[nodiscard]] uint64_t recoveryCount() const {return recovery_count_;}
   [[nodiscard]] uint64_t appliedStepCount() const {return applied_step_count_;}
   [[nodiscard]] uint64_t invalidAdvanceCount() const {return invalid_advance_count_;}
@@ -146,6 +153,7 @@ private:
   uint64_t accepted_reference_count_{0U};
   uint64_t rejected_reference_count_{0U};
   uint64_t outage_count_{0U};
+  uint64_t active_reference_epoch_{0U};
   uint64_t recovery_count_{0U};
   uint64_t applied_step_count_{0U};
   uint64_t invalid_advance_count_{0U};

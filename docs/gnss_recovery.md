@@ -76,6 +76,26 @@ A brief usable-position dropout may preserve the recovery window for
 semantics, excessive sample gap, or timeout still clears the window and enters
 `OUTAGE`.
 
+This grace applies only to the map/odom fusion node's internal recovery window.
+Its typed `/localization/gnss_map_odom_fusion_authority` output immediately
+reports `SOFT_BAD_HOLD`, which is unhealthy for downstream anchor updates.
+Precision-global therefore freezes its last trusted anchor and consumes no new
+authority candidate until a good full-SE(2) tracking event returns. Authority
+transitions caused by GNSS/odometry input are published in those callbacks.
+The periodic path evaluates clock-driven timeouts and republishes the resulting
+state for liveness; it does not sample or postpone short input-driven
+GNSS-quality transitions.
+
+Under `use_sim_time`, downstream authority consumers may receive the first
+transient-local event before their own ROS clock has processed its first
+positive `/clock` sample. Such startup-only events are held in a bounded FIFO,
+remain non-authoritative, and are evaluated in arrival order with the first
+positive consumer receive time. The ordinary timing and session/sequence gates
+are not relaxed. An authority event received after a later zero/rewound clock is
+not deferred again: it passes through the ordinary timing and ordering gates,
+which reject invalid, stale, or backstepping events. A FIFO overflow fails closed
+and latches authority unhealthy.
+
 ## Normal tracking
 
 Position and yaw use separate innovation tests. A rejected yaw can be omitted while retaining a valid position update. Measurement covariance includes lever-arm Jacobians and cross-covariance. Absolute jump gates supplement NIS gates.
@@ -92,14 +112,22 @@ the transform is converging, but only the target covariance is carried into
 Pose, odometry, and TF output sets are serialized. A source-stamped odometry
 request older than the last successfully published timestamp is dropped and
 counted in `output.out_of_order_drop_count`, so output timestamps are
-non-decreasing. A wall timer can observe an older ROS `/clock` value after an
-odometry callback has already published; that harmless retry is suppressed and
-reported separately as `output.wall_timer_coalesced_count` rather than being
-misclassified as lost estimator data. If that timer has already published the
-exact physical stamp before its odometry callback is delivered, the later
-request is reported as `output.covered_odometry_coalesced_count`. Only an older
-odometry stamp absent from the bounded publication history increments the
-strict `output.out_of_order_drop_count`.
+non-decreasing. The wall timer retries only the newest completely processed raw
+odometry stamp; it never advances the output header to ROS `now()`. This source
+watermark prevents a delayed odometry result from being overtaken when `/clock`
+has already advanced beyond that result's physical stamp. A timer retry at or
+behind the published watermark is suppressed and reported separately as
+`output.wall_timer_coalesced_count`. A duplicate odometry request whose exact
+physical stamp is already present is reported as
+`output.covered_odometry_coalesced_count`. Only an older odometry stamp absent
+from the bounded publication history increments the strict
+`output.out_of_order_drop_count`.
+Consequently, fused pose/odometry/TF output is source-odometry driven; the
+`publish_rate_hz` timer retries an output only when the newest completed source
+stamp has not yet been published. Liveness is carried independently by typed
+fusion-authority and diagnostic heartbeats. A fixed-rate forward prediction, if
+required by another integration, must use a separate topic so it cannot violate
+this exact-source/non-decreasing contract.
 Clock rewind, rosbag loop, and seek without restarting the node are not
 supported because all time-indexed estimator buffers would need a coordinated
 reset.

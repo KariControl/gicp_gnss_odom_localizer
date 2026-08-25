@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Validate a recorded Autoware Logging Simulation output bag (MCAP).
+"""Validate a recorded Autoware localization-interface output bag (MCAP).
 
 The checker intentionally evaluates interface and estimator-state contracts only.
 It does not report localization accuracy because the output bag does not provide
@@ -1176,7 +1176,7 @@ def print_report(
     else:
         result = "PASS"
 
-    print("Autoware lSIM output acceptance")
+    print("Autoware localization-interface output acceptance")
     print(f"Bag:      {requested_path}")
     if resolved_uri != requested_path:
         print(f"MCAP:     {resolved_uri}")
@@ -1199,7 +1199,10 @@ def print_report(
 
 def make_parser() -> argparse.ArgumentParser:
     parser = ExitOneArgumentParser(
-        description="Acceptance-check a recorded Autoware lSIM output MCAP bag."
+        description=(
+            "Acceptance-check a recorded Autoware localization-interface "
+            "output MCAP bag."
+        )
     )
     parser.add_argument("bag", help="rosbag2 directory or a single .mcap file")
     parser.add_argument(

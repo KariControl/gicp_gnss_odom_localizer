@@ -85,11 +85,24 @@ PRECISION_GLOBAL_STATUS = "localization/precision_global_localizer"
 
 RAW_ODOM_TOPIC = "/localization/gyro_lidar_odom"
 EXISTING_GLOBAL_ODOM_TOPIC = "/localization/ekf_odom"
+FUSION_AUTHORITY_TOPIC = "/localization/gnss_map_odom_fusion_authority"
+FUSION_AUTHORITY_TYPE = "pure_gnss_msgs/msg/FusionAuthority"
+FUSION_AUTHORITY_STATE_NAMES = {
+    0: "UNHEALTHY",
+    1: "FULL_SE2_HEALTHY",
+    2: "SOFT_BAD_HOLD",
+}
+FUSION_AUTHORITY_FIX_STATES = {0, 1, 2}
+FUSION_AUTHORITY_MAX_SOURCE_AGE_NS = 1_500_000_000
+FUSION_AUTHORITY_MAX_FUTURE_SKEW_NS = 250_000_000
 MAP_FUSION_PUBLICATION_COUNTER_KEYS = (
     "output.out_of_order_drop_count",
     "output.covered_odometry_coalesced_count",
     "output.wall_timer_coalesced_count",
     "output.total_suppressed_request_count",
+)
+PRECISION_GUARD_ACTIVE_REFERENCE_EPOCH_KEY = (
+    "outage_yaw_guard.active_reference_epoch"
 )
 
 PRECISION_GUARD_DIAGNOSTIC_KEYS = (
@@ -115,6 +128,7 @@ PRECISION_GUARD_DIAGNOSTIC_KEYS = (
     "outage_yaw_guard.last_reason",
     "outage_yaw_guard.accepted_reference_count",
     "outage_yaw_guard.outage_count",
+    PRECISION_GUARD_ACTIVE_REFERENCE_EPOCH_KEY,
     "outage_yaw_guard.recovery_count",
     "outage_yaw_guard.reset_count",
     "outage_yaw_guard.invalid_advance_count",
@@ -146,6 +160,7 @@ COMMON_OUTPUT_TOPICS = {
     "/localization/ekf_odom": "nav_msgs/msg/Odometry",
     "/localization/gnss_odometry": "nav_msgs/msg/Odometry",
     "/localization/gnss_fusion_input": "pure_gnss_msgs/msg/GnssFusionInput",
+    FUSION_AUTHORITY_TOPIC: FUSION_AUTHORITY_TYPE,
     "/localization/global_pose_with_covariance":
         "geometry_msgs/msg/PoseWithCovarianceStamped",
     "/localization/gnss_confidence": "std_msgs/msg/Float32",
@@ -177,14 +192,23 @@ class Checks:
     def __init__(self) -> None:
         self.items: list[dict[str, Any]] = []
 
-    def add(self, name: str, passed: bool, detail: str) -> None:
+    def add(
+        self, name: str, passed: bool, detail: str, warning: bool = False
+    ) -> None:
         self.items.append(
-            {"name": name, "passed": bool(passed), "detail": str(detail)}
+            {
+                "name": name,
+                "passed": bool(passed),
+                "detail": str(detail),
+                "warning": bool(warning),
+            }
         )
 
     @property
     def passed(self) -> bool:
-        return bool(self.items) and all(item["passed"] for item in self.items)
+        return bool(self.items) and all(
+            item["passed"] or item["warning"] for item in self.items
+        )
 
 
 def true_value(value: Any) -> bool:
@@ -642,7 +666,7 @@ def validate_run_environment(
         if env.get(key) != value
     }
     checks.add(
-        "run.env dataset, mode, full-playback, TF, and non-LSim contract",
+        "run.env dataset, mode, full-playback, TF, and native-run contract",
         not mismatches,
         "exact contract matched" if not mismatches else json.dumps(mismatches, sort_keys=True),
     )
@@ -861,6 +885,7 @@ def scan_output_bag(path: Path) -> dict[str, Any]:
         "/diagnostics": "diagnostic_msgs/msg/DiagnosticArray",
         RAW_ODOM_TOPIC: "nav_msgs/msg/Odometry",
         EXISTING_GLOBAL_ODOM_TOPIC: "nav_msgs/msg/Odometry",
+        FUSION_AUTHORITY_TOPIC: FUSION_AUTHORITY_TYPE,
     }
     missing = set(required_deserialization_types) - set(topic_types)
     wrong_types = {
@@ -884,6 +909,7 @@ def scan_output_bag(path: Path) -> dict[str, Any]:
     map_fusion_publication_snapshots: list[dict[str, Any]] = []
     raw_odom_events: list[dict[str, int]] = []
     existing_global_odom_events: list[dict[str, int]] = []
+    fusion_authority_events: list[dict[str, Any]] = []
     audited_counters: dict[str, dict[str, Any]] = {}
     duplicate_key_samples = 0
     duplicate_status_samples = 0
@@ -912,6 +938,37 @@ def scan_output_bag(path: Path) -> dict[str, Any]:
                 raw_odom_events.append(event)
             else:
                 existing_global_odom_events.append(event)
+            continue
+        if topic == FUSION_AUTHORITY_TOPIC:
+            message = deserialize_message(serialized, classes[topic])
+            stamp_sec = int(message.header.stamp.sec)
+            stamp_nanosec = int(message.header.stamp.nanosec)
+            source_sec = int(message.source_stamp.sec)
+            source_nanosec = int(message.source_stamp.nanosec)
+            fusion_authority_events.append(
+                {
+                    "record_index": record_index,
+                    "record_stamp_ns": int(record_stamp_ns),
+                    "stamp_ns": stamp_sec * 1_000_000_000 + stamp_nanosec,
+                    "stamp_canonical": (
+                        stamp_sec >= 0 and 0 <= stamp_nanosec < 1_000_000_000
+                    ),
+                    "source_stamp_ns": source_sec * 1_000_000_000 + source_nanosec,
+                    "source_stamp_canonical": (
+                        source_sec >= 0 and 0 <= source_nanosec < 1_000_000_000
+                    ),
+                    "frame_id": str(message.header.frame_id),
+                    "session_id": int(message.session_id),
+                    "sequence": int(message.sequence),
+                    "state": int(message.state),
+                    "recovery_state": str(message.recovery_state),
+                    "anchor_valid": bool(message.anchor_valid),
+                    "position_fused": bool(message.position_fused),
+                    "yaw_fused": bool(message.yaw_fused),
+                    "last_fix_state": int(message.last_fix_state),
+                    "reason": str(message.reason),
+                }
+            )
             continue
         if topic != "/diagnostics":
             continue
@@ -996,6 +1053,8 @@ def scan_output_bag(path: Path) -> dict[str, Any]:
                         "values": {
                             key: values.get(key)
                             for key in PRECISION_GUARD_DIAGNOSTIC_KEYS
+                            if key != PRECISION_GUARD_ACTIVE_REFERENCE_EPOCH_KEY
+                            or key in values
                         },
                     }
                 )
@@ -1031,6 +1090,7 @@ def scan_output_bag(path: Path) -> dict[str, Any]:
         "map_fusion_publication_snapshots": map_fusion_publication_snapshots,
         "raw_odom_events": raw_odom_events,
         "existing_global_odom_events": existing_global_odom_events,
+        "fusion_authority_events": fusion_authority_events,
         "audited_counters": audited_counters,
         "duplicate_key_samples": duplicate_key_samples,
         "duplicate_status_samples": duplicate_status_samples,
@@ -1064,6 +1124,133 @@ def nondecreasing_physical_time(values: Iterable[int]) -> dict[str, Any]:
         "first_positive_ns": positive[0],
         "last_positive_ns": positive[-1],
         "span_sec": (positive[-1] - positive[0]) * 1.0e-9,
+    }
+
+
+def fusion_authority_stream_contract(
+    events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Audit the same fail-closed ordering fields consumed by precision-global."""
+    active_session: int | None = None
+    active_sequence = 0
+    active_stamp_ns = 0
+    retired_sessions: set[int] = set()
+    observed_sessions: set[int] = set()
+    previous_record_index = -1
+    state_counts = {name: 0 for name in FUSION_AUTHORITY_STATE_NAMES.values()}
+    invalid_state_count = 0
+    violation_count = 0
+    violation_examples: list[dict[str, Any]] = []
+
+    for index, event in enumerate(events):
+        issues: list[str] = []
+        record_index = int(event.get("record_index", -1))
+        stamp = int(event.get("stamp_ns", 0))
+        source_stamp = int(event.get("source_stamp_ns", 0))
+        session = int(event.get("session_id", 0))
+        sequence = int(event.get("sequence", 0))
+        state = int(event.get("state", -1))
+        fix_state = int(event.get("last_fix_state", -1))
+
+        if state in FUSION_AUTHORITY_STATE_NAMES:
+            state_counts[FUSION_AUTHORITY_STATE_NAMES[state]] += 1
+        else:
+            invalid_state_count += 1
+            issues.append("invalid_state")
+        if fix_state not in FUSION_AUTHORITY_FIX_STATES:
+            issues.append("invalid_last_fix_state")
+        if record_index <= previous_record_index:
+            issues.append("record_order_not_increasing")
+        previous_record_index = record_index
+        if not event.get("stamp_canonical", False) or stamp <= 0:
+            issues.append("invalid_publish_stamp")
+        if not event.get("source_stamp_canonical", False) or source_stamp <= 0:
+            issues.append("invalid_source_stamp")
+        if source_stamp > stamp + FUSION_AUTHORITY_MAX_FUTURE_SKEW_NS:
+            issues.append("source_stamp_exceeds_future_skew")
+        if stamp - source_stamp > FUSION_AUTHORITY_MAX_SOURCE_AGE_NS:
+            issues.append("source_stamp_stale")
+        if str(event.get("frame_id", "")) != "map":
+            issues.append("unexpected_frame_id")
+        if session <= 0:
+            issues.append("invalid_session_id")
+        else:
+            observed_sessions.add(session)
+        if sequence <= 0:
+            issues.append("invalid_sequence")
+
+        recovery_state = str(event.get("recovery_state", ""))
+        anchor_valid = event.get("anchor_valid") is True
+        position_fused = event.get("position_fused") is True
+        yaw_fused = event.get("yaw_fused") is True
+        reason = str(event.get("reason", ""))
+        if state == 1 and not (
+            recovery_state == "tracking"
+            and anchor_valid
+            and position_fused
+            and yaw_fused
+            and fix_state == 1
+        ):
+            issues.append("full_se2_payload_inconsistent")
+        if state == 2 and not (
+            recovery_state == "tracking"
+            and anchor_valid
+            and position_fused
+            and yaw_fused
+            and fix_state == 2
+            and reason == "gnss_soft_bad_within_grace"
+        ):
+            issues.append("soft_bad_hold_payload_inconsistent")
+
+        order_issue: str | None = None
+        order_fields_valid = session > 0 and sequence > 0 and stamp > 0
+        if order_fields_valid:
+            if session in retired_sessions:
+                order_issue = "retired_session_event"
+            elif active_session is None:
+                pass
+            elif session == active_session:
+                if sequence <= active_sequence:
+                    order_issue = "sequence_not_increasing"
+                elif stamp + 1 < active_stamp_ns:
+                    order_issue = "publish_stamp_backstep"
+            elif stamp <= active_stamp_ns + 1:
+                order_issue = "new_session_stamp_not_increasing"
+        if order_issue is not None:
+            issues.append(order_issue)
+
+        if not issues:
+            if active_session is not None and session != active_session:
+                retired_sessions.add(active_session)
+            active_session = session
+            active_sequence = sequence
+            active_stamp_ns = stamp
+        else:
+            violation_count += 1
+            if len(violation_examples) < 20:
+                violation_examples.append(
+                    {
+                        "event_index": index,
+                        "record_index": record_index,
+                        "session_id": session,
+                        "sequence": sequence,
+                        "stamp_ns": stamp,
+                        "source_stamp_ns": source_stamp,
+                        "issues": issues,
+                    }
+                )
+
+    return {
+        "valid": bool(events) and violation_count == 0,
+        "event_count": len(events),
+        "session_count": len(observed_sessions),
+        "session_ids": sorted(observed_sessions),
+        "retired_session_count": len(retired_sessions),
+        "state_counts": state_counts,
+        "soft_bad_hold_count": state_counts["SOFT_BAD_HOLD"],
+        "invalid_state_count": invalid_state_count,
+        "violation_count": violation_count,
+        "violation_examples": violation_examples,
     }
 
 
@@ -1164,14 +1351,25 @@ def precision_guard_diagnostic_contract(
     covariance_issue_count = 0
     previous_counters: dict[str, int] = {}
     previous_guard: dict[str, Any] | None = None
-    counter_keys = (
+    epoch_presence = [
+        PRECISION_GUARD_ACTIVE_REFERENCE_EPOCH_KEY
+        in snapshot.get("values", {})
+        for snapshot in snapshots
+    ]
+    epoch_accounting_available = bool(epoch_presence) and all(epoch_presence)
+    epoch_accounting_mixed = any(epoch_presence) and not all(epoch_presence)
+    unproven_active_reference_intervals = 0
+    cross_epoch_active_reference_intervals = 0
+    counter_keys = [
         "outage_yaw_guard.accepted_reference_count",
         "outage_yaw_guard.outage_count",
         "outage_yaw_guard.recovery_count",
         "outage_yaw_guard.reset_count",
         "outage_yaw_guard.invalid_advance_count",
         "publish.global_suppressed_yaw_guard_invalid",
-    )
+    ]
+    if epoch_accounting_available:
+        counter_keys.append(PRECISION_GUARD_ACTIVE_REFERENCE_EPOCH_KEY)
 
     for index, snapshot in enumerate(snapshots):
         values = snapshot.get("values", {})
@@ -1179,9 +1377,17 @@ def precision_guard_diagnostic_contract(
         covariance_issues: dict[str, Any] = {}
         if snapshot.get("duplicate_keys"):
             issues["duplicate_keys"] = snapshot["duplicate_keys"]
+        if index == 0 and epoch_accounting_mixed:
+            issues["outage_yaw_guard.active_reference_epoch.presence"] = {
+                "expected": "present in every snapshot or absent in every legacy snapshot",
+                "actual": "mixed",
+            }
 
         key_counts = snapshot.get("key_counts")
-        for key in PRECISION_GUARD_COVARIANCE_KEYS:
+        covariance_keys = list(PRECISION_GUARD_COVARIANCE_KEYS)
+        if epoch_accounting_available:
+            covariance_keys.append(PRECISION_GUARD_ACTIVE_REFERENCE_EPOCH_KEY)
+        for key in covariance_keys:
             count = key_counts.get(key) if isinstance(key_counts, dict) else None
             if count != 1:
                 covariance_issues[f"{key}.count"] = {
@@ -1401,6 +1607,9 @@ def precision_guard_diagnostic_contract(
                 }
 
         outage_count = parsed_counters.get("outage_yaw_guard.outage_count")
+        active_reference_epoch = parsed_counters.get(
+            PRECISION_GUARD_ACTIVE_REFERENCE_EPOCH_KEY
+        )
         recovery_count = parsed_counters.get("outage_yaw_guard.recovery_count")
         reset_count = parsed_counters.get("outage_yaw_guard.reset_count")
         if (
@@ -1412,6 +1621,21 @@ def precision_guard_diagnostic_contract(
                 "outage_count": outage_count,
                 "recovery_count": recovery_count,
             }
+        if (
+            active_reference_epoch is not None
+            and outage_count is not None
+            and active_reference_epoch > outage_count
+        ):
+            covariance_issues[
+                "outage_yaw_guard.active_reference_epoch.range"
+            ] = {
+                "maximum": outage_count,
+                "actual": active_reference_epoch,
+            }
+        if active and active_reference_epoch == 0:
+            covariance_issues[
+                "outage_yaw_guard.active_reference_epoch.active"
+            ] = {"expected": ">0", "actual": active_reference_epoch}
         if (
             state in OUTAGE_YAW_GUARD_OUTAGE_STATES
             and outage_count is not None
@@ -1439,6 +1663,7 @@ def precision_guard_diagnostic_contract(
             "active_reference_variance_rad2": active_reference_variance,
             "trusted_variance_rad2": trusted_variance,
             "outage_count": outage_count,
+            "active_reference_epoch": active_reference_epoch,
             "recovery_count": recovery_count,
             "reset_count": reset_count,
             "last_reason": last_reason,
@@ -1460,6 +1685,13 @@ def precision_guard_diagnostic_contract(
             ]
             previous_outage_count = previous_guard["outage_count"]
             previous_recovery_count = previous_guard["recovery_count"]
+            previous_epoch = previous_guard["active_reference_epoch"]
+            epoch_delta = (
+                active_reference_epoch - previous_epoch
+                if active_reference_epoch is not None
+                and previous_epoch is not None
+                else None
+            )
             recovery_delta = (
                 recovery_count - previous_recovery_count
                 if recovery_count is not None
@@ -1487,6 +1719,13 @@ def precision_guard_diagnostic_contract(
                         "state": state,
                         "expected_outage_count_delta": expected_outage_delta,
                     }
+                if epoch_delta is not None and not 0 <= epoch_delta <= outage_delta:
+                    covariance_issues[
+                        "outage_yaw_guard.active_reference_epoch.delta"
+                    ] = {
+                        "expected": f"[0,{outage_delta}]",
+                        "actual": epoch_delta,
+                    }
             if outage_count == previous_outage_count:
                 if abs(
                     active_reference_variance - previous_active_variance
@@ -1499,7 +1738,8 @@ def precision_guard_diagnostic_contract(
                         "outage_count": outage_count,
                     }
             elif (
-                previous_guard["state"] == "RECOVERY_RELEASE"
+                (epoch_delta is None or epoch_delta == 0)
+                and previous_guard["state"] == "RECOVERY_RELEASE"
                 and state in OUTAGE_YAW_GUARD_OUTAGE_STATES
                 and outage_count - previous_outage_count == 1
                 and recovery_delta == 0
@@ -1531,10 +1771,9 @@ def precision_guard_diagnostic_contract(
                         "expected": expected_active,
                         "actual": active_reference_variance,
                     }
-            elif outage_count > previous_outage_count:
-                # Diagnostics can hide RECOVERY_RELEASE and the immediate
-                # re-outage. Every runtime branch must at least retain the
-                # previous active uncertainty snapshot.
+            elif outage_count > previous_outage_count and epoch_delta == 0:
+                # Same-epoch re-outage branches retain or increase the active
+                # snapshot uncertainty.
                 if active_reference_variance + 1.0e-12 < (
                     previous_active_variance
                 ):
@@ -1547,6 +1786,12 @@ def precision_guard_diagnostic_contract(
                             outage_count - previous_outage_count
                         ),
                     }
+            elif outage_count > previous_outage_count and epoch_delta is not None:
+                cross_epoch_active_reference_intervals += 1
+            elif outage_count > previous_outage_count:
+                # Legacy diagnostics cannot distinguish a same-epoch re-entry
+                # from release-complete -> READY -> a new snapshot.
+                unproven_active_reference_intervals += 1
         previous_guard = current_guard
 
         if covariance_issues:
@@ -1591,6 +1836,12 @@ def precision_guard_diagnostic_contract(
             suppressed_invalid_counts, default=None
         ),
         "covariance_issue_sample_count": covariance_issue_count,
+        "active_reference_epoch_accounting": {
+            "available": epoch_accounting_available,
+            "mixed_presence": epoch_accounting_mixed,
+            "unproven_intervals": unproven_active_reference_intervals,
+            "cross_epoch_intervals": cross_epoch_active_reference_intervals,
+        },
         "maximum_active_reference_variance_rad2": max(
             active_reference_variances, default=None
         ),
@@ -2051,6 +2302,19 @@ def validate_bags(
         f"duplicate_status_samples={runtime['duplicate_status_samples']}",
     )
 
+    fusion_authority_stream = fusion_authority_stream_contract(
+        runtime["fusion_authority_events"]
+    )
+    checks.add(
+        "typed fusion-authority stream contract",
+        fusion_authority_stream["valid"],
+        f"events={fusion_authority_stream['event_count']} "
+        f"sessions={fusion_authority_stream['session_count']} "
+        f"states={fusion_authority_stream['state_counts']} "
+        f"soft_bad_hold={fusion_authority_stream['soft_bad_hold_count']} "
+        f"violations={fusion_authority_stream['violation_count']}",
+    )
+
     publication_integrity = map_fusion_publication_integrity_contract(
         runtime["raw_odom_events"],
         runtime["existing_global_odom_events"],
@@ -2113,6 +2377,21 @@ def validate_bags(
             "suppressed_invalid_maximum="
             f"{precision_guard_summary['suppressed_invalid_maximum']}",
         )
+        epoch_accounting = precision_guard_summary[
+            "active_reference_epoch_accounting"
+        ]
+        epoch_available = bool(epoch_accounting["available"])
+        checks.add(
+            "precision outage-yaw guard active-reference epoch accounting",
+            epoch_available,
+            (
+                f"accounting={epoch_accounting}"
+                if epoch_available
+                else "N/A: legacy diagnostics leave hidden re-outage snapshot "
+                f"lineage unproven; accounting={epoch_accounting}"
+            ),
+            warning=not epoch_available,
+        )
     counters = counter_contract(runtime["audited_counters"], mode)
     checks.add(
         "malformed and backstep diagnostic counters",
@@ -2138,6 +2417,7 @@ def validate_bags(
         "diagnostics": {
             "status_coverage": status_coverage,
             "nmea_projection": nmea_summary,
+            "fusion_authority_stream": fusion_authority_stream,
             "map_fusion_publication_integrity": publication_integrity,
             "precision_outage_yaw_guard": precision_guard_summary,
             "audited_zero_counters": counters,
@@ -2284,7 +2564,17 @@ def validate(repo: Path, run_dir: Path, dataset: str, mode: str) -> dict[str, An
         "summary": {
             "passed": checks.passed,
             "check_count": len(checks.items),
-            "failed_check_count": sum(not item["passed"] for item in checks.items),
+            "passed_check_count": sum(
+                item["passed"] for item in checks.items
+            ),
+            "warning_check_count": sum(
+                not item["passed"] and item["warning"]
+                for item in checks.items
+            ),
+            "failed_check_count": sum(
+                not item["passed"] and not item["warning"]
+                for item in checks.items
+            ),
         },
     }
 
@@ -2307,7 +2597,13 @@ def failure_result(
                 "detail": f"{type(error).__name__}: {error}",
             }
         ],
-        "summary": {"passed": False, "check_count": 1, "failed_check_count": 1},
+        "summary": {
+            "passed": False,
+            "check_count": 1,
+            "passed_check_count": 0,
+            "warning_check_count": 0,
+            "failed_check_count": 1,
+        },
     }
 
 
@@ -2319,6 +2615,17 @@ def markdown(result: dict[str, Any]) -> str:
     summary = result["summary"]
     dataset = result.get("dataset", {})
     status = "PASS" if summary["passed"] else "FAIL"
+    warning_count = summary.get(
+        "warning_check_count",
+        sum(
+            not item["passed"] and item.get("warning", False)
+            for item in result["checks"]
+        ),
+    )
+    passed_count = summary.get(
+        "passed_check_count",
+        summary["check_count"] - summary["failed_check_count"] - warning_count,
+    )
     lines = [
         "# Hesai GNSS publication provenance",
         "",
@@ -2327,8 +2634,8 @@ def markdown(result: dict[str, Any]) -> str:
         f"- Dataset: {_markdown_escape(dataset.get('display_name') or dataset.get('key'))}",
         f"- Expected mode: `{_markdown_escape(result.get('expected_mode'))}`",
         f"- Run directory: `{_markdown_escape(result.get('run_directory'))}`",
-        f"- Checks: {summary['check_count'] - summary['failed_check_count']}/"
-        f"{summary['check_count']} passed",
+        f"- Checks: {passed_count} passed, {warning_count} warnings, "
+        f"{summary['failed_check_count']} failed",
         "",
         "## Checks",
         "",
@@ -2336,9 +2643,14 @@ def markdown(result: dict[str, Any]) -> str:
         "|---|---:|---|",
     ]
     for check in result["checks"]:
+        check_status = (
+            "PASS"
+            if check["passed"]
+            else "WARN" if check.get("warning", False) else "FAIL"
+        )
         lines.append(
             f"| {_markdown_escape(check['name'])} | "
-            f"{'PASS' if check['passed'] else 'FAIL'} | "
+            f"{check_status} | "
             f"{_markdown_escape(check['detail'])} |"
         )
     lines.append("")
@@ -2441,6 +2753,62 @@ def run_self_test() -> None:
     bad["values"]["map_origin_latitude"] = "35.1254574925"
     assert not nmea_diagnostic_contract([bad])["valid"]
 
+    def authority_event(
+        record_index: int, session: int, sequence: int, stamp: int,
+        state: int = 1,
+    ) -> dict[str, Any]:
+        soft_hold = state == 2
+        return {
+            "record_index": record_index,
+            "record_stamp_ns": stamp,
+            "stamp_ns": stamp,
+            "stamp_canonical": True,
+            "source_stamp_ns": stamp,
+            "source_stamp_canonical": True,
+            "frame_id": "map",
+            "session_id": session,
+            "sequence": sequence,
+            "state": state,
+            "recovery_state": "tracking",
+            "anchor_valid": True,
+            "position_fused": True,
+            "yaw_fused": True,
+            "last_fix_state": 2 if soft_hold else 1,
+            "reason": "gnss_soft_bad_within_grace" if soft_hold else "self_test",
+        }
+
+    authority_good = fusion_authority_stream_contract(
+        [
+            authority_event(1, 10, 1, 1_000_000_000),
+            authority_event(2, 10, 2, 1_000_000_000, state=2),
+            authority_event(3, 11, 1, 2_000_000_000),
+        ]
+    )
+    assert authority_good["valid"]
+    assert authority_good["soft_bad_hold_count"] == 1
+    assert not fusion_authority_stream_contract(
+        [
+            authority_event(1, 10, 1, 1_000_000_000),
+            authority_event(2, 10, 1, 1_100_000_000),
+        ]
+    )["valid"]
+    assert not fusion_authority_stream_contract(
+        [
+            authority_event(1, 10, 1, 1_000_000_000),
+            authority_event(2, 11, 1, 2_000_000_000),
+            authority_event(3, 10, 2, 3_000_000_000),
+        ]
+    )["valid"]
+    assert not fusion_authority_stream_contract(
+        [
+            authority_event(1, 10, 1, 1_000_000_000),
+            authority_event(2, 11, 1, 1_000_000_000),
+        ]
+    )["valid"]
+    inconsistent_full = authority_event(1, 10, 1, 1_000_000_000)
+    inconsistent_full["yaw_fused"] = False
+    assert not fusion_authority_stream_contract([inconsistent_full])["valid"]
+
     guard_values = {
         "fallback.gnss_position_enabled": "false",
         "outage_yaw_guard.enabled": "true",
@@ -2466,6 +2834,7 @@ def run_self_test() -> None:
         "outage_yaw_guard.last_reason": "trusted_yaw_reference_ready",
         "outage_yaw_guard.accepted_reference_count": "1",
         "outage_yaw_guard.outage_count": "0",
+        "outage_yaw_guard.active_reference_epoch": "0",
         "outage_yaw_guard.recovery_count": "0",
         "outage_yaw_guard.reset_count": "1",
         "outage_yaw_guard.invalid_advance_count": "0",
@@ -2477,7 +2846,9 @@ def run_self_test() -> None:
         "key_counts": {key: 1 for key in guard_values},
         "values": guard_values,
     }
-    assert precision_guard_diagnostic_contract([guard_snapshot])["valid"]
+    guard_contract = precision_guard_diagnostic_contract([guard_snapshot])
+    assert guard_contract["valid"]
+    assert guard_contract["active_reference_epoch_accounting"]["available"]
     guard_values["outage_yaw_guard.invalid_advance_count"] = "1"
     assert not precision_guard_diagnostic_contract([guard_snapshot])["valid"]
     counters = {

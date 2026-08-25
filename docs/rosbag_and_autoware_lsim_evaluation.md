@@ -1,4 +1,4 @@
-# Rosbag and Autoware Logging-Simulation Workflow
+# Rosbag and Autoware Localization-Interface Workflow
 
 > Canonical result tables and publication status are indexed at
 > [docs/evaluation](evaluation/README.md). This page defines the reusable
@@ -206,7 +206,7 @@ output-only snapshot bridge and starts the external matcher/global overlay:
   --points /sensing/lidar/top/pointcloud_raw \
   --imu /sensing/imu/tamagawa/imu_raw \
   --tracking-mode scan_to_scan \
-  --run-name lsim_scan_to_scan
+  --run-name autoware_interface_scan_to_scan
 ```
 
 ```bash
@@ -215,7 +215,7 @@ output-only snapshot bridge and starts the external matcher/global overlay:
   --points /sensing/lidar/top/pointcloud_raw \
   --imu /sensing/imu/tamagawa/imu_raw \
   --tracking-mode scan_to_submap \
-  --run-name lsim_scan_to_submap
+  --run-name autoware_interface_scan_to_submap
 ```
 
 The image build is cached. Add `--no-build` after the first successful build to
@@ -232,7 +232,7 @@ Providing the primary NMEA topic enables the GNSS frontend:
   --imu /sensing/imu/tamagawa/imu_raw \
   --nmea /sensing/gnss/nmea_sentence \
   --fix-velocity /sensing/gnss/fix_velocity \
-  --run-name lsim_gnss
+  --run-name autoware_interface_gnss
 ```
 
 Optional dual-antenna input uses `--nmea-secondary`. Automatic `/initialpose`
@@ -283,7 +283,19 @@ recorded installation:
 `isolate-all` without `--launch-vehicle` is rejected because it would remove the
 sensor extrinsics required by deskew and registration.
 
-### 3.6 RViz without a discrete GPU
+### 3.6 GUI diagnostics and RViz without a discrete GPU
+
+To inspect the aggregated localization diagnostics during replay, launch Robot
+Monitor inside the container:
+
+```bash
+./script/run_autoware_lsim_docker.sh ... --rqt-robot-monitor
+```
+
+It subscribes to `/diagnostics_agg` and may be combined with `--rviz`. The
+runner treats the requested monitor process and subscription as required until
+replay completes. Either GUI option requires a working host X11 `DISPLAY` and
+`xhost` command.
 
 The default Docker run is headless. For occasional visualization, use CPU
 software rendering:
@@ -292,9 +304,9 @@ software rendering:
 ./script/run_autoware_lsim_docker.sh ... --rviz
 ```
 
-This adds `compose.rviz.yaml`, forwards X11, and sets
-`LIBGL_ALWAYS_SOFTWARE=1`. Keep RViz disabled when measuring estimator timing or
-CPU utilization.
+Either GUI option adds `compose.rviz.yaml`, forwards X11, and sets
+`LIBGL_ALWAYS_SOFTWARE=1`. Keep both GUI tools disabled when measuring estimator
+timing or CPU utilization.
 
 For a presentation view with the Autoware sample Lexus body, add
 `--rviz-sample-vehicle`. In addition to the body, the presentation profile shows
@@ -412,7 +424,7 @@ This configuration does not launch a point-cloud map loader, Lanelet2 map,
 Autoware NDT localization, perception, planning, or control. It therefore tests:
 
 - compatibility with Autoware localization topics and TF;
-- behavior under Autoware logging-simulation time;
+- behavior during rosbag replay with simulated time;
 - coexistence with selected vehicle/sensor descriptions;
 - estimator accuracy and timing on the same bag.
 

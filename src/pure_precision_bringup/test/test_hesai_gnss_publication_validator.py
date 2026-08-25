@@ -219,10 +219,13 @@ def precision_guard_snapshot(
     applied_offset: float = 0.0,
     target_offset: float = 0.0,
     outage_count: int = 0,
+    active_reference_epoch: int | None = None,
     recovery_count: int = 0,
     reset_count: int = 1,
     reason: str = "trusted_yaw_reference_ready",
 ):
+    if active_reference_epoch is None:
+        active_reference_epoch = 0 if outage_count == 0 else 1
     if state is None:
         state = "DISARMED" if accepted == 0 else "READY"
     active = state in validator.OUTAGE_YAW_GUARD_ACTIVE_STATES
@@ -275,6 +278,9 @@ def precision_guard_snapshot(
         "outage_yaw_guard.last_reason": reason,
         "outage_yaw_guard.accepted_reference_count": str(accepted),
         "outage_yaw_guard.outage_count": str(outage_count),
+        "outage_yaw_guard.active_reference_epoch": str(
+            active_reference_epoch
+        ),
         "outage_yaw_guard.recovery_count": str(recovery_count),
         "outage_yaw_guard.reset_count": str(reset_count),
         "outage_yaw_guard.invalid_advance_count": "0",
@@ -576,6 +582,83 @@ def test_precision_guard_runtime_contract_is_fail_closed(validator) -> None:
     assert not validator.precision_guard_diagnostic_contract(
         hidden_understated
     )["valid"]
+
+    cross_epoch = json.loads(json.dumps(hidden_understated))
+    cross_epoch[-1]["values"].update(
+        {
+            "outage_yaw_guard.trusted_variance_rad2": "0.009",
+            "outage_yaw_guard.active_reference_epoch": "2",
+        }
+    )
+    cross_epoch_summary = validator.precision_guard_diagnostic_contract(
+        cross_epoch
+    )
+    assert cross_epoch_summary["valid"], cross_epoch_summary[
+        "mismatch_examples"
+    ]
+    assert cross_epoch_summary["active_reference_epoch_accounting"] == {
+        "available": True,
+        "mixed_presence": False,
+        "unproven_intervals": 0,
+        "cross_epoch_intervals": 1,
+    }
+
+    legacy_understated = json.loads(json.dumps(hidden_understated))
+    for snapshot in legacy_understated:
+        del snapshot["values"]["outage_yaw_guard.active_reference_epoch"]
+        snapshot["key_counts"].pop(
+            "outage_yaw_guard.active_reference_epoch", None
+        )
+    legacy_summary = validator.precision_guard_diagnostic_contract(
+        legacy_understated
+    )
+    assert legacy_summary["valid"], legacy_summary["mismatch_examples"]
+    assert legacy_summary["active_reference_epoch_accounting"] == {
+        "available": False,
+        "mixed_presence": False,
+        "unproven_intervals": 1,
+        "cross_epoch_intervals": 0,
+    }
+    legacy_check = validator.Checks()
+    legacy_check.add(
+        "legacy active-reference epoch accounting",
+        False,
+        "N/A: unproven",
+        warning=True,
+    )
+    assert legacy_check.passed
+    assert legacy_check.items[0]["warning"]
+    warning_markdown = validator.markdown(
+        {
+            "summary": {
+                "passed": True,
+                "check_count": 1,
+                "failed_check_count": 0,
+            },
+            "dataset": {"key": "legacy"},
+            "expected_mode": "precision",
+            "run_directory": "legacy-run",
+            "checks": legacy_check.items,
+        }
+    )
+    assert "| WARN | N/A: unproven |" in warning_markdown
+
+    mixed_epoch = json.loads(json.dumps(hidden_reoutage_timeline))
+    del mixed_epoch[0]["values"]["outage_yaw_guard.active_reference_epoch"]
+    mixed_epoch[0]["key_counts"].pop(
+        "outage_yaw_guard.active_reference_epoch", None
+    )
+    assert not validator.precision_guard_diagnostic_contract(mixed_epoch)[
+        "valid"
+    ]
+
+    impossible_epoch = json.loads(json.dumps(hidden_reoutage_timeline))
+    impossible_epoch[-1]["values"][
+        "outage_yaw_guard.active_reference_epoch"
+    ] = "3"
+    assert not validator.precision_guard_diagnostic_contract(impossible_epoch)[
+        "valid"
+    ]
     hidden_bad_counters = json.loads(json.dumps(hidden_reoutage_timeline))
     hidden_bad_counters[-1]["values"][
         "outage_yaw_guard.recovery_count"

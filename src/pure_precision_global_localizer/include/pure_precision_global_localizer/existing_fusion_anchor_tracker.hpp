@@ -72,7 +72,8 @@ struct FusionAnchorUpdate
 
 struct ExistingFusionHealthFields
 {
-  int level{3};
+  // Numeric values intentionally match pure_gnss_msgs/FusionAuthority.
+  int authority_state{0};
   std::string recovery_state{"unknown"};
   std::string anchor_valid{"false"};
   std::string position_fused{"false"};
@@ -85,6 +86,20 @@ struct FusionHealthEvaluation
   bool healthy{false};
   std::string reason{"not_evaluated"};
   double age_sec{std::numeric_limits<double>::quiet_NaN()};
+};
+
+struct FusionAuthorityTimingEvaluation
+{
+  bool valid{false};
+  std::string reason{"not_evaluated"};
+  double source_age_sec{std::numeric_limits<double>::quiet_NaN()};
+  double transport_age_sec{std::numeric_limits<double>::quiet_NaN()};
+};
+
+struct FusionAuthorityOrderEvaluation
+{
+  bool accepted{false};
+  std::string reason{"not_evaluated"};
 };
 
 struct FusionRearmState
@@ -105,6 +120,23 @@ FusionHealthEvaluation evaluateExistingFusionHealthFreshness(
   double now_sec,
   double max_age_sec,
   double max_future_skew_sec);
+
+FusionAuthorityTimingEvaluation evaluateFusionAuthorityTiming(
+  double source_stamp_sec,
+  double publish_stamp_sec,
+  double received_stamp_sec,
+  double max_age_sec,
+  double max_future_skew_sec);
+
+FusionAuthorityOrderEvaluation evaluateFusionAuthorityOrder(
+  bool previous_received,
+  std::uint64_t previous_session_id,
+  std::uint64_t previous_sequence,
+  std::uint64_t previous_stamp_ns,
+  bool session_retired,
+  std::uint64_t session_id,
+  std::uint64_t sequence,
+  std::uint64_t stamp_ns);
 
 FusionHealthEvaluation applyExistingFusionRearmGate(
   const FusionHealthEvaluation & input,

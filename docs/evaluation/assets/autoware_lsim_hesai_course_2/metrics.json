@@ -1,7 +1,7 @@
 {
   "current_default_projection_headless": {
     "accuracy_evaluated": false,
-    "accuracy_reason": "The LSim output contains no independent ground-truth trajectory.",
+    "accuracy_reason": "The localization-interface output contains no independent ground-truth trajectory.",
     "current_default_projection_equivalent": true,
     "evidence_scope": [
       "interface",
@@ -80,7 +80,7 @@
     "rviz_evaluated": false,
     "status": "PASS"
   },
-  "dataset_label": "Autoware LSim \u2014 Hesai 32-Line + IMU + RTK GNSS \u2014 Course 2",
+  "dataset_label": "Autoware localization-interface evaluation \u2014 Hesai 32-Line + IMU + RTK GNSS \u2014 Course 2",
   "representative_rviz_poster": {
     "absolute_timestamps_published": false,
     "accuracy_evaluated": false,

@@ -149,7 +149,7 @@ MID360_PUBLICATION_FILENAMES = {
     "yaw_error.png",
 }
 
-GNSS_RESULT_SET = "gnss_outage_yaw_guard_20260812_final"
+GNSS_RESULT_SET = "hesai_authority_epoch_fix_20260825"
 GNSS_RESULT_ROOT = ROOT / "test_results" / GNSS_RESULT_SET
 GNSS_DEFAULT_PROJECTION = {
     "projector_type": "TransverseMercator",
@@ -216,6 +216,39 @@ GNSS_RUNTIME_PASS_LABELS = (
 GNSS_RUNTIME_INTENTIONAL_WARNING_LABEL = (
     "raw odom intentional startup zero stamps"
 )
+GNSS_CURRENT_RUNTIME_RESULTS = (
+    ("PASS", "required topics"),
+    ("PASS", "typed fusion authority topic"),
+    ("PASS", "exact correction keys"),
+    ("PASS", "correction full-SE2 contract"),
+    ("PASS", "dedicated precision frames"),
+    ("PASS", "physical scan stream order"),
+    ("PASS", "raw odom stamp order after clock initialization"),
+    ("WARN", GNSS_RUNTIME_INTENTIONAL_WARNING_LABEL),
+    ("PASS", "precision local stamp order after clock initialization"),
+    ("PASS", "precision local intentional startup zero stamps"),
+    ("PASS", "precision global stamp order after clock initialization"),
+    ("PASS", "precision global intentional startup zero stamps"),
+    ("PASS", "intentional initialization coverage"),
+    ("PASS", "typed fusion-authority stream contract"),
+    ("PASS", "map-fusion publication counter integrity"),
+    ("PASS", "map-fusion exact raw stamp publication coverage"),
+    ("PASS", "odometer isolated snapshot contract"),
+    ("PASS", "matcher stream health"),
+    ("PASS", "matcher diagnostic counts match recording"),
+    ("PASS", "matcher latency p99"),
+    ("PASS", "precision global diagnostics"),
+    ("PASS", "existing-fusion global authority"),
+    ("PASS", "startup readiness diagnostic schema"),
+    ("PASS", "existing-fusion anchor freezes outside strict health"),
+    ("PASS", "outage yaw guard runtime contract"),
+    ("PASS", "outage yaw guard active-reference epoch accounting"),
+    ("PASS", "existing-fusion session rearm requires an explicit fresh health edge"),
+    ("PASS", "startup readiness transitions"),
+    ("PASS", "startup global publication safety"),
+    ("PASS", "startup global suppression exercised"),
+    ("PASS", "playback rate"),
+)
 LSIM_CURRENT_EVIDENCE_SCOPE = ["interface", "runtime"]
 LSIM_POSTER_FILENAME = "rviz_poster.png"
 LSIM_POSTER_SHA256 = (
@@ -235,9 +268,9 @@ LSIM_PUBLICATION_FILENAMES = {
     LSIM_REPLAY_FILENAME,
 }
 
-# ``None`` hashes keep LSim regeneration fail closed until the public
-# headless run finishes and its report has been reviewed.  Only then are the
-# immutable source hashes deliberately adopted below.
+# ``None`` hashes keep Autoware-interface regeneration fail closed until the
+# public headless run finishes and its report has been reviewed. Only then are
+# the immutable source hashes deliberately adopted below.
 LSIM_CURRENT_RUN_CONTRACTS: dict[str, dict[str, Any]] = {
     "course_2": {
         "run_id": "default_projection_course_2_20260812",
@@ -282,70 +315,109 @@ LSIM_CURRENT_RUN_CONTRACTS: dict[str, dict[str, Any]] = {
 #
 GNSS_SOURCE_CONTRACTS: dict[str, dict[str, Any]] = {
     "course_2": {
+        "evidence_schema": "current_typed_authority_v1",
         "publication_status": "ACCEPTED",
         "accepted": True,
-        "baseline_run_id": "course_2_baseline_final",
-        "control_run_id": "course_2_control_final",
-        "precision_run_id": "course_2_precision_q4_guard_variance_final",
-        "source_accuracy_label": COURSE_LABELS["course_2"],
-        "expected_accuracy_hard_gate_count": 53,
-        "expected_startup_check_count": 20,
-        "expected_nonintrusion_check_count": 17,
-        "expected_nonintrusion_hard_gate_count": 14,
-        "expected_nonintrusion_failed_warning_count": 0,
+        "applicability": {
+            "artifact_class": "current_hesai_xt_evaluated_profile",
+            "evaluated_profile_date": "2026-08-25",
+            "gyro_bias.enable": True,
+            "gyro_bias.initial_bg_rad_s": -0.0021,
+            "lidar_odom.smoother.enable": True,
+            "lidar_odom.smoother.zupt.enable": False,
+            "lidar_odom.smoother.nhc.enable": False,
+            "typed_authority_startup_contract": True,
+            "valid_for_current_hesai_xt_profile": True,
+        },
+        "precision_run_id": "final_verified_course_2_repeat3",
+        "speed_reference_result_set": "hesai_stop_gate_reevaluation_20260824",
+        "speed_reference_run_id": "course_2_baseline_stop_gate",
+        "source_accuracy_label": "Course2",
+        "expected_accuracy_hard_gate_count": 55,
+        "expected_reference_only_warning_count": 5,
         "expected_failed_hard_gates": [],
+        "expected_primary": {
+            "local_samples": 8477,
+            "global_samples": 7805,
+            "local_scan_to_scan_xy_rmse_m": 1.4571492013032084,
+            "local_scan_to_submap_xy_rmse_m": 0.38968300463863176,
+            "local_scan_to_scan_yaw_rmse_deg": 0.9176361083109869,
+            "local_scan_to_submap_yaw_rmse_deg": 0.7927900553990428,
+            "global_scan_to_scan_xy_rmse_m": 1.4064608850505964,
+            "global_scan_to_submap_xy_rmse_m": 0.5165549186294495,
+            "global_scan_to_scan_yaw_rmse_deg": 2.099876597092824,
+            "global_scan_to_submap_yaw_rmse_deg": 1.5681946993890656,
+            "fusion_outage_metric_window_sec": 121.500028001,
+        },
         "expected_error_plot_timeline": {
-            "rtk_q4_unavailable_begin_time_sec": 67.32411003112793,
-            "rtk_q4_unavailable_end_time_sec": 184.57655668258667,
+            "rtk_q4_unavailable_begin_time_sec": 68.72480750083923,
+            "rtk_q4_unavailable_end_time_sec": 185.97725415229797,
             "rtk_q4_unavailable_duration_sec": 117.252446449,
-            "fusion_tracking_resume_time_sec": 189.77501726150513,
-            "fusion_tracking_resume_delay_sec": 5.198460760000001,
+            "fusion_tracking_resume_time_sec": 190.12499141693115,
+            "fusion_tracking_resume_delay_sec": 4.1477373360000005,
         },
         "expected_runtime": {
+            "check_count": 31,
             "scans": 851,
-            "corrections": 613,
-            "processing_p99_ms": 54.277,
-            "end_to_end_latency_p99_ms": 128.409,
-            "eligible_unique_raw_stamp_count": 7892,
-            "covered_odometry_coalesced_count": 0,
-            "maximum_active_reference_variance_rad2": 0.00857474820591,
+            "corrections": 602,
+            "processing_p99_ms": 55.117,
+            "end_to_end_latency_p99_ms": 127.668,
+            "eligible_unique_raw_stamp_count": 7869,
+            "covered_odometry_coalesced_count": 2619,
+            "maximum_active_reference_variance_rad2": 0.00905313555384,
         },
         "sources": {
             "accuracy_result": (
-                "course_2_glim_ab_variance_final_acceptance.json",
-                "ccbfff228630fb47fa3d3b19f5d57e42baca3e8f16500fefcfe1315dc7b16609",
-            ),
-            "startup_acceptance": (
-                "course_2_startup_acceptance_variance_final.json",
-                "bf8b5cc1615c740e5127f1af61ee6452dc72728ae1c4edf12a61a934c029022d",
-            ),
-            "accepted_scan_nonintrusion": (
-                "runtime_variance_final/course_2_accepted_scan_nonintrusion.json",
-                "ab45e548d400b4e346c47765a03b0222de4c746f6a80c3b71fcfe554f467afd8",
+                "course_2_final_glim_ab_v5_with_plots.json",
+                "3bfdf5e29edb5413be1d972cfa60fac0c1fb3e0c5fab8dfa6d0c1d4a63053eda",
             ),
             "precision_runtime_validation": (
-                "runtime_variance_final/course_2_precision_runtime.log",
-                "d458b9dfff5939c022c75298c3005c3d81d6f176442f83b847bdc15309949c56",
+                "final_verified_course_2_repeat3/precision_validation.log",
+                "eb3aa6240b25e83064f131c0591d4251de98bae35decc4f3a28d140b73d04613",
             ),
-            "baseline_run_provenance": (
-                "provenance_variance_final/course_2_baseline.json",
-                "aa36e75e310d07c3adc6aea1945f8c3d2e465bad9413f1dd86f27a2a1435308c",
+            "run_environment": (
+                "final_verified_course_2_repeat3/run.env",
+                "d869c403b58931ede1334494b888af1260001184cd99535f090377f0b300354a",
             ),
-            "control_run_provenance": (
-                "provenance_variance_final/course_2_control.json",
-                "3a4574acb73027c66f4cc1de634b5d6b5f07f079ac3d7dbe0136bb9b0a74c89e",
+            "effective_configurations": (
+                "final_verified_course_2_repeat3/artifacts/effective_configurations.tsv",
+                "6df62915090f32192c67823e3251cc5db59d1bf30584a393591c4acb1e8d9dd2",
             ),
-            "precision_run_provenance": (
-                "provenance_variance_final/course_2_precision.json",
-                "4e57ec21bf8d1bb11d8583ce75f87908f8a9bd7907ee259ae68d962a28d4f9b1",
+            "odometry_parameters": (
+                "final_verified_course_2_repeat3/artifacts/odom_param.yaml",
+                "41323f07af76c8e3aea857a5b1d368a4f313efa0702685d870f80772ecab525d",
+            ),
+            "odometry_override": (
+                "final_verified_course_2_repeat3/artifacts/odom_override_param.yaml",
+                "2f0a7b455996e5869c10837cbbc04e6223f4267b0a357507955b5f64f4f602da",
+            ),
+            "precision_global_parameters": (
+                "final_verified_course_2_repeat3/artifacts/precision_global_param.yaml",
+                "c6c9f00e56bf23f48248b6d8894b61bcf737ea9ff5f943d8bda6291f83afe7be",
+            ),
+            "gnss_fusion_parameters": (
+                "final_verified_course_2_repeat3/artifacts/gnss_fusion_param.yaml",
+                "ffc39c6641c3acc03fdb4bf7e26de89d37d0a0874007828484ac2b4ee011abf3",
+            ),
+            "nmea_parameters": (
+                "final_verified_course_2_repeat3/artifacts/nmea_gnss_param.yaml",
+                "2d04cde50870b45df6f2e913d8d6c75e331caee24e6c52fe3193129fd0f5c754",
+            ),
+            "nmea_override": (
+                "final_verified_course_2_repeat3/artifacts/nmea_override_param.yaml",
+                "1808b1d66570c24e5cf551c0f160f309f94c70ba258aab2d1a1746d2ed93e5ea",
+            ),
+            "map_projector_metadata": (
+                "final_verified_course_2_repeat3/artifacts/map_projector_info.yaml",
+                "39ebda9a5d35914256077cd1dc00aaed253849392fdce3f910eee27b3fe275cc",
             ),
             "aligned_local_samples": (
-                "plots_variance_final/course_2/hesai_32_line_imu_rtk_gnss_course_2_local_glim.csv",
-                "3d8acd404975e03b6453c45bc4d91e046212b21953e2da8e96d772f83fcc42b2",
+                "current_trajectory_plots/course_2/course2_local_glim.csv",
+                "11a176b505390bf8ea34637a5b81dfdaba760b975fd084d4bdfc3bdd6621faad",
             ),
             "aligned_global_samples": (
-                "plots_variance_final/course_2/hesai_32_line_imu_rtk_gnss_course_2_global_glim.csv",
-                "2795f904ff0882d192080749525e089f0c692f2a18848f06e58fea67022042cf",
+                "current_trajectory_plots/course_2/course2_global_glim.csv",
+                "fe1a3b50928f287367e3ca297e0f118160f84e031281bd70465e3b1f260d7b5f",
             ),
         },
     },
@@ -412,10 +484,18 @@ def require_gnss_contract_adopted() -> None:
             pending.append(f"{course}/expected_failed_hard_gates")
         if not isinstance(contract.get("expected_runtime"), dict):
             pending.append(f"{course}/expected_runtime")
-        for mode in ("baseline", "control", "precision"):
-            run_id = contract.get(f"{mode}_run_id")
+        if contract.get("evidence_schema") == "current_typed_authority_v1":
+            required_run_ids = ("precision_run_id", "speed_reference_run_id")
+        else:
+            required_run_ids = (
+                "baseline_run_id",
+                "control_run_id",
+                "precision_run_id",
+            )
+        for field in required_run_ids:
+            run_id = contract.get(field)
             if not isinstance(run_id, str) or not run_id:
-                pending.append(f"{course}/{mode}_run_id")
+                pending.append(f"{course}/{field}")
         for source_id, (_, expected_hash) in contract.get("sources", {}).items():
             if not isinstance(expected_hash, str) or re.fullmatch(
                 r"[0-9a-f]{64}", expected_hash
@@ -851,7 +931,9 @@ def runtime_fullmatch(
     return match
 
 
-def validate_precision_runtime_log(path: Path, context: str) -> dict[str, Any]:
+def validate_precision_runtime_log(
+    path: Path, context: str, expected_runtime: dict[str, Any]
+) -> dict[str, Any]:
     """Parse the pinned full-rate validator log and publish normalized evidence."""
     lines = path.read_text(encoding="utf-8").splitlines()
     require(
@@ -1224,13 +1306,8 @@ def validate_precision_runtime_log(path: Path, context: str) -> dict[str, Any]:
     )
     guard = parse_runtime_literal(guard_match.group(1), dict, context)
     guard_variance = guard.get("maximum_active_reference_variance_rad2")
-    expected_guard_states = [
-        "DISARMED",
-        "OUTAGE_HOLD",
-        "OUTAGE_SLEW",
-        "READY",
-        "RECOVERY_RELEASE",
-    ]
+    expected_guard_states = expected_runtime["guard_states"]
+    expected_guard_release_samples = expected_runtime["guard_release_samples"]
     require(
         parse_runtime_literal(guard_match.group(2), list, context) == []
         and guard.get("samples") == guard.get("parsed_samples")
@@ -1240,7 +1317,7 @@ def validate_precision_runtime_log(path: Path, context: str) -> dict[str, Any]:
         and guard.get("active_samples")
         == guard.get("outage_samples", 0) + guard.get("release_samples", 0)
         and guard.get("outage_samples", 0) > 0
-        and guard.get("release_samples", 0) > 0
+        and guard.get("release_samples", 0) == expected_guard_release_samples
         and type(guard_variance) in (int, float)
         and math.isfinite(guard_variance)
         and 0.0 < guard_variance
@@ -1281,6 +1358,11 @@ def validate_precision_runtime_log(path: Path, context: str) -> dict[str, Any]:
         f"{context}/startup transitions",
     )
     transitions = parse_runtime_literal(transition_match.group(1), list, context)
+    startup_anchor_lag_rad = (
+        transitions[0].get("anchor_lag_yaw_rad", float("nan"))
+        if len(transitions) == 1
+        else float("nan")
+    )
     require(
         len(transitions) == 1
         and parse_runtime_literal(transition_match.group(2), list, context) == []
@@ -1289,7 +1371,9 @@ def validate_precision_runtime_log(path: Path, context: str) -> dict[str, Any]:
         and transitions[0].get("diagnostic_stamp_ns", 0)
         >= transitions[0]["activation_ns"]
         and math.isfinite(transitions[0].get("candidate_yaw_rad", float("nan")))
-        and transitions[0].get("anchor_lag_yaw_rad") == 0.0,
+        and math.isfinite(startup_anchor_lag_rad)
+        and abs(startup_anchor_lag_rad)
+        <= expected_runtime["maximum_startup_anchor_lag_rad"],
         f"{context}: startup readiness-transition evidence failed",
     )
 
@@ -1301,6 +1385,11 @@ def validate_precision_runtime_log(path: Path, context: str) -> dict[str, Any]:
     )
     session_starts = parse_runtime_literal(startup_match.group(1), list, context)
     intervals = parse_runtime_literal(startup_match.group(2), list, context)
+    diagnostic_anchor_lag_rad = (
+        intervals[0].get("diagnostic_anchor_lag_yaw_rad", float("nan"))
+        if len(intervals) == 1
+        else float("nan")
+    )
     require(
         len(session_starts) == len(intervals) == 1
         and session_starts[0] > 0
@@ -1314,7 +1403,10 @@ def validate_precision_runtime_log(path: Path, context: str) -> dict[str, Any]:
         == intervals[0].get("first_pose_ns")
         and abs(intervals[0].get("first_anchor_yaw_error_rad", float("inf")))
         <= 1.0e-3
-        and intervals[0].get("diagnostic_anchor_lag_yaw_rad") == 0.0
+        and math.isfinite(diagnostic_anchor_lag_rad)
+        and diagnostic_anchor_lag_rad == startup_anchor_lag_rad
+        and abs(diagnostic_anchor_lag_rad)
+        <= expected_runtime["maximum_startup_anchor_lag_rad"]
         and int(startup_match.group(3)) == 20_000_000,
         f"{context}: startup global-publication safety failed",
     )
@@ -1407,15 +1499,16 @@ def validate_gnss_evidence(
     result = read_json(sources["accuracy_result"])
     startup = read_json(sources["startup_acceptance"])
     accepted_scan = read_json(sources["accepted_scan_nonintrusion"])
+    runtime_expected = contract["expected_runtime"]
     runtime_validation = validate_precision_runtime_log(
         sources["precision_runtime_validation"],
         f"{course}/precision_runtime_validation",
+        runtime_expected,
     )
     baseline_run_id = contract["baseline_run_id"]
     control_run_id = contract["control_run_id"]
     precision_run_id = contract["precision_run_id"]
 
-    runtime_expected = contract["expected_runtime"]
     runtime_matcher = runtime_validation["matcher"]
     runtime_publication = runtime_validation["map_fusion_publication"]
     runtime_guard = runtime_validation["outage_yaw_guard"]
@@ -1693,6 +1786,395 @@ def validate_gnss_evidence(
         "provenance_summary": provenance_summary,
         "outage_yaw_guard": yaw_guard_summary,
         "startup_window_provenance": startup_window_summary,
+    }
+
+
+def ros_parameters(path: Path, node_name: str = "/**") -> dict[str, Any]:
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    require(isinstance(document, dict), f"{path}: ROS parameter file is not a map")
+    node = document.get(node_name)
+    require(isinstance(node, dict), f"{path}: missing node {node_name}")
+    parameters = node.get("ros__parameters")
+    require(isinstance(parameters, dict), f"{path}: missing ros__parameters")
+    return parameters
+
+
+def validate_current_gnss_runtime_log(
+    path: Path, expected: dict[str, Any]
+) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8")
+    check_count = int(expected["check_count"])
+    result_lines = tuple(
+        (match.group(1), match.group(2))
+        for match in re.finditer(
+            r"^\[(PASS|WARN|FAIL)\] ([^:]+):", text, flags=re.MULTILINE
+        )
+    )
+    require(
+        result_lines == GNSS_CURRENT_RUNTIME_RESULTS
+        and len(result_lines) == check_count
+        and text.splitlines()[-1]
+        == f"summary: {check_count}/{check_count} checks passed",
+        "current Hesai runtime result sequence or summary changed",
+    )
+
+    correction = re.search(
+        r"\[PASS\] exact correction keys: scans=(\d+) corrections=(\d+)", text
+    )
+    latency = re.search(
+        r"\[PASS\] matcher latency p99: processing_p99_ms=([0-9.]+) "
+        r"latency_p99_ms=([0-9.]+)",
+        text,
+    )
+    require(correction is not None and latency is not None, "missing runtime metrics")
+    scans = int(correction.group(1))
+    corrections = int(correction.group(2))
+    processing_p99_ms = float(latency.group(1))
+    end_to_end_latency_p99_ms = float(latency.group(2))
+    require(
+        scans == expected["scans"]
+        and corrections == expected["corrections"]
+        and processing_p99_ms == expected["processing_p99_ms"]
+        and end_to_end_latency_p99_ms == expected["end_to_end_latency_p99_ms"],
+        "current Hesai runtime metrics differ from the adopted contract",
+    )
+    return {
+        "status": "PASS",
+        "check_count": check_count,
+        "typed_fusion_authority": True,
+        "startup_publication_safety": "PASS",
+        "scans": scans,
+        "corrections": corrections,
+        "matcher_processing_p99_ms": processing_p99_ms,
+        "matcher_end_to_end_latency_p99_ms": end_to_end_latency_p99_ms,
+    }
+
+
+def validate_current_gnss_evidence(
+    course: str, sources: dict[str, Path]
+) -> dict[str, Any]:
+    contract = GNSS_SOURCE_CONTRACTS[course]
+    require(
+        contract.get("evidence_schema") == "current_typed_authority_v1",
+        f"{course}: unsupported current GNSS evidence schema",
+    )
+    result = read_json(sources["accuracy_result"])
+    hard_checks = [
+        item for item in result.get("checks", []) if item.get("category") == "hard"
+    ]
+    failed_hard_gates = [
+        item["name"] for item in hard_checks if item.get("passed") is not True
+    ]
+    failed_reference_warnings = [
+        item["name"]
+        for item in result.get("checks", [])
+        if item.get("category") == "warn" and item.get("passed") is not True
+    ]
+    require(
+        result.get("label") == contract["source_accuracy_label"]
+        and result.get("passed") is contract["accepted"]
+        and result.get("hard_gate_count")
+        == contract["expected_accuracy_hard_gate_count"]
+        == len(hard_checks)
+        and result.get("failed_hard_gate_count") == 0
+        and failed_hard_gates == contract["expected_failed_hard_gates"],
+        f"{course}: current accuracy hard-gate contract failed",
+    )
+    require(
+        len(failed_reference_warnings)
+        == contract["expected_reference_only_warning_count"],
+        f"{course}: reference-only warning count changed",
+    )
+
+    method = result.get("method", {})
+    require(
+        method.get("alignment_mode") == "exact-initial-pose"
+        and method.get("accuracy_estimator_association")
+        == "exact same-run integer header-stamp intersection; no estimator interpolation"
+        and method.get("accuracy_reference_association")
+        == "GLIM interpolated to exact estimator header stamps only"
+        and method.get("yaw_alignment")
+        == "the yaw of the same complete initial-pose SE(2); no separate yaw fit",
+        f"{course}: current accuracy method changed",
+    )
+    primary = result.get("primary_alignment", {})
+    for group, baseline in (("local", "precision_raw"), ("global", "precision_existing")):
+        alignment = primary.get(group, {})
+        residual = alignment.get("initial_residuals", {}).get(baseline, {})
+        require(
+            alignment.get("type") == "single_pose_exact_se2"
+            and alignment.get("baseline") == baseline
+            and alignment.get("scale_estimated_or_applied") is False
+            and float(residual.get("position_m", float("inf"))) <= 1.0e-9
+            and abs(float(residual.get("yaw_rad", float("inf")))) <= 1.0e-12,
+            f"{course}/{group}: current exact-initial-pose contract failed",
+        )
+
+    inputs = result.get("inputs", {})
+    require(
+        path_has_suffix(
+            inputs.get("precision_bag"),
+            f"{GNSS_RESULT_SET}/{contract['precision_run_id']}/localization_output",
+        )
+        and path_has_suffix(
+            inputs.get("speed_bag"),
+            f"{contract['speed_reference_result_set']}/"
+            f"{contract['speed_reference_run_id']}/localization_output",
+        ),
+        f"{course}: current accuracy result uses unexpected runs",
+    )
+
+    evaluations = result.get("evaluations", {})
+    csv_specs = (
+        ("local", "aligned_local_samples", ("precision_raw", "precision_local")),
+        (
+            "global",
+            "aligned_global_samples",
+            ("precision_existing", "precision_global"),
+        ),
+    )
+    for group, source_id, series_names in csv_specs:
+        csv_path = sources[source_id]
+        plot_artifact = result.get("plot_artifacts", {}).get(group, {})
+        require(
+            Path(plot_artifact.get("csv", "")) == csv_path,
+            f"{course}/{group}: result points to an unexpected aligned CSV",
+        )
+        reference, series = load_wide_csv(csv_path, series_names)
+        require(
+            len(reference["stamp_sec"]) == plot_artifact.get("samples")
+            and bool(np.all(np.isfinite(reference["stamp_sec"])))
+            and bool(np.all(np.diff(reference["stamp_sec"]) > 0.0)),
+            f"{course}/{group}: aligned CSV sample/stamp contract failed",
+        )
+        baseline = series_names[0]
+        require(
+            abs(float(series[baseline]["xy_error"][0])) <= 1.0e-9
+            and abs(float(series[baseline]["yaw_error"][0])) <= 1.0e-9,
+            f"{course}/{group}: baseline does not start at the exact pose",
+        )
+        for name in series_names:
+            observed_xy = float(np.sqrt(np.mean(series[name]["xy_error"] ** 2)))
+            observed_yaw = float(np.sqrt(np.mean(series[name]["yaw_error"] ** 2)))
+            expected_xy = float(evaluations[name]["fixed_common_xy_error_m"]["rmse"])
+            expected_yaw = float(
+                evaluations[name]["common_yaw_offset_error_deg"]["rmse"]
+            )
+            require(
+                abs(observed_xy - expected_xy) <= 1.0e-6
+                and abs(observed_yaw - expected_yaw) <= 1.0e-6,
+                f"{course}/{group}/{name}: CSV and JSON RMSE disagree",
+            )
+
+    base_odom = ros_parameters(sources["odometry_parameters"])
+    odom_override = ros_parameters(sources["odometry_override"])
+    expected_profile = contract["applicability"]
+    for parameters, context in (
+        (base_odom, "odometry_parameters"),
+        (odom_override, "odometry_override"),
+    ):
+        require(
+            parameters.get("gyro_bias.enable")
+            is expected_profile["gyro_bias.enable"]
+            and parameters.get("gyro_bias.initial_bg_rad_s")
+            == expected_profile["gyro_bias.initial_bg_rad_s"]
+            and parameters.get("lidar_odom.smoother.enable")
+            is expected_profile["lidar_odom.smoother.enable"]
+            and parameters.get("lidar_odom.smoother.zupt.enable")
+            is expected_profile["lidar_odom.smoother.zupt.enable"]
+            and parameters.get("lidar_odom.smoother.nhc.enable")
+            is expected_profile["lidar_odom.smoother.nhc.enable"],
+            f"{course}/{context}: evaluated Hesai XT profile changed",
+        )
+
+    repository_odom = ros_parameters(
+        ROOT
+        / "src"
+        / "pure_lidar_gyro_odometer"
+        / "param"
+        / "param_xt_lidar_imu_only.yaml"
+    )
+    repository_snapshot_override = ros_parameters(
+        ROOT
+        / "src"
+        / "pure_precision_bringup"
+        / "config"
+        / "submap_snapshot_override.yaml"
+    )
+    captured_effective_odom = {**base_odom, **odom_override}
+    repository_effective_odom = {
+        **repository_odom,
+        **repository_snapshot_override,
+    }
+    require(
+        captured_effective_odom == repository_effective_odom,
+        f"{course}: captured and current Hesai XT effective odometry differ",
+    )
+
+    precision_global = ros_parameters(
+        sources["precision_global_parameters"], "precision_global_localizer"
+    )
+    gnss_fusion = ros_parameters(sources["gnss_fusion_parameters"])
+    repository_precision_global = ros_parameters(
+        ROOT / "src" / "pure_precision_global_localizer" / "param" / "param.yaml",
+        "precision_global_localizer",
+    )
+    repository_gnss_fusion = ros_parameters(
+        ROOT / "src" / "pure_gnss_map_odom_fusion" / "param" / "param.yaml"
+    )
+    authority_topic = "/localization/gnss_map_odom_fusion_authority"
+    require(
+        precision_global.get("fusion_authority_topic") == authority_topic
+        and gnss_fusion.get("authority_topic") == authority_topic,
+        f"{course}: typed fusion-authority topic contract changed",
+    )
+    require(
+        precision_global == repository_precision_global
+        and gnss_fusion == repository_gnss_fusion,
+        f"{course}: captured and current global-authority parameters differ",
+    )
+
+    nmea = ros_parameters(sources["nmea_parameters"])
+    nmea_override = ros_parameters(sources["nmea_override"])
+    projector = yaml.safe_load(
+        sources["map_projector_metadata"].read_text(encoding="utf-8")
+    )
+    repository_nmea = ros_parameters(
+        ROOT / "src" / "pure_nmea_gnss_conversion" / "param" / "param.yaml"
+    )
+    repository_projector = yaml.safe_load(
+        (
+            ROOT
+            / "src"
+            / "pure_nmea_gnss_conversion"
+            / "config"
+            / "map_projector_info.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    require(
+        nmea.get("projector_type") == projector.get("projector_type")
+        == GNSS_DEFAULT_PROJECTION["projector_type"]
+        and nmea.get("vertical_datum") == projector.get("vertical_datum")
+        == GNSS_DEFAULT_PROJECTION["vertical_datum"]
+        and nmea.get("map_origin.latitude")
+        == projector.get("map_origin", {}).get("latitude")
+        == GNSS_DEFAULT_PROJECTION["latitude_deg"]
+        and nmea.get("map_origin.longitude")
+        == projector.get("map_origin", {}).get("longitude")
+        == GNSS_DEFAULT_PROJECTION["longitude_deg"]
+        and nmea.get("scale_factor") == projector.get("scale_factor")
+        == GNSS_DEFAULT_PROJECTION["scale_factor"],
+        f"{course}: NMEA parameters and projector metadata differ",
+    )
+    require(
+        not nmea_override
+        and nmea == repository_nmea
+        and projector == repository_projector,
+        f"{course}: captured and current NMEA projection inputs differ",
+    )
+
+    environment = parse_run_environment(sources["run_environment"])
+    require(
+        environment.get("evaluation_profile") == "hesai_32line_rtk"
+        and environment.get("dataset_id") == course
+        and environment.get("rate") == "1.0"
+        and environment.get("localization_mode") == "precision"
+        and environment.get("odometer_tracking_mode") == "scan_to_scan"
+        and environment.get("tf_policy") == "isolate_all"
+        and environment.get("tf_base_to_lidar_xyz_rpy")
+        == r"0.0\ 0.0\ 0.0\ 0.0\ 0.0\ 0.0"
+        and environment.get("tf_base_to_imu_xyz_rpy")
+        == r"0.0\ 0.0\ -0.1874\ 3.14159\ 0.0\ 0.0"
+        and environment.get("tf_base_to_gnss_xyz_rpy")
+        == r"0.0\ 0.0\ -0.1326\ 0.0\ 0.0\ 0.0"
+        and environment.get("odom_param_sha256")
+        == sha256(sources["odometry_parameters"])
+        and environment.get("odom_override_param_sha256")
+        == sha256(sources["odometry_override"])
+        and environment.get("precision_global_param_sha256")
+        == sha256(sources["precision_global_parameters"])
+        and environment.get("gnss_fusion_param_sha256")
+        == sha256(sources["gnss_fusion_parameters"])
+        and environment.get("nmea_gnss_override_param_sha256")
+        == sha256(sources["nmea_override"]),
+        f"{course}: captured run environment does not match the adopted profile",
+    )
+    effective_rows = {
+        row["role"]: row
+        for row in csv.DictReader(
+            sources["effective_configurations"].open(encoding="utf-8"),
+            delimiter="\t",
+        )
+    }
+    expected_effective_hashes = {
+        "odometry_base": sha256(sources["odometry_parameters"]),
+        "odometry_override": sha256(sources["odometry_override"]),
+        "precision_global_base": sha256(sources["precision_global_parameters"]),
+        "gnss_fusion_base": sha256(sources["gnss_fusion_parameters"]),
+        "nmea_base": sha256(sources["nmea_parameters"]),
+        "nmea_override": sha256(sources["nmea_override"]),
+        "nmea_projector_metadata": sha256(sources["map_projector_metadata"]),
+    }
+    require(
+        all(
+            effective_rows.get(role, {}).get("sha256") == expected_hash
+            for role, expected_hash in expected_effective_hashes.items()
+        ),
+        f"{course}: effective configuration ledger hash mismatch",
+    )
+
+    runtime = validate_current_gnss_runtime_log(
+        sources["precision_runtime_validation"], contract["expected_runtime"]
+    )
+    map_publication = result.get("map_fusion_publication_integrity", {}).get(
+        "precision", {}
+    )
+    guard = result.get("outage_yaw_guard", {})
+    expected_runtime = contract["expected_runtime"]
+    require(
+        map_publication.get("valid") is True
+        and map_publication.get("counter_contract", {}).get("strict_drop_zero")
+        is True
+        and map_publication.get("publication_contract", {}).get(
+            "coverage_valid"
+        )
+        is True
+        and map_publication.get("publication_contract", {}).get(
+            "existing_positive_unique_stamps"
+        )
+        == expected_runtime["eligible_unique_raw_stamp_count"]
+        and map_publication.get("counter_contract", {}).get("final", {}).get(
+            "output.covered_odometry_coalesced_count"
+        )
+        == expected_runtime["covered_odometry_coalesced_count"]
+        and guard.get("present") is True
+        and guard.get("enabled_all") is True
+        and guard.get("required_fields_complete") is True
+        and not any(guard.get("errors", {}).values())
+        and guard.get("maxima", {}).get("active_reference_variance_rad2")
+        == expected_runtime["maximum_active_reference_variance_rad2"],
+        f"{course}: current authority/publication evidence changed",
+    )
+
+    return {
+        "result": result,
+        "failed_hard_gates": failed_hard_gates,
+        "failed_reference_warnings": failed_reference_warnings,
+        "runtime_validation": runtime,
+        "configuration": {
+            "profile": "hesai_32line_rtk",
+            "playback_rate": 1.0,
+            "gyro_bias_enabled": base_odom["gyro_bias.enable"],
+            "initial_gyro_bias_rad_s": base_odom["gyro_bias.initial_bg_rad_s"],
+            "smoother_enabled": base_odom["lidar_odom.smoother.enable"],
+            "zupt_enabled": base_odom["lidar_odom.smoother.zupt.enable"],
+            "nhc_enabled": base_odom["lidar_odom.smoother.nhc.enable"],
+            "typed_fusion_authority": True,
+            "evaluation_origin_override_applied": False,
+            "captured_configuration_hashes_match": True,
+            "current_effective_odometry_parameters_match": True,
+            "effective_odometry_parameter_count": len(captured_effective_odom),
+        },
     }
 
 
@@ -2137,7 +2619,7 @@ def parse_run_environment(path: Path) -> dict[str, str]:
     ):
         if not raw_line or raw_line.startswith("#"):
             continue
-        match = re.fullmatch(r"([a-z][a-z0-9_]*)=(.*)", raw_line)
+        match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", raw_line)
         require(match is not None, f"{path}:{line_number}: malformed run.env line")
         key, value = match.groups()
         require(key not in values, f"{path}:{line_number}: duplicate key {key}")
@@ -2953,7 +3435,245 @@ def curate_lidar() -> list[dict[str, Any]]:
     return records
 
 
+def curate_current_gnss() -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for course, contract in GNSS_SOURCE_CONTRACTS.items():
+        require(
+            contract.get("evidence_schema") == "current_typed_authority_v1",
+            f"{course}: mixed GNSS evidence schemas are not supported",
+        )
+        sources = pinned_gnss_sources(course)
+        evidence = validate_current_gnss_evidence(course, sources)
+        data = evidence["result"]
+        label = COURSE_LABELS[course]
+        output = ASSETS / f"hesai_32line_imu_rtk_gnss_{course}"
+        if output.is_dir():
+            unexpected_files = {
+                path.name for path in output.iterdir() if path.is_file()
+            } - GNSS_PUBLICATION_FILENAMES
+            require(
+                not unexpected_files,
+                f"{output.name}: forbidden Hesai publication files: "
+                f"{sorted(unexpected_files)}",
+            )
+
+        local_csv = sources["aligned_local_samples"]
+        global_csv = sources["aligned_global_samples"]
+        error_plot_timeline = gnss_error_plot_timeline(
+            global_csv,
+            data,
+            contract["expected_error_plot_timeline"],
+        )
+        render_gnss_errors(local_csv, output, label, "local")
+        render_gnss_errors(
+            global_csv,
+            output,
+            label,
+            "global",
+            error_plot_timeline,
+        )
+
+        evaluations = data["evaluations"]
+        outage_accuracy = {
+            name: {
+                "samples": data["outage"][name]["samples"],
+                "xy_error_m": stats(data["outage"][name]["xy_error_m"]),
+                "yaw_error_deg": stats(data["outage"][name]["yaw_error_deg"]),
+            }
+            for name in (
+                "precision_raw",
+                "precision_local",
+                "precision_existing",
+                "precision_global",
+            )
+        }
+        guard = data["outage_yaw_guard"]
+        guard_counters = guard["counters"]
+        guard_maxima = guard["maxima"]
+        published_guard = {
+            "status": "PASS",
+            "reference_source": GNSS_OUTAGE_YAW_GUARD_SEMANTICS[
+                "reference_source"
+            ],
+            "propagation_source": GNSS_OUTAGE_YAW_GUARD_SEMANTICS[
+                "propagation_source"
+            ],
+            "xy_policy": GNSS_OUTAGE_YAW_GUARD_SEMANTICS["xy_policy"],
+            "config": GNSS_OUTAGE_YAW_GUARD_CONFIG,
+            "diagnostic_sample_count": guard["diagnostic_samples"],
+            "state_counts": guard["state_counts"],
+            "accepted_reference_count": guard_counters[
+                "accepted_reference_count"
+            ],
+            "rejected_reference_count": guard_counters[
+                "rejected_reference_count"
+            ],
+            "outage_count": guard_counters["outage_count"],
+            "recovery_count": guard_counters["recovery_count"],
+            "invalid_advance_count": guard_counters["invalid_advance_count"],
+            "suppressed_invalid_count": guard_counters[
+                "suppressed_invalid_count"
+            ],
+            "maximum_active_reference_variance_rad2": guard_maxima[
+                "active_reference_variance_rad2"
+            ],
+            "maximum_additional_variance_rad2": guard_maxima[
+                "additional_variance_rad2"
+            ],
+            "active_reference_epoch_accounting": guard[
+                "active_reference_epoch_accounting"
+            ],
+        }
+        failed_hard_gate_details = [
+            {"name": item["name"], "detail": item["detail"]}
+            for item in data["checks"]
+            if item.get("category") == "hard" and item.get("passed") is not True
+        ]
+        published = {
+            "schema_version": 3,
+            "dataset_label": label,
+            "publication_status": contract["publication_status"],
+            "applicability": contract["applicability"],
+            "publication_acceptance": {
+                "accepted": contract["accepted"],
+                "accuracy_result_status": "PASS" if data["passed"] else "FAIL",
+                "hard_gate_count": data["hard_gate_count"],
+                "failed_hard_gate_count": data["failed_hard_gate_count"],
+                "failed_hard_gates": failed_hard_gate_details,
+                "failed_reference_only_warning_count": len(
+                    evidence["failed_reference_warnings"]
+                ),
+                "reference_only_warnings_are_acceptance_gates": False,
+            },
+            "reference": {
+                "method": "GLIM trajectory (correlated LiDAR/IMU reference)",
+                "independent_ground_truth": False,
+            },
+            "nmea_projection": {
+                **GNSS_DEFAULT_PROJECTION,
+                "runtime_parameter_source": (
+                    "pure_nmea_gnss_conversion/param/param.yaml"
+                ),
+                "metadata_source": (
+                    "pure_nmea_gnss_conversion/config/map_projector_info.yaml"
+                ),
+                "parameters_match_metadata": True,
+                "evaluation_override_applied": False,
+                "provenance_verified": True,
+            },
+            "method": {
+                "scope": "primary GLIM accuracy and integrated runtime hard gates",
+                "estimator_association": data["method"][
+                    "accuracy_estimator_association"
+                ],
+                "reference_association": data["method"][
+                    "accuracy_reference_association"
+                ],
+                "timestamps": data["method"]["timestamps"],
+                "speed_run_role": data["method"]["speed_run_role"],
+            },
+            "alignment": {
+                "scope": "primary GLIM accuracy",
+                "type": "single complete exact first-common-pose SE(2)",
+                "local": data["method"]["local_alignment"],
+                "global": data["method"]["global_alignment"],
+                "yaw": data["method"]["yaw_alignment"],
+                "position_and_yaw_share_transform": True,
+                "scale_applied": False,
+                "exact_initial_pose": True,
+            },
+            "source_runs": {
+                "precision": contract["precision_run_id"],
+                "speed_reference_result_set": contract[
+                    "speed_reference_result_set"
+                ],
+                "speed_reference": contract["speed_reference_run_id"],
+                "speed_reference_role": (
+                    "runtime/protocol comparison only; excluded from primary RMSE"
+                ),
+            },
+            "source_validation": {
+                "accuracy_result": "PASS" if data["passed"] else "FAIL",
+                "runtime_validation": evidence["runtime_validation"],
+                "configuration": evidence["configuration"],
+                "source_hashes_pinned": True,
+            },
+            "outage_yaw_guard": published_guard,
+            "local": {
+                "scan_to_scan": gnss_stream(evaluations["precision_raw"]),
+                "scan_to_submap": gnss_stream(evaluations["precision_local"]),
+                "comparison": {
+                    "fixed_shared_xy_rmse_improvement_percent": data[
+                        "local_comparison"
+                    ]["fixed_xy_rmse_m"]["improvement_percent"],
+                    "fixed_shared_yaw_rmse_improvement_percent": data[
+                        "local_comparison"
+                    ]["yaw_rmse_deg"]["improvement_percent"],
+                    "full_shape_xy_rmse_improvement_percent": data[
+                        "local_comparison"
+                    ]["full_shape_xy_rmse_m"]["improvement_percent"],
+                    "full_shape_yaw_rmse_improvement_percent": data[
+                        "local_comparison"
+                    ]["full_shape_yaw_rmse_deg"]["improvement_percent"],
+                },
+            },
+            "global": {
+                "existing_fusion": gnss_stream(evaluations["precision_existing"]),
+                "precision_global": gnss_stream(evaluations["precision_global"]),
+                "comparison": {
+                    "fixed_shared_xy_rmse_improvement_percent": data[
+                        "global_comparison"
+                    ]["fixed_xy_rmse_m"]["improvement_percent"],
+                    "fixed_shared_yaw_rmse_improvement_percent": data[
+                        "global_comparison"
+                    ]["yaw_rmse_deg"]["improvement_percent"],
+                    "full_shape_xy_rmse_improvement_percent": data[
+                        "global_comparison"
+                    ]["full_shape_xy_rmse_m"]["improvement_percent"],
+                    "full_shape_yaw_rmse_improvement_percent": data[
+                        "global_comparison"
+                    ]["full_shape_yaw_rmse_deg"]["improvement_percent"],
+                },
+            },
+            "outage": {
+                "absolute_timestamps_published": False,
+                "duration_sec": data["outage"]["duration_sec"],
+                "definition": (
+                    "longest post-initialization non-TRACKING metric window; "
+                    "distinct from the raw loss of usable GNSS input"
+                ),
+                "streams": outage_accuracy,
+            },
+            "error_plot_annotations": error_plot_timeline,
+        }
+        write_json(output / "metrics.json", published)
+        records.append(
+            {
+                "directory": output,
+                "sources": [
+                    (source_id, path) for source_id, path in sources.items()
+                ],
+                "provenance": {
+                    "source_result_set": GNSS_RESULT_SET,
+                    "publication_status": contract["publication_status"],
+                    "applicability": contract["applicability"],
+                    "source_runs": published["source_runs"],
+                    "evaluation_method": (
+                        "exact initial pose; same-run exact estimator stamps"
+                    ),
+                    "runtime_validation": evidence["runtime_validation"],
+                },
+            }
+        )
+    return records
+
+
 def curate_gnss() -> list[dict[str, Any]]:
+    if all(
+        contract.get("evidence_schema") == "current_typed_authority_v1"
+        for contract in GNSS_SOURCE_CONTRACTS.values()
+    ):
+        return curate_current_gnss()
     records: list[dict[str, Any]] = []
     for course in GNSS_SOURCE_CONTRACTS:
         contract = GNSS_SOURCE_CONTRACTS[course]
@@ -3011,6 +3731,7 @@ def curate_gnss() -> list[dict[str, Any]]:
             "schema_version": 2,
             "dataset_label": label,
             "publication_status": contract["publication_status"],
+            "applicability": contract["applicability"],
             "publication_acceptance": {
                 "accepted": contract["accepted"],
                 "accuracy_result_status": "PASS" if data["passed"] else "FAIL",
@@ -3169,6 +3890,7 @@ def curate_gnss() -> list[dict[str, Any]]:
                 "provenance": {
                     "source_result_set": GNSS_RESULT_SET,
                     "publication_status": contract["publication_status"],
+                    "applicability": contract["applicability"],
                     "canonical_runs": published["canonical_runs"],
                     "evaluation_method": (
                         "exact initial pose; same-run exact estimator stamps"
@@ -3190,7 +3912,8 @@ def require_lsim_contract_adopted() -> None:
                 pending.append(f"{course}/{source_id}/sha256")
     require(
         not pending,
-        "current-default LSim evidence has not been reviewed and adopted: "
+        "current-default Autoware-interface evidence has not been reviewed "
+        "and adopted: "
         + ", ".join(pending),
     )
 
@@ -3202,11 +3925,15 @@ def pinned_lsim_sources(course: str) -> dict[str, Path]:
     sources: dict[str, Path] = {}
     for source_id, (relative, expected_hash) in contract["sources"].items():
         path = run_root / relative
-        require(path.is_file(), f"missing pinned LSim source: {path}")
+        require(
+            path.is_file(),
+            f"missing pinned Autoware-interface source: {path}",
+        )
         actual_hash = sha256(path)
         require(
             actual_hash == expected_hash,
-            f"pinned LSim source hash mismatch for {course}/{source_id}: "
+            "pinned Autoware-interface source hash mismatch for "
+            f"{course}/{source_id}: "
             f"expected={expected_hash} actual={actual_hash}",
         )
         sources[source_id] = path
@@ -3316,7 +4043,10 @@ def lsim_projection_semantics(
         and metadata["scale_factor"] == parameters["scale_factor"]
         and override_empty
     )
-    require(valid, "LSim run did not use the current default NMEA projection")
+    require(
+        valid,
+        "Autoware-interface run did not use the current default NMEA projection",
+    )
     return {
         **GNSS_DEFAULT_PROJECTION,
         "runtime_parameter_source": (
@@ -3422,8 +4152,14 @@ def validate_lsim_configuration_sources(
 def parse_lsim_validation_report(
     text: str, run_id: str, context: str
 ) -> dict[str, Any]:
+    first_line = text.splitlines()[0] if text else ""
+    accepted_report_titles = {
+        "Autoware localization-interface output acceptance",
+        # Exact title emitted by the pinned pre-rename validation report.
+        "Autoware lSIM output acceptance",
+    }
     require(
-        "Autoware lSIM output acceptance" in text,
+        first_line in accepted_report_titles,
         f"{context}: wrong validation report type",
     )
     bag_match = re.search(r"^Bag:\s+(.+?)\s*$", text, re.MULTILINE)
@@ -3608,7 +4344,7 @@ def validate_current_lsim_run(
     course: str, sources: dict[str, Path]
 ) -> dict[str, Any]:
     contract = LSIM_CURRENT_RUN_CONTRACTS[course]
-    context = f"LSim/{course}"
+    context = f"Autoware-interface/{course}"
     environment = parse_shell_assignments(
         sources["run_environment"].read_text(encoding="utf-8"), context
     )
@@ -3675,7 +4411,8 @@ def curate_lsim() -> list[dict[str, Any]]:
         {
             "schema_version": 2,
             "dataset_label": (
-                "Autoware LSim — Hesai 32-Line + IMU + RTK GNSS — Course 2"
+                "Autoware localization-interface evaluation — Hesai 32-Line + "
+                "IMU + RTK GNSS — Course 2"
             ),
             "current_default_projection_headless": {
                 "status": "PASS",
@@ -3684,8 +4421,8 @@ def curate_lsim() -> list[dict[str, Any]]:
                 "rviz_evaluated": False,
                 "accuracy_evaluated": False,
                 "accuracy_reason": (
-                    "The LSim output contains no independent ground-truth "
-                    "trajectory."
+                    "The localization-interface output contains no independent "
+                    "ground-truth trajectory."
                 ),
                 "runs": {course: current_run},
             },
@@ -4046,7 +4783,245 @@ def check_mid360_publication_contract(manifest: dict[str, Any]) -> None:
     )
 
 
+def check_current_gnss_publication_contract(manifest: dict[str, Any]) -> None:
+    require_gnss_contract_adopted()
+    datasets = {
+        item.get("dataset"): item for item in manifest.get("datasets", [])
+    }
+    expected_dataset_ids = {
+        f"hesai_32line_imu_rtk_gnss_{course}"
+        for course in GNSS_SOURCE_CONTRACTS
+    }
+    actual_dataset_ids = {
+        dataset_id
+        for dataset_id in datasets
+        if isinstance(dataset_id, str)
+        and dataset_id.startswith("hesai_32line_imu_rtk_gnss_")
+    }
+    require(
+        actual_dataset_ids == expected_dataset_ids,
+        "unexpected public Hesai GNSS dataset set",
+    )
+    for course, contract in GNSS_SOURCE_CONTRACTS.items():
+        require(
+            contract.get("evidence_schema") == "current_typed_authority_v1",
+            f"{course}: mixed GNSS evidence schemas are not supported",
+        )
+        dataset_id = f"hesai_32line_imu_rtk_gnss_{course}"
+        dataset = datasets.get(dataset_id)
+        require(dataset is not None, f"missing GNSS publication dataset: {dataset_id}")
+        expected_publication_paths = {
+            f"{dataset_id}/{filename}"
+            for filename in GNSS_PUBLICATION_FILENAMES
+        }
+        require(
+            {item.get("path") for item in dataset.get("files", [])}
+            == expected_publication_paths,
+            f"{dataset_id}: only XY/yaw error figures and metrics may be published",
+        )
+        expected_hashes = {
+            source_id: expected_hash
+            for source_id, (_, expected_hash) in contract["sources"].items()
+        }
+        require(
+            {
+                item.get("local_source_id"): item.get("sha256")
+                for item in dataset.get("source_artifacts", [])
+            }
+            == expected_hashes,
+            f"{dataset_id}: source-artifact contract mismatch",
+        )
+
+        expected_source_runs = {
+            "precision": contract["precision_run_id"],
+            "speed_reference_result_set": contract[
+                "speed_reference_result_set"
+            ],
+            "speed_reference": contract["speed_reference_run_id"],
+            "speed_reference_role": (
+                "runtime/protocol comparison only; excluded from primary RMSE"
+            ),
+        }
+        provenance = dataset.get("provenance", {})
+        require(
+            provenance.get("source_result_set") == GNSS_RESULT_SET
+            and provenance.get("publication_status")
+            == contract["publication_status"]
+            and provenance.get("applicability") == contract["applicability"]
+            and provenance.get("source_runs") == expected_source_runs,
+            f"{dataset_id}: manifest provenance mismatch",
+        )
+
+        metrics_path = ASSETS / dataset_id / "metrics.json"
+        metrics = read_json(metrics_path)
+        require(
+            metrics.get("schema_version") == 3
+            and metrics.get("dataset_label") == COURSE_LABELS[course]
+            and metrics.get("publication_status") == contract["publication_status"]
+            and metrics.get("applicability") == contract["applicability"]
+            and metrics.get("source_runs") == expected_source_runs,
+            f"{dataset_id}: current metrics identity/status mismatch",
+        )
+        acceptance = metrics.get("publication_acceptance", {})
+        require(
+            acceptance.get("accepted") is contract["accepted"]
+            and acceptance.get("accuracy_result_status") == "PASS"
+            and acceptance.get("hard_gate_count")
+            == contract["expected_accuracy_hard_gate_count"]
+            and acceptance.get("failed_hard_gate_count") == 0
+            and acceptance.get("failed_hard_gates") == []
+            and acceptance.get("failed_reference_only_warning_count")
+            == contract["expected_reference_only_warning_count"]
+            and acceptance.get("reference_only_warnings_are_acceptance_gates")
+            is False,
+            f"{dataset_id}: current acceptance summary mismatch",
+        )
+
+        alignment = metrics.get("alignment", {})
+        method = metrics.get("method", {})
+        require(
+            alignment.get("exact_initial_pose") is True
+            and alignment.get("position_and_yaw_share_transform") is True
+            and alignment.get("scale_applied") is False
+            and method.get("estimator_association")
+            == "exact same-run integer header-stamp intersection; no estimator interpolation"
+            and method.get("reference_association")
+            == "GLIM interpolated to exact estimator header stamps only",
+            f"{dataset_id}: current alignment/association contract mismatch",
+        )
+
+        projection = metrics.get("nmea_projection", {})
+        require(
+            projection.get("projector_type")
+            == GNSS_DEFAULT_PROJECTION["projector_type"]
+            and projection.get("vertical_datum")
+            == GNSS_DEFAULT_PROJECTION["vertical_datum"]
+            and projection.get("latitude_deg")
+            == GNSS_DEFAULT_PROJECTION["latitude_deg"]
+            and projection.get("longitude_deg")
+            == GNSS_DEFAULT_PROJECTION["longitude_deg"]
+            and projection.get("altitude_m")
+            == GNSS_DEFAULT_PROJECTION["altitude_m"]
+            and projection.get("scale_factor")
+            == GNSS_DEFAULT_PROJECTION["scale_factor"]
+            and projection.get("parameters_match_metadata") is True
+            and projection.get("evaluation_override_applied") is False
+            and projection.get("provenance_verified") is True,
+            f"{dataset_id}: current projection contract mismatch",
+        )
+
+        expected_primary = contract["expected_primary"]
+        local_scan = metrics.get("local", {}).get("scan_to_scan", {})
+        local_submap = metrics.get("local", {}).get("scan_to_submap", {})
+        global_scan = metrics.get("global", {}).get("existing_fusion", {})
+        global_submap = metrics.get("global", {}).get("precision_global", {})
+        require(
+            local_scan.get("samples") == expected_primary["local_samples"]
+            and local_submap.get("samples") == expected_primary["local_samples"]
+            and global_scan.get("samples") == expected_primary["global_samples"]
+            and global_submap.get("samples") == expected_primary["global_samples"]
+            and local_scan.get("fixed_shared_xy_error_m", {}).get("rmse")
+            == expected_primary["local_scan_to_scan_xy_rmse_m"]
+            and local_submap.get("fixed_shared_xy_error_m", {}).get("rmse")
+            == expected_primary["local_scan_to_submap_xy_rmse_m"]
+            and local_scan.get("fixed_shared_yaw_error_deg", {}).get("rmse")
+            == expected_primary["local_scan_to_scan_yaw_rmse_deg"]
+            and local_submap.get("fixed_shared_yaw_error_deg", {}).get("rmse")
+            == expected_primary["local_scan_to_submap_yaw_rmse_deg"]
+            and global_scan.get("fixed_shared_xy_error_m", {}).get("rmse")
+            == expected_primary["global_scan_to_scan_xy_rmse_m"]
+            and global_submap.get("fixed_shared_xy_error_m", {}).get("rmse")
+            == expected_primary["global_scan_to_submap_xy_rmse_m"]
+            and global_scan.get("fixed_shared_yaw_error_deg", {}).get("rmse")
+            == expected_primary["global_scan_to_scan_yaw_rmse_deg"]
+            and global_submap.get("fixed_shared_yaw_error_deg", {}).get("rmse")
+            == expected_primary["global_scan_to_submap_yaw_rmse_deg"]
+            and metrics.get("outage", {}).get("duration_sec")
+            == expected_primary["fusion_outage_metric_window_sec"],
+            f"{dataset_id}: current primary metrics mismatch",
+        )
+
+        expected_timeline = contract["expected_error_plot_timeline"]
+        annotations = metrics.get("error_plot_annotations", {})
+        time_axis = annotations.get("time_axis", {})
+        unavailable = annotations.get("rtk_q4_unavailable", {})
+        returned = annotations.get("rtk_q4_return", {})
+        resumed = annotations.get("fusion_tracking_resume", {})
+        require(
+            time_axis.get("csv_plot_time_column")
+            == "time_from_common_start_sec"
+            and time_axis.get("origin")
+            == "first common global evaluation sample"
+            and time_axis.get("absolute_timestamps_published") is False
+            and isinstance(time_axis.get("maximum_mapping_residual_sec"), (int, float))
+            and 0.0 <= time_axis["maximum_mapping_residual_sec"] <= 1.0e-6
+            and unavailable.get("begin_time_from_common_start_sec")
+            == expected_timeline["rtk_q4_unavailable_begin_time_sec"]
+            and unavailable.get("end_time_from_common_start_sec")
+            == expected_timeline["rtk_q4_unavailable_end_time_sec"]
+            and unavailable.get("duration_sec")
+            == expected_timeline["rtk_q4_unavailable_duration_sec"]
+            and returned.get("time_from_common_start_sec")
+            == expected_timeline["rtk_q4_unavailable_end_time_sec"]
+            and resumed.get("time_from_common_start_sec")
+            == expected_timeline["fusion_tracking_resume_time_sec"]
+            and resumed.get("delay_from_rtk_q4_return_sec")
+            == expected_timeline["fusion_tracking_resume_delay_sec"],
+            f"{dataset_id}: current error-plot annotation contract mismatch",
+        )
+
+        validation = metrics.get("source_validation", {})
+        runtime = validation.get("runtime_validation", {})
+        configuration = validation.get("configuration", {})
+        expected_runtime = contract["expected_runtime"]
+        require(
+            validation.get("accuracy_result") == "PASS"
+            and validation.get("source_hashes_pinned") is True
+            and runtime.get("status") == "PASS"
+            and runtime.get("check_count") == expected_runtime["check_count"]
+            and runtime.get("typed_fusion_authority") is True
+            and runtime.get("startup_publication_safety") == "PASS"
+            and runtime.get("scans") == expected_runtime["scans"]
+            and runtime.get("corrections") == expected_runtime["corrections"]
+            and runtime.get("matcher_processing_p99_ms")
+            == expected_runtime["processing_p99_ms"]
+            and runtime.get("matcher_end_to_end_latency_p99_ms")
+            == expected_runtime["end_to_end_latency_p99_ms"]
+            and configuration.get("profile") == "hesai_32line_rtk"
+            and configuration.get("playback_rate") == 1.0
+            and configuration.get("initial_gyro_bias_rad_s")
+            == contract["applicability"]["gyro_bias.initial_bg_rad_s"]
+            and configuration.get("typed_fusion_authority") is True
+            and configuration.get("evaluation_origin_override_applied") is False
+            and configuration.get("captured_configuration_hashes_match") is True
+            and configuration.get("current_effective_odometry_parameters_match")
+            is True,
+            f"{dataset_id}: current source-validation summary mismatch",
+        )
+        guard = metrics.get("outage_yaw_guard", {})
+        require(
+            guard.get("status") == "PASS"
+            and {
+                key: guard.get(key) for key in GNSS_OUTAGE_YAW_GUARD_SEMANTICS
+            }
+            == GNSS_OUTAGE_YAW_GUARD_SEMANTICS
+            and guard.get("config") == GNSS_OUTAGE_YAW_GUARD_CONFIG
+            and guard.get("accepted_reference_count", 0) > 0
+            and guard.get("invalid_advance_count") == 0
+            and guard.get("suppressed_invalid_count") == 0
+            and guard.get("maximum_active_reference_variance_rad2")
+            == expected_runtime["maximum_active_reference_variance_rad2"],
+            f"{dataset_id}: current outage-yaw guard summary mismatch",
+        )
+
+
 def check_gnss_publication_contract(manifest: dict[str, Any]) -> None:
+    if all(
+        contract.get("evidence_schema") == "current_typed_authority_v1"
+        for contract in GNSS_SOURCE_CONTRACTS.values()
+    ):
+        check_current_gnss_publication_contract(manifest)
+        return
     require_gnss_contract_adopted()
     datasets = {
         item.get("dataset"): item for item in manifest.get("datasets", [])
@@ -4102,6 +5077,10 @@ def check_gnss_publication_contract(manifest: dict[str, Any]) -> None:
             provenance.get("publication_status") == contract["publication_status"],
             f"{dataset_id}: manifest publication status mismatch",
         )
+        require(
+            provenance.get("applicability") == contract["applicability"],
+            f"{dataset_id}: manifest applicability mismatch",
+        )
         expected_runs = {
             "baseline": contract["baseline_run_id"],
             "control": contract["control_run_id"],
@@ -4118,6 +5097,10 @@ def check_gnss_publication_contract(manifest: dict[str, Any]) -> None:
             metrics.get("schema_version") == 2
             and metrics.get("publication_status") == contract["publication_status"],
             f"{dataset_id}: metrics publication status mismatch",
+        )
+        require(
+            metrics.get("applicability") == contract["applicability"],
+            f"{dataset_id}: metrics applicability mismatch",
         )
         require(
             metrics.get("publication_acceptance", {}).get("accepted")
@@ -4354,7 +5337,7 @@ def check_gnss_publication_contract(manifest: dict[str, Any]) -> None:
                 and int(publication.get("causal_raw_unique_stamp_count", 0)) > 0,
                 f"{dataset_id}/{mode}: map-fusion publication contract mismatch",
             )
-        banned = ("provisional", "historical", "site-origin override")
+        banned = ("provisional", "site-origin override")
         metrics_text = metrics_path.read_text(encoding="utf-8").lower()
         require(
             not any(word in metrics_text for word in banned),
@@ -4375,7 +5358,7 @@ def check_lsim_publication_contract(manifest: dict[str, Any]) -> None:
     }
     require(
         public_lsim_dataset_ids == {dataset_id},
-        "unexpected public Autoware LSim dataset set",
+        "unexpected public Autoware-interface dataset set",
     )
     dataset = next(
         (
@@ -4385,14 +5368,18 @@ def check_lsim_publication_contract(manifest: dict[str, Any]) -> None:
         ),
         None,
     )
-    require(dataset is not None, f"missing LSim publication dataset: {dataset_id}")
+    require(
+        dataset is not None,
+        f"missing Autoware-interface publication dataset: {dataset_id}",
+    )
     actual_paths = {item.get("path") for item in dataset.get("files", [])}
     expected_paths = {
         f"{dataset_id}/{filename}" for filename in LSIM_PUBLICATION_FILENAMES
     }
     require(
         actual_paths == expected_paths,
-        "LSim publication dataset must contain exactly metrics, poster, and replay",
+        "Autoware-interface publication dataset must contain exactly metrics, "
+        "poster, and replay",
     )
     provenance = dataset.get("provenance", {})
     current_provenance = provenance.get(
@@ -4404,7 +5391,8 @@ def check_lsim_publication_contract(manifest: dict[str, Any]) -> None:
         is True
         and current_provenance.get("evidence_scope")
         == LSIM_CURRENT_EVIDENCE_SCOPE,
-        "LSim manifest does not identify the current-default headless run",
+        "Autoware-interface manifest does not identify the current-default "
+        "headless run",
     )
     poster_provenance = provenance.get("representative_rviz_poster", {})
     require(
@@ -4415,7 +5403,7 @@ def check_lsim_publication_contract(manifest: dict[str, Any]) -> None:
             "accuracy_evaluated": False,
             "embedded_metadata_removed": True,
         },
-        "LSim poster provenance is missing or overstated",
+        "Autoware-interface poster provenance is missing or overstated",
     )
     replay_provenance = provenance.get("representative_rviz_replay", {})
     require(
@@ -4435,7 +5423,7 @@ def check_lsim_publication_contract(manifest: dict[str, Any]) -> None:
             "capture_timestamp_published": False,
             "embedded_capture_datetime_removed": True,
         },
-        "LSim replay provenance is missing or overstated",
+        "Autoware-interface replay provenance is missing or overstated",
     )
 
     expected_source_hashes = {
@@ -4450,11 +5438,14 @@ def check_lsim_publication_contract(manifest: dict[str, Any]) -> None:
     }
     require(
         actual_source_hashes == expected_source_hashes,
-        "LSim manifest source-artifact contract mismatch",
+        "Autoware-interface manifest source-artifact contract mismatch",
     )
 
     metrics = read_json(ASSETS / dataset_id / "metrics.json")
-    require(metrics.get("schema_version") == 2, "unexpected LSim metrics schema")
+    require(
+        metrics.get("schema_version") == 2,
+        "unexpected Autoware-interface metrics schema",
+    )
     current = metrics.get("current_default_projection_headless", {})
     poster = metrics.get("representative_rviz_poster", {})
     replay = metrics.get("representative_rviz_replay", {})
@@ -4464,7 +5455,8 @@ def check_lsim_publication_contract(manifest: dict[str, Any]) -> None:
         and current.get("evidence_scope") == LSIM_CURRENT_EVIDENCE_SCOPE
         and current.get("rviz_evaluated") is False
         and current.get("accuracy_evaluated") is False,
-        "LSim metrics do not qualify the current-default headless scope",
+        "Autoware-interface metrics do not qualify the current-default "
+        "headless scope",
     )
     require(
         poster.get("status") == "PUBLISHED"
@@ -4474,7 +5466,7 @@ def check_lsim_publication_contract(manifest: dict[str, Any]) -> None:
         and poster.get("absolute_timestamps_published") is False
         and poster.get("embedded_metadata_removed") is True
         and "not the recorded vehicle" in poster.get("sample_vehicle_model", ""),
-        "LSim poster scope or privacy contract is incomplete",
+        "Autoware-interface poster scope or privacy contract is incomplete",
     )
     require(
         replay.get("status") == "PUBLISHED"
@@ -4493,12 +5485,12 @@ def check_lsim_publication_contract(manifest: dict[str, Any]) -> None:
         and replay.get("sha256") == LSIM_REPLAY_SHA256
         and replay.get("capture_timestamp_published") is False
         and replay.get("embedded_capture_datetime_removed") is True,
-        "LSim replay scope or media contract is incomplete",
+        "Autoware-interface replay scope or media contract is incomplete",
     )
     runs = current.get("runs", {})
     require(
         set(runs) == {course},
-        "LSim metrics contain an unexpected public run set",
+        "Autoware-interface metrics contain an unexpected public run set",
     )
     expected_projection = {
         **GNSS_DEFAULT_PROJECTION,
@@ -4532,7 +5524,7 @@ def check_lsim_publication_contract(manifest: dict[str, Any]) -> None:
         and acceptance.get("failures") == 0
         and acceptance.get("accuracy_evaluated") is False
         and int(acceptance.get("passed_checks", 0)) > 0,
-        f"LSim metrics failed current-default contract for {course}",
+        f"Autoware-interface metrics failed current-default contract for {course}",
     )
     require(
         int(acceptance.get("messages_read", 0)) > 0
@@ -4561,7 +5553,7 @@ def check_lsim_publication_contract(manifest: dict[str, Any]) -> None:
         and tracking.get("recorded_reset_evidence") is False
         and int(registration.get("accepted", 0)) > 0
         and registration.get("accepted") <= registration.get("attempted", 0),
-        f"LSim runtime evidence is incomplete for {course}",
+        f"Autoware-interface runtime evidence is incomplete for {course}",
     )
 
 
@@ -4689,8 +5681,8 @@ def main() -> int:
         "--lsim-only",
         action="store_true",
         help=(
-            "regenerate only the Autoware LSim dataset and preserve the "
-            "existing LiDAR-only and GNSS manifest entries"
+            "regenerate only the Autoware localization-interface dataset and "
+            "preserve the existing LiDAR-only and GNSS manifest entries"
         ),
     )
     args = parser.parse_args()

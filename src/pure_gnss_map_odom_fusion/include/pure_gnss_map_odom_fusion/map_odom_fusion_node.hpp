@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -14,6 +15,7 @@
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <pure_gnss_msgs/msg/fusion_authority.hpp>
 #include <pure_gnss_msgs/msg/gnss_fusion_input.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/nav_sat_status.hpp>
@@ -23,6 +25,7 @@
 #include <Eigen/Geometry>
 
 #include "pure_gnss_map_odom_fusion/gnss_recovery_controller.hpp"
+#include "pure_gnss_map_odom_fusion/fusion_authority.hpp"
 #include "pure_gnss_map_odom_fusion/publication_order.hpp"
 
 namespace pure_gnss_map_odom_fusion
@@ -194,6 +197,7 @@ private:
   void updateRecoveryModeFromClock(const rclcpp::Time & stamp);
 
   void publishFused(const rclcpp::Time & stamp, PublicationTrigger trigger);
+  void publishFusionAuthority(const rclcpp::Time & source_stamp, bool force);
   void publishDiagnostics(uint8_t level, const std::string & message);
 
   // Frames/topics.
@@ -206,6 +210,7 @@ private:
   std::string initialpose_topic_{"/initialpose"};
   std::string out_pose_topic_{"/localization/ekf_pose"};
   std::string out_odom_topic_{"/localization/ekf_odom"};
+  std::string authority_topic_{"/localization/gnss_map_odom_fusion_authority"};
 
   bool publish_tf_{true};
   double publish_rate_hz_{50.0};
@@ -293,12 +298,15 @@ private:
   // timestamps. Serialize the complete output set and suppress a late request
   // whose stamp would move downstream time backwards.
   mutable std::mutex publish_mutex_;
-  rclcpp::Time last_published_stamp_{0, 0, RCL_ROS_TIME};
+  PublicationOrderTracker publication_order_tracker_{8192U};
   std::atomic<std::size_t> out_of_order_publish_drop_count_{0U};
   std::atomic<std::size_t> covered_odometry_coalesced_count_{0U};
   std::atomic<std::size_t> wall_timer_coalesced_count_{0U};
-  std::deque<std::int64_t> published_stamp_history_ns_;
   std::deque<OdomSample> odom_buffer_;
+  // The wall timer may retry only a source sample whose entire callback-side
+  // state update has completed. It must not publish at ROS now() and overtake
+  // a delayed, source-stamped odometry callback.
+  rclcpp::Time latest_completed_odom_stamp_{0, 0, RCL_ROS_TIME};
   std::optional<AnchorState> anchor_;
   std::optional<AbsolutePoseMeasurement> pending_measurement_;
   GnssStatusState gnss_status_;
@@ -328,6 +336,9 @@ private:
   double last_measurement_cov_xy_{0.0};
   double last_measurement_cov_yaw_{0.0};
   GnssFixState last_fix_state_{GnssFixState::UNKNOWN};
+  std::uint64_t authority_session_id_{0U};
+  std::uint64_t authority_sequence_{0U};
+  std::optional<pure_gnss_msgs::msg::FusionAuthority> last_authority_message_;
 
   // ROS interfaces.
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscription_;
@@ -339,6 +350,7 @@ private:
   initialpose_subscription_;
   rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr pose_publisher_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_publisher_;
+  rclcpp::Publisher<pure_gnss_msgs::msg::FusionAuthority>::SharedPtr authority_publisher_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostic_publisher_;
   std::shared_ptr<tf2_ros::TransformBroadcaster> transform_broadcaster_;
   rclcpp::TimerBase::SharedPtr publish_timer_;

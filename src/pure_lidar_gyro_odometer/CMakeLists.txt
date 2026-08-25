@@ -116,6 +116,11 @@ if(BUILD_TESTING)
   target_compile_features(test_tracking_mode PRIVATE cxx_std_17)
   add_test(NAME test_tracking_mode COMMAND test_tracking_mode)
 
+  add_executable(test_stop_state_estimator test/test_stop_state_estimator.cpp)
+  target_include_directories(test_stop_state_estimator PRIVATE include)
+  target_compile_features(test_stop_state_estimator PRIVATE cxx_std_17)
+  add_test(NAME test_stop_state_estimator COMMAND test_stop_state_estimator)
+
   add_executable(test_observability_policy test/test_observability_policy.cpp)
   target_include_directories(test_observability_policy PRIVATE include)
   target_compile_features(test_observability_policy PRIVATE cxx_std_17)

@@ -11,6 +11,7 @@
 #include <cmath>
 #include <iomanip>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -521,6 +522,14 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
   }
 
   validateParameters();
+  stop::Config stop_config;
+  stop_config.enabled = stop_enable_;
+  stop_config.max_imu_gap_sec = imu_max_sample_gap_sec_;
+  stop_config.speed_threshold_mps = stop_speed_thr_mps_;
+  stop_config.gyro_mean_threshold_rad_s = stop_gyro_abs_thr_rad_s_;
+  stop_config.acceleration_variance_threshold = stop_acc_var_thr_;
+  stop_config.hold_sec = stop_hold_sec_;
+  stop_state_estimator_.configure(stop_config);
   RCLCPP_INFO(
     get_logger(), "LiDAR tracking mode: %s", lidar_tracking_mode_name_.c_str());
 
@@ -768,9 +777,9 @@ void GyroOdometerNode::onImu(const sensor_msgs::msg::Imu::SharedPtr msg)
     const double previous_corrected_rate =
       !imu_buf_.empty() ? imu_buf_.back().yaw_rate_corrected : (sample.gyro_z - bg_est_);
 
+    const bool stopped_for_sample = updateStopStateFromImu(sample);
     if (had_previous && std::isfinite(dt) && dt > 0.0) {
-      updateStopState(sample.stamp);
-      if (gyro_bias_enable_ && is_stopped_) {
+      if (gyro_bias_enable_ && stopped_for_sample) {
         const double tau = std::max(1.0e-6, gyro_bias_tau_sec_);
         const double alpha = dt / (tau + dt);
         bg_est_ = (1.0 - alpha) * bg_est_ + alpha * sample.gyro_z;
@@ -1113,6 +1122,10 @@ void GyroOdometerNode::validateParameters() const
   require_positive(imu_max_abs_yaw_rate_radps_, "imu_corrected.max_abs_yaw_rate_radps");
   require_positive(imu_max_sample_gap_sec_, "imu_corrected.max_sample_gap_sec");
   require_non_negative(imu_max_boundary_gap_sec_, "imu_corrected.max_boundary_gap_sec");
+  require_non_negative(stop_speed_thr_mps_, "stop.speed_thr_mps");
+  require_non_negative(stop_gyro_abs_thr_rad_s_, "stop.gyro_abs_thr_rad_s");
+  require_non_negative(stop_acc_var_thr_, "stop.acc_var_thr");
+  require_non_negative(stop_hold_sec_, "stop.hold_sec");
   require_non_negative(lidar_min_range_m_, "lidar_odom.min_range_m");
   require_positive(lidar_max_range_m_, "lidar_odom.max_range_m");
   if (lidar_max_range_m_ <= lidar_min_range_m_) {
@@ -1480,8 +1493,7 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
   bool stationary_now = false;
   {
     std::lock_guard<std::mutex> lock(mtx_);
-    updateStopState(stamp);
-    stationary_now = is_stopped_;
+    stationary_now = stoppedAtLocked(stamp);
   }
 
   ObservabilityInfo observability;
@@ -1691,7 +1703,6 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
       odom_yaw_ = yaw_imu_;
       has_odom_pose_ = true;
     }
-    updateStopState(stamp);
 
     bool pose_updated = false;
     if (output.valid && lidar_pose_se2_enable_) {
@@ -1705,7 +1716,7 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
         factor.has_imu_yaw = has_imu_delta_yaw;
         factor.fitness = output.fitness;
         factor.converged = output.converged;
-        factor.stationary = is_stopped_;
+        factor.stationary = stationary_now;
         factor.wheel_assisted = output.observability.wheel_assisted;
         factor.has_scan_information = has_smoother_scan_information;
         factor.scan_information = smoother_scan_information;
@@ -1765,7 +1776,7 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
         step_xy *= std::max(1.0, odom_cov_wheel_assist_scale_);
         step_yaw *= std::max(1.0, odom_cov_wheel_assist_scale_);
       }
-      if (is_stopped_ && lidar_smoother_zupt_enable_) {
+      if (stationary_now && lidar_smoother_zupt_enable_) {
         step_xy *= 0.25;
         step_yaw *= 0.25;
       }
@@ -1871,120 +1882,62 @@ void GyroOdometerNode::onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr m
   publishObservabilityDebug(stamp, output, guess_mode_used, next_guess_mode);
 }
 
-bool GyroOdometerNode::computeAccVariance(const rclcpp::Time & nowt, double window_sec, double & out_var) const
+bool GyroOdometerNode::updateStopStateFromImu(const ImuSample & sample)
 {
-  out_var = 1e9;
-  if (imu_buf_.size() < 10) return false;
+  std::optional<stop::TimedSpeed> speed;
 
-  const double t_now = nowt.seconds();
-
-  std::vector<double> ax;
-  std::vector<double> ay;
-  std::vector<double> az;
-  std::vector<double> gz;
-  ax.reserve(64);
-  ay.reserve(64);
-  az.reserve(64);
-  gz.reserve(64);
-
-  for (int i = static_cast<int>(imu_buf_.size()) - 1; i >= 0; --i) {
-    const double ti = imu_buf_[i].stamp.seconds();
-    if ((t_now - ti) > window_sec) break;
-    ax.push_back(imu_buf_[i].acc.x());
-    ay.push_back(imu_buf_[i].acc.y());
-    az.push_back(imu_buf_[i].acc.z());
-    gz.push_back(imu_buf_[i].gyro_z);
-  }
-  if (gz.size() < 10) return false;
-
-  auto variance = [](const std::vector<double> & v) -> double {
-    if (v.size() < 2) return 1e9;
-    double m = 0.0;
-    for (double x : v) m += x;
-    m /= static_cast<double>(v.size());
-    double s = 0.0;
-    for (double x : v) s += (x - m) * (x - m);
-    return s / std::max(1.0, static_cast<double>(v.size() - 1));
-  };
-
-  out_var = variance(ax) + variance(ay) + variance(az);
-  return true;
-}
-
-void GyroOdometerNode::updateStopState(const rclcpp::Time & nowt)
-{
-  if (!stop_enable_) {
-    is_stopped_ = false;
-    has_stop_candidate_since_ = false;
-    return;
-  }
-
-  // Prefer speed if available (wheel or lidar)
-  bool has_v = false;
-  double v = 0.0;
-
-  if (use_wheel_speed_ && has_wheel_) {
-    const double age = std::fabs((nowt - last_wheel_.stamp).seconds());
-    if (std::isfinite(age) && age <= wheel_speed_timeout_sec_) {
-      v = last_wheel_.v_raw * wheel_speed_scale_;
-      has_v = true;
-    }
-  }
-  if (!has_v && lidar_odom_enable_ && last_lidar_.valid) {
-    const double age = std::fabs((nowt - last_lidar_.stamp).seconds());
-    if (std::isfinite(age) && age <= lidar_timeout_sec_) {
-      v = last_lidar_.v;
-      has_v = true;
-    }
-  }
-
-  bool stop_candidate = false;
-  if (has_v) {
-    stop_candidate = (std::fabs(v) < stop_speed_thr_mps_);
-  } else {
-    // fallback: IMU-based stop detection
-    double var_a = 1e9;
-    const bool ok = computeAccVariance(nowt, 0.3, var_a);
-    if (!ok) {
-      stop_candidate = false;
-    } else {
-      // gyro mean over same window
-      double gz_mean = 0.0;
-      int n = 0;
-      const double t_now = nowt.seconds();
-      for (int i = static_cast<int>(imu_buf_.size()) - 1; i >= 0; --i) {
-        const double ti = imu_buf_[i].stamp.seconds();
-        if ((t_now - ti) > 0.3) break;
-        gz_mean += imu_buf_[i].gyro_z;
-        ++n;
-      }
-      if (n < 10) {
-        stop_candidate = false;
-      } else {
-        gz_mean /= static_cast<double>(n);
-        stop_candidate = (var_a < stop_acc_var_thr_) && (std::fabs(gz_mean) < stop_gyro_abs_thr_rad_s_);
+  // Wheel callbacks are reentrant with IMU. Search for the newest causal
+  // sample instead of accepting a future last_wheel_ value by absolute age.
+  if (use_wheel_speed_) {
+    for (const auto & wheel : wheel_buf_) {
+      const stop::TimedSpeed candidate{
+        wheel.stamp.nanoseconds(),
+        wheel.v_raw * wheel_speed_scale_,
+        wheel_speed_timeout_sec_};
+      if (stop::isCausalFresh(
+          sample.stamp.nanoseconds(), candidate.stamp_ns, candidate.max_age_sec) &&
+        (!speed.has_value() || candidate.stamp_ns > speed->stamp_ns))
+      {
+        speed = candidate;
       }
     }
   }
 
-  // Hold time hysteresis
-  if (stop_candidate) {
-    if (!has_stop_candidate_since_) {
-      stop_candidate_since_ = nowt;
-      has_stop_candidate_since_ = true;
+  // Preserve the existing source priority: wheel first, then LiDAR speed.
+  if (!speed.has_value() && lidar_odom_enable_ && last_lidar_.valid) {
+    const stop::TimedSpeed candidate{
+      last_lidar_.stamp.nanoseconds(), last_lidar_.v, lidar_timeout_sec_};
+    if (stop::isCausalFresh(
+        sample.stamp.nanoseconds(), candidate.stamp_ns, candidate.max_age_sec))
+    {
+      speed = candidate;
     }
-    const double held = (nowt - stop_candidate_since_).seconds();
-    is_stopped_ = (std::isfinite(held) && held >= stop_hold_sec_);
-  } else {
-    has_stop_candidate_since_ = false;
-    is_stopped_ = false;
   }
 
-  // When stopped, reset accel-based speed estimate.
-  if (is_stopped_) {
+  stop::ImuSample stop_sample;
+  stop_sample.stamp_ns = sample.stamp.nanoseconds();
+  stop_sample.acceleration = {{sample.acc.x(), sample.acc.y(), sample.acc.z()}};
+  stop_sample.gyro_z_rad_s = sample.gyro_z;
+  const auto result = stop_state_estimator_.update(stop_sample, speed);
+  const bool stopped = result.accepted && result.stopped;
+
+  // When stopped, reset the acceleration-based speed estimate. This update is
+  // coupled only to the monotonic IMU event, never to a historical LiDAR query.
+  if (stopped) {
     v_acc_est_ = 0.0;
     has_v_acc_ = true;
   }
+  return stopped;
+}
+
+bool GyroOdometerNode::stoppedAtLocked(const rclcpp::Time & stamp) const
+{
+  if (!stop_enable_) {
+    return false;
+  }
+  const auto decision = stop_state_estimator_.decisionAt(
+    stamp.nanoseconds(), imu_max_sample_gap_sec_);
+  return decision.has_value() && decision->stopped;
 }
 
 void GyroOdometerNode::onPublishTimer()
@@ -2043,8 +1996,9 @@ void GyroOdometerNode::onPublishTimer()
 
   {
     std::lock_guard<std::mutex> lk(mtx_);
-    updateStopState(nowt);
-    stopped_now = is_stopped_;
+    // The wall timer is read-only with respect to the event-time stop FSM.
+    // A missing or stale IMU decision fails safely to moving.
+    stopped_now = stoppedAtLocked(nowt);
     yaw = yaw_imu_;
     bg = bg_est_;
     imu_extrinsic_cached = has_imu_extrinsic_;
@@ -2063,8 +2017,9 @@ void GyroOdometerNode::onPublishTimer()
 
     has_wheel = (use_wheel_speed_ && has_wheel_);
     if (has_wheel) {
-      const double age = std::fabs((nowt - last_wheel_.stamp).seconds());
-      if (std::isfinite(age) && age <= wheel_speed_timeout_sec_) {
+      if (stop::isCausalFresh(
+          nowt.nanoseconds(), last_wheel_.stamp.nanoseconds(), wheel_speed_timeout_sec_))
+      {
         v_raw = last_wheel_.v_raw;
       } else {
         has_wheel = false;
@@ -2085,8 +2040,9 @@ void GyroOdometerNode::onPublishTimer()
     external_snapshot_conversion_max_ms = external_submap_snapshot_conversion_max_ms_;
     has_lidar = (lidar_odom_enable_ && lidar.valid);
     if (has_lidar) {
-      const double age = std::fabs((nowt - lidar.stamp).seconds());
-      if (!(std::isfinite(age) && age <= lidar_timeout_sec_)) {
+      if (!stop::isCausalFresh(
+          nowt.nanoseconds(), lidar.stamp.nanoseconds(), lidar_timeout_sec_))
+      {
         has_lidar = false;
       }
     }

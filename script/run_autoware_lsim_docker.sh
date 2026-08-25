@@ -4,7 +4,7 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Build and run localization-only Autoware Logging Simulation in Docker.
+Build and run a localization-only Autoware integration in Docker.
 
 Usage:
   run_autoware_lsim_docker.sh --bag <bag_path> [options]
@@ -43,6 +43,7 @@ Docker/output options:
   --output <directory>          Host result root (default: ./docker_output)
   --run-name <name>             Result subdirectory name
   --rviz                        Enable RViz with CPU software rendering
+  --rqt-robot-monitor           Show aggregated diagnostics in rqt_robot_monitor
   --rviz-sample-vehicle         Show the illustrative Autoware Lexus body plus
                                 live trajectory, Displays-panel status, and
                                 XY covariance
@@ -58,7 +59,7 @@ Docker/output options:
   --no-build                    Reuse an already built local image
   --pull-base                   Pull the pinned Autoware base before building
   --build-only                  Build image and exit
-  --shell                       Open a shell in the image instead of running LSim
+  --shell                       Open a shell instead of running the evaluation
   --dry-run                     Validate and print Docker commands only
   -h, --help                    Show this help
 
@@ -83,7 +84,7 @@ PY
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_BASE="$ROOT/docker/autoware_lsim/compose.yaml"
-COMPOSE_RVIZ="$ROOT/docker/autoware_lsim/compose.rviz.yaml"
+COMPOSE_GUI="$ROOT/docker/autoware_lsim/compose.rviz.yaml"
 
 bag=""
 dataset_profile="generic"
@@ -109,6 +110,7 @@ initial_yaw="0.0"
 output_directory="$ROOT/docker_output"
 run_name=""
 rviz="false"
+rqt_robot_monitor="false"
 rviz_sample_vehicle="false"
 rviz_sample_vehicle_z_offset="-1.66"
 rviz_sample_vehicle_z_offset_was_set="false"
@@ -148,6 +150,7 @@ while (($# > 0)); do
     --output) [[ $# -ge 2 ]] || fail "--output requires a value"; output_directory="$2"; shift 2 ;;
     --run-name) [[ $# -ge 2 ]] || fail "--run-name requires a value"; run_name="$2"; shift 2 ;;
     --rviz) rviz="true"; shift ;;
+    --rqt-robot-monitor) rqt_robot_monitor="true"; shift ;;
     --rviz-sample-vehicle) rviz_sample_vehicle="true"; shift ;;
     --rviz-sample-vehicle-z-offset)
       [[ $# -ge 2 ]] || fail "--rviz-sample-vehicle-z-offset requires a value"
@@ -214,8 +217,8 @@ if [[ "$tf_policy" == isolate-all && "$launch_vehicle" != true && \
   "$dataset_profile" != hesai-rosbag23 ]]; then
   fail "--tf-policy isolate-all requires --launch-vehicle or --profile hesai-rosbag23"
 fi
-if [[ "$rviz" == true && -z "${DISPLAY:-}" ]]; then
-  fail "--rviz requires DISPLAY"
+if [[ ("$rviz" == true || "$rqt_robot_monitor" == true) && -z "${DISPLAY:-}" ]]; then
+  fail "GUI options require DISPLAY (--rviz or --rqt-robot-monitor)"
 fi
 if [[ "$rviz_sample_vehicle" == true && "$rviz" != true ]]; then
   fail "--rviz-sample-vehicle requires --rviz"
@@ -262,6 +265,7 @@ export LAUNCH_SENSING="false"
 export VEHICLE_MODEL="$vehicle_model"
 export SENSOR_MODEL="$sensor_model"
 export RVIZ="$rviz"
+export RQT_ROBOT_MONITOR="$rqt_robot_monitor"
 export RVIZ_SAMPLE_VEHICLE="$rviz_sample_vehicle"
 export RVIZ_SAMPLE_VEHICLE_Z_OFFSET="$rviz_sample_vehicle_z_offset"
 export RECORD_OUTPUT="$record_output"
@@ -275,8 +279,8 @@ export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
 export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
 
 compose=(docker compose -f "$COMPOSE_BASE")
-if [[ "$rviz" == true ]]; then
-  compose+=(-f "$COMPOSE_RVIZ")
+if [[ "$rviz" == true || "$rqt_robot_monitor" == true ]]; then
+  compose+=(-f "$COMPOSE_GUI")
 fi
 
 printf 'Autoware base image: %s\n' "$AUTOWARE_IMAGE"
@@ -292,6 +296,7 @@ printf 'IMU input:           %s\n' "$IMU_SOURCE_TOPIC"
 printf 'NMEA input:          %s\n' "${NMEA_SOURCE_TOPIC:-disabled}"
 printf 'TF policy:           %s\n' "$TF_POLICY"
 printf 'RViz:                %s\n' "$RVIZ"
+printf 'RQT Robot Monitor:   %s\n' "$RQT_ROBOT_MONITOR"
 printf 'RViz sample vehicle: %s\n' "$RVIZ_SAMPLE_VEHICLE"
 printf 'RViz body Z offset:   %s m\n' "$RVIZ_SAMPLE_VEHICLE_Z_OFFSET"
 
@@ -320,8 +325,9 @@ command -v docker >/dev/null 2>&1 || fail "docker is not installed"
 docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 plugin is not available"
 docker info >/dev/null 2>&1 || fail "Docker daemon is not accessible by the current user"
 
-if [[ "$rviz" == true ]]; then
-  command -v xhost >/dev/null 2>&1 || fail "xhost is required for --rviz"
+if [[ "$rviz" == true || "$rqt_robot_monitor" == true ]]; then
+  command -v xhost >/dev/null 2>&1 ||
+    fail "GUI options require xhost (--rviz or --rqt-robot-monitor)"
   xhost_rule="SI:localuser:$(id -un)"
   xhost +"$xhost_rule" >/dev/null
   trap 'xhost -"$xhost_rule" >/dev/null 2>&1 || true' EXIT
@@ -334,7 +340,7 @@ if [[ "$build_image" == true ]]; then
   "${compose[@]}" build lsim
 fi
 if ! LOCALIZER_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$LOCALIZER_LSIM_IMAGE")"; then
-  fail "local lSIM image does not exist: $LOCALIZER_LSIM_IMAGE (remove --no-build)"
+  fail "local Autoware integration image does not exist: $LOCALIZER_LSIM_IMAGE (remove --no-build)"
 fi
 export LOCALIZER_IMAGE_ID
 if [[ "$build_only" == true ]]; then

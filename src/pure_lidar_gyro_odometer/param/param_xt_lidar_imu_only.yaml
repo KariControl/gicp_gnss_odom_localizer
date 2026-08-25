@@ -30,7 +30,8 @@
     gyro_bias.enable: true
     gyro_bias.tau_sec: 10.0
     gyro_bias.max_abs_rad_s: 0.5
-    gyro_bias.initial_bg_rad_s: 0.0
+    # Base-frame gyro-z startup prior for this Hesai XT rig.
+    gyro_bias.initial_bg_rad_s: -0.00210
     wheel_speed.use: false
     wheel_speed.scale_factor: 1.0
     wheel_speed.timeout_sec: 0.2

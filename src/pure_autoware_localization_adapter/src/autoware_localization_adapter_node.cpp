@@ -181,8 +181,8 @@ private:
     }
     // A wall/sim-time timer can publish more than once at the same discrete
     // /clock value. Suppress those duplicates without turning an otherwise
-    // healthy Logging Simulation diagnostic WARN. True time reversal remains
-    // an input rejection.
+    // healthy localization-interface diagnostic WARN. True time reversal
+    // remains an input rejection.
     if (has_last_stamp_ && stamp == last_stamp_) {
       ++duplicate_stamp_drop_count_;
       return;

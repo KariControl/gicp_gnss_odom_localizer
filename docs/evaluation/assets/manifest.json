@@ -5,9 +5,9 @@
       "dataset": "autoware_lsim_hesai_course_2",
       "files": [
         {
-          "bytes": 4144,
+          "bytes": 4191,
           "path": "autoware_lsim_hesai_course_2/metrics.json",
-          "sha256": "7ab4bcaa3eead6f2e98d8823f2a97afa7a249e6e8f457e3d1d361d91cd0bd6f4"
+          "sha256": "d99e036cc59c2f52e8b43b299a285bce61722c1d03a56d684945a0057468355f"
         },
         {
           "bytes": 186525,
@@ -97,138 +97,115 @@
       "dataset": "hesai_32line_imu_rtk_gnss_course_2",
       "files": [
         {
-          "bytes": 162580,
+          "bytes": 162701,
           "path": "hesai_32line_imu_rtk_gnss_course_2/global_xy_error.png",
-          "sha256": "9ea2d60250f3ed9ad8d13b73f8d826321b9afca136924832738f6627efce4778"
+          "sha256": "1ccf9aba4603b88fa970bf250064dd419bc52f5398e87000b28dbdd9f4129e25"
         },
         {
-          "bytes": 229354,
+          "bytes": 231599,
           "path": "hesai_32line_imu_rtk_gnss_course_2/global_yaw_error.png",
-          "sha256": "cc4a317d7e97316e1e263754ca0f5e1ca3215131c3882a4662779a84f5153391"
+          "sha256": "5869894504f4300bb2dff645b7bfa902d78fa018429a251cb53c73b817bb1ec6"
         },
         {
-          "bytes": 103670,
+          "bytes": 108063,
           "path": "hesai_32line_imu_rtk_gnss_course_2/local_xy_error.png",
-          "sha256": "6ebb493ecd5eba98c48f5493e6cf0af3fed90335afcbca591768e5a79a2575ba"
+          "sha256": "fcca9a82d523705f29a5e173adc23ea3392e97848f11607f5dbaa6c78dfab18e"
         },
         {
-          "bytes": 145340,
+          "bytes": 158909,
           "path": "hesai_32line_imu_rtk_gnss_course_2/local_yaw_error.png",
-          "sha256": "fcd0122cb50f575ee71e59d0437ceb1b6f21ffc2719aad46dd1c65b955968a04"
+          "sha256": "56dbcbbab6199c3b9f337b424ad3840ec14087ef351490eeac28c1a1e4dfe3d2"
         },
         {
-          "bytes": 27057,
+          "bytes": 22411,
           "path": "hesai_32line_imu_rtk_gnss_course_2/metrics.json",
-          "sha256": "3ae7d055a2da59f6dbe69cc17c5a8cad17f26a385336dbc36d0f5050143eb170"
+          "sha256": "906cf5b172b91ce519a986149df42d90ee3c2b93507843501bdbef62807e21e9"
         }
       ],
       "provenance": {
-        "canonical_runs": {
-          "baseline": "course_2_baseline_final",
-          "control": "course_2_control_final",
-          "precision": "course_2_precision_q4_guard_variance_final"
+        "applicability": {
+          "artifact_class": "current_hesai_xt_evaluated_profile",
+          "evaluated_profile_date": "2026-08-25",
+          "gyro_bias.enable": true,
+          "gyro_bias.initial_bg_rad_s": -0.0021,
+          "lidar_odom.smoother.enable": true,
+          "lidar_odom.smoother.nhc.enable": false,
+          "lidar_odom.smoother.zupt.enable": false,
+          "typed_authority_startup_contract": true,
+          "valid_for_current_hesai_xt_profile": true
         },
         "evaluation_method": "exact initial pose; same-run exact estimator stamps",
         "publication_status": "ACCEPTED",
         "runtime_validation": {
-          "failed_check_count": 0,
-          "intentional_warning": "raw odom intentional startup zero stamps",
-          "intentional_warning_count": 1,
-          "map_fusion_publication": {
-            "counter_samples": 460,
-            "covered_odometry_coalesced_count": 0,
-            "eligible_unique_raw_stamp_count": 7892,
-            "exact_causal_coverage_ratio": 1.0,
-            "matched_unique_raw_stamp_count": 7892,
-            "missing_unique_raw_stamp_count": 0,
-            "status": "PASS",
-            "strict_drop_count": 0,
-            "total_suppressed_request_count": 0,
-            "wall_timer_coalesced_count": 0
-          },
-          "matcher": {
-            "accepted": 650,
-            "attempted": 771,
-            "committed": 613,
-            "corrections": 613,
-            "end_to_end_latency_p99_ms": 128.409,
-            "malformed_count": 0,
-            "processed": 851,
-            "processing_p99_ms": 54.277,
-            "published": 613,
-            "queue_drop_count": 0,
-            "received": 851,
-            "rejected": 121,
-            "scans": 851,
-            "stale_count": 0
-          },
-          "outage_yaw_guard": {
-            "active_sample_count": 165,
-            "diagnostic_sample_count": 230,
-            "maximum_active_reference_variance_rad2": 0.00857474820591,
-            "outage_sample_count": 163,
-            "recovery_release_sample_count": 2,
-            "states": [
-              "DISARMED",
-              "OUTAGE_HOLD",
-              "OUTAGE_SLEW",
-              "READY",
-              "RECOVERY_RELEASE"
-            ],
-            "status": "PASS"
-          },
-          "pass_line_count": 27,
-          "playback_rate": {
-            "expected": 1.0,
-            "observed": 1.0
-          },
-          "startup": {
-            "first_global_delay_sec": 19.199990637000003,
-            "global_suppressed_not_ready_count": 953,
-            "intentional_raw_zero_stamp_count": 182,
-            "published_before_activation_count": 0
-          },
+          "check_count": 31,
+          "corrections": 602,
+          "matcher_end_to_end_latency_p99_ms": 127.668,
+          "matcher_processing_p99_ms": 55.117,
+          "scans": 851,
+          "startup_publication_safety": "PASS",
           "status": "PASS",
-          "successful_check_count": 28
+          "typed_fusion_authority": true
         },
-        "source_result_set": "gnss_outage_yaw_guard_20260812_final"
+        "source_result_set": "hesai_authority_epoch_fix_20260825",
+        "source_runs": {
+          "precision": "final_verified_course_2_repeat3",
+          "speed_reference": "course_2_baseline_stop_gate",
+          "speed_reference_result_set": "hesai_stop_gate_reevaluation_20260824",
+          "speed_reference_role": "runtime/protocol comparison only; excluded from primary RMSE"
+        }
       },
       "source_artifacts": [
         {
           "local_source_id": "accuracy_result",
-          "sha256": "ccbfff228630fb47fa3d3b19f5d57e42baca3e8f16500fefcfe1315dc7b16609"
-        },
-        {
-          "local_source_id": "startup_acceptance",
-          "sha256": "bf8b5cc1615c740e5127f1af61ee6452dc72728ae1c4edf12a61a934c029022d"
-        },
-        {
-          "local_source_id": "accepted_scan_nonintrusion",
-          "sha256": "ab45e548d400b4e346c47765a03b0222de4c746f6a80c3b71fcfe554f467afd8"
+          "sha256": "3bfdf5e29edb5413be1d972cfa60fac0c1fb3e0c5fab8dfa6d0c1d4a63053eda"
         },
         {
           "local_source_id": "precision_runtime_validation",
-          "sha256": "d458b9dfff5939c022c75298c3005c3d81d6f176442f83b847bdc15309949c56"
+          "sha256": "eb3aa6240b25e83064f131c0591d4251de98bae35decc4f3a28d140b73d04613"
         },
         {
-          "local_source_id": "baseline_run_provenance",
-          "sha256": "aa36e75e310d07c3adc6aea1945f8c3d2e465bad9413f1dd86f27a2a1435308c"
+          "local_source_id": "run_environment",
+          "sha256": "d869c403b58931ede1334494b888af1260001184cd99535f090377f0b300354a"
         },
         {
-          "local_source_id": "control_run_provenance",
-          "sha256": "3a4574acb73027c66f4cc1de634b5d6b5f07f079ac3d7dbe0136bb9b0a74c89e"
+          "local_source_id": "effective_configurations",
+          "sha256": "6df62915090f32192c67823e3251cc5db59d1bf30584a393591c4acb1e8d9dd2"
         },
         {
-          "local_source_id": "precision_run_provenance",
-          "sha256": "4e57ec21bf8d1bb11d8583ce75f87908f8a9bd7907ee259ae68d962a28d4f9b1"
+          "local_source_id": "odometry_parameters",
+          "sha256": "41323f07af76c8e3aea857a5b1d368a4f313efa0702685d870f80772ecab525d"
+        },
+        {
+          "local_source_id": "odometry_override",
+          "sha256": "2f0a7b455996e5869c10837cbbc04e6223f4267b0a357507955b5f64f4f602da"
+        },
+        {
+          "local_source_id": "precision_global_parameters",
+          "sha256": "c6c9f00e56bf23f48248b6d8894b61bcf737ea9ff5f943d8bda6291f83afe7be"
+        },
+        {
+          "local_source_id": "gnss_fusion_parameters",
+          "sha256": "ffc39c6641c3acc03fdb4bf7e26de89d37d0a0874007828484ac2b4ee011abf3"
+        },
+        {
+          "local_source_id": "nmea_parameters",
+          "sha256": "2d04cde50870b45df6f2e913d8d6c75e331caee24e6c52fe3193129fd0f5c754"
+        },
+        {
+          "local_source_id": "nmea_override",
+          "sha256": "1808b1d66570c24e5cf551c0f160f309f94c70ba258aab2d1a1746d2ed93e5ea"
+        },
+        {
+          "local_source_id": "map_projector_metadata",
+          "sha256": "39ebda9a5d35914256077cd1dc00aaed253849392fdce3f910eee27b3fe275cc"
         },
         {
           "local_source_id": "aligned_local_samples",
-          "sha256": "3d8acd404975e03b6453c45bc4d91e046212b21953e2da8e96d772f83fcc42b2"
+          "sha256": "11a176b505390bf8ea34637a5b81dfdaba760b975fd084d4bdfc3bdd6621faad"
         },
         {
           "local_source_id": "aligned_global_samples",
-          "sha256": "2795f904ff0882d192080749525e089f0c692f2a18848f06e58fea67022042cf"
+          "sha256": "fe1a3b50928f287367e3ca297e0f118160f84e031281bd70465e3b1f260d7b5f"
         }
       ]
     },

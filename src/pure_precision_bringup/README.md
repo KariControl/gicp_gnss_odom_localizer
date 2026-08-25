@@ -24,9 +24,12 @@ candidate is
 `map<-precision = map<-base(existing fusion) * inverse(precision<-base)`.
 The shared scan-to-scan odometry term therefore cancels algebraically instead
 of being composed back into the precision result as drift. Candidates are
-accepted only while the existing fusion diagnostic is fresh and strictly
-healthy: level OK, recovery state `tracking`, valid anchor, position and yaw
-fused, and a good fix. Startup requires three stable candidates at least
+accepted only while the event-driven typed fusion authority is fresh and
+reports `FULL_SE2_HEALTHY`: recovery state `tracking`, valid anchor, position
+and yaw fused, and a good fix. `SOFT_BAD_HOLD` is explicitly unhealthy for
+this branch and freezes both the existing-fusion anchor and trusted-reference
+updates, even though map/odom fusion retains its internal recovery window.
+Startup requires three stable candidates at least
 0.25 seconds apart. Loss of any health condition freezes target and applied
 anchors exactly; recovery requires three new stable candidates and resumes with
 bounded steps. The original position-only GNSS estimator is disabled as an
@@ -35,11 +38,29 @@ authority by default.
 The initial activation is atomic: the activation raw sample itself remains
 suppressed and the first odometry/pose pair is published on exactly the next
 unique raw stamp. A new odometer process/session clears the old anchor and
-requires a fresh, explicit unhealthy or non-`tracking` fusion status followed
-by a fresh strict-`tracking` status before candidates may resume. Diagnostic
-staleness or unavailability alone never satisfies that rearm edge. Ordinary
+requires a fresh, explicit unhealthy or non-`tracking` authority event followed
+by a fresh `FULL_SE2_HEALTHY` event before candidates may resume. Authority
+staleness or unavailability alone never satisfies that rearm edge. Each event
+carries a producer session, strictly increasing sequence, source timestamp and
+publication timestamp; all are checked together with consumer receive age.
+Periodic republication proves liveness but does not sample state transitions.
+Ordinary
 fusion outages do not invoke the session-rearm path; they use the exact
 anchor-freeze and three-candidate bounded-recovery path above.
+
+The activation diagnostic is a latched commit record, not a later 1 Hz live
+snapshot. It records the committed stable-candidate count and yaw delta, the
+typed-authority session/sequence and exact source/publish/consumer-receive
+timestamps, the exact existing-global interpolation lower/upper endpoints,
+mode, configured gap, accepted input watermark, and the activation timestamp as
+integer nanoseconds. Validators join those identifiers back to contract-valid
+recorded inputs; post-activation health flaps cannot rewrite the activation
+evidence. A session reset similarly latches its exact scan timestamp plus the
+accepted unhealthy and subsequent strict-healthy authority endpoints, so an
+unobserved transition between 1 Hz diagnostic samples remains auditable.
+The live existing-global accounting endpoint is likewise exported as integer
+nanoseconds; validation does not recover it from a rounded floating-point
+seconds diagnostic.
 
 This is a one-way observation of the existing global result. Neither the
 dedicated anchor nor either precision output is subscribed by the existing
@@ -61,6 +82,13 @@ script/run_lidar_imu_glim_bag.sh \
   --sensor velodyne --localization-mode precision --snapshot-interval 2 \
   --output /path/to/result
 ```
+
+Add `--rqt-robot-monitor` to either host runner to open the aggregated
+localization diagnostics in a host graphical session. The option is off by
+default; the GLIM runner starts its diagnostic aggregator only when requested,
+and each runner verifies that its own monitor subscribes to
+`/diagnostics_agg` before playback and closes it with the rest of its
+processes.
 
 It feeds the compositor from the accepted-scan odometry topic, records no
 precision-global output, and runs `validate_lidar_imu_submap_run.py` before
@@ -92,12 +120,15 @@ ros2 run pure_precision_bringup validate_precision_bag.py \
 Authority counters are compared at the causal boundary of the final recorded
 precision diagnostic, not against messages recorded afterward during the
 shutdown tail. Existing-global receipt, unique positive stamps, duplicates,
-and rejects must match that prefix exactly. Fusion-health accounting also
-replays its positive unique/duplicate/zero-stamp rules exactly. The only
-permitted unrecorded difference is rejected `/clock==0` startup health status
-received before the runner starts its recorder; it may increase
-received/rejected but never accepted. Malformed health schema, backsteps, or
-unconserved counters remain hard failures.
+and rejects must match that prefix exactly. Typed fusion-authority accounting
+likewise replays the contract, timing, session, and sequence gates through the
+exact `(session_id, sequence)` endpoint named by the final diagnostic. A
+startup event received before a positive consumer clock may be counted as
+deferred, but it remains in the recorded prefix and must later be accepted or
+rejected normally; it is not excused as an unrecorded startup rejection. Final
+acceptance requires an empty pending FIFO, zero overflow, an initialized receive
+clock, and no overflow latch. Malformed authority data, timestamp backsteps,
+or unconserved counters remain hard failures.
 
 `evaluate_precision_glim_ab.py` then compares one speed bag and one precision
 bag on physical ROS header stamps. It freezes the speed-run calibration for

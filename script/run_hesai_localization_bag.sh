@@ -25,11 +25,18 @@ Options:
   --accepted-scan-control     Evaluation-only scan_to_scan control: enable and
                               record the same accepted-scan snapshots as the
                               precision run, without starting its overlay
+  --odom-param <path>         Replace the odometer base parameter file for an
+                              explicitly requested experimental replay
+  --odom-override-param <path>
+                              Replace the mode-specific odometer override file
+                              for an explicitly requested experimental replay
   --output <directory>        Result directory
                                default: test_results/<dataset>_<timestamp>
   --playback-duration <sec>   Stop after this many seconds of bag time
-  --lsim-interface-test       Run the LSim localizer/Autoware adapter launch
-                              without requiring the Autoware installation
+  --lsim-interface-test       Legacy name for the Autoware localization-interface
+                              adapter launch; does not require Autoware
+  --rqt-robot-monitor         Open rqt_robot_monitor for /diagnostics_agg
+                              (requires a host graphical session)
   --no-record                 Run without recording localization outputs
   --dry-run                   Validate inputs and print commands only
   -h, --help                  Show this help
@@ -77,8 +84,11 @@ output=""
 playback_duration=""
 record_output=true
 lsim_interface_test=false
+rqt_robot_monitor=false
 dry_run=false
 accepted_scan_control=false
+odom_param_override=""
+odom_override_param_override=""
 
 while (($# > 0)); do
   case "$1" in
@@ -135,9 +145,23 @@ while (($# > 0)); do
       lsim_interface_test=true
       shift
       ;;
+    --rqt-robot-monitor)
+      rqt_robot_monitor=true
+      shift
+      ;;
     --accepted-scan-control)
       accepted_scan_control=true
       shift
+      ;;
+    --odom-param)
+      [[ $# -ge 2 ]] || fail "--odom-param requires a value"
+      odom_param_override="$2"
+      shift 2
+      ;;
+    --odom-override-param)
+      [[ $# -ge 2 ]] || fail "--odom-override-param requires a value"
+      odom_override_param_override="$2"
+      shift 2
       ;;
     --no-record)
       record_output=false
@@ -194,6 +218,16 @@ esac
 if [[ -n "$playback_duration" ]]; then
   require_positive_number "--playback-duration" "$playback_duration"
 fi
+if [[ -n "$odom_param_override" ]]; then
+  [[ -f "$odom_param_override" ]] ||
+    fail "--odom-param file does not exist: $odom_param_override"
+  odom_param_override="$(realpath -e -- "$odom_param_override")"
+fi
+if [[ -n "$odom_override_param_override" ]]; then
+  [[ -f "$odom_override_param_override" ]] ||
+    fail "--odom-override-param file does not exist: $odom_override_param_override"
+  odom_override_param_override="$(realpath -e -- "$odom_override_param_override")"
+fi
 if [[ "$accepted_scan_control" == true ]]; then
   [[ "$localization_mode" == "baseline" ]] ||
     fail "--accepted-scan-control requires --localization-mode baseline"
@@ -220,8 +254,34 @@ set -u
 
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-30}"
 
+if [[ "$rqt_robot_monitor" == true ]]; then
+  if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+    fail "--rqt-robot-monitor requires DISPLAY or WAYLAND_DISPLAY"
+  fi
+  if [[ -z "${DISPLAY:-}" && -n "${WAYLAND_DISPLAY:-}" ]] &&
+    [[ -z "${XDG_RUNTIME_DIR:-}" || ! -d "${XDG_RUNTIME_DIR:-}" ]]
+  then
+    fail "WAYLAND_DISPLAY requires an accessible XDG_RUNTIME_DIR"
+  fi
+  if ! rqt_robot_monitor_prefix="$(
+    ros2 pkg prefix rqt_robot_monitor 2>/dev/null
+  )"; then
+    fail "ROS package rqt_robot_monitor is not installed"
+  fi
+  rqt_robot_monitor_executable="$rqt_robot_monitor_prefix"
+  rqt_robot_monitor_executable+="/lib/rqt_robot_monitor/rqt_robot_monitor"
+  [[ -x "$rqt_robot_monitor_executable" ]] ||
+    fail "rqt_robot_monitor executable is unavailable: $rqt_robot_monitor_executable"
+else
+  rqt_robot_monitor_executable=""
+fi
+
 IMU_PARAM="$(ros2 pkg prefix pure_imu_undistortion)/share/pure_imu_undistortion/param/param_xt.yaml"
-ODOM_PARAM="$(ros2 pkg prefix pure_lidar_gyro_odometer)/share/pure_lidar_gyro_odometer/param/param_xt_lidar_imu_only.yaml"
+if [[ -n "$odom_param_override" ]]; then
+  ODOM_PARAM="$odom_param_override"
+else
+  ODOM_PARAM="$(ros2 pkg prefix pure_lidar_gyro_odometer)/share/pure_lidar_gyro_odometer/param/param_xt_lidar_imu_only.yaml"
+fi
 GNSS_FUSION_SHARE="$(ros2 pkg prefix pure_gnss_map_odom_fusion)/share/pure_gnss_map_odom_fusion"
 if [[ -f "$GNSS_FUSION_SHARE/param/param.yaml" ]]; then
   GNSS_FUSION_PARAM="$GNSS_FUSION_SHARE/param/param.yaml"
@@ -247,6 +307,9 @@ LSIM_ADAPTER_PARAM=""
 if [[ "$localization_mode" == "precision" || "$accepted_scan_control" == true ]]; then
   PRECISION_BRINGUP_SHARE="$(ros2 pkg prefix pure_precision_bringup)/share/pure_precision_bringup"
   ODOM_OVERRIDE_PARAM="$PRECISION_BRINGUP_SHARE/config/submap_snapshot_override.yaml"
+fi
+if [[ -n "$odom_override_param_override" ]]; then
+  ODOM_OVERRIDE_PARAM="$odom_override_param_override"
 fi
 if [[ "$localization_mode" == "precision" ]]; then
   PRECISION_MATCHER_PARAM="$(ros2 pkg prefix pure_lidar_submap_matcher)/share/pure_lidar_submap_matcher/param/param.yaml"
@@ -370,6 +433,9 @@ if [[ "$localization_mode" == "precision" ]]; then
     global_override_param:="$PRECISION_GLOBAL_OVERRIDE_PARAM"
   )
 fi
+rqt_robot_monitor_command=(
+  "$rqt_robot_monitor_executable"
+)
 record_directory="$output/localization_output"
 record_topics=(
   /clock
@@ -382,6 +448,7 @@ record_topics=(
   /localization/is_stopped
   /localization/ekf_odom
   /localization/ekf_pose
+  /localization/gnss_map_odom_fusion_authority
   /localization/gnss_odometry
   /localization/gnss_fusion_input
   /localization/global_pose_with_covariance
@@ -425,9 +492,9 @@ fi
 play_command+=(
   --
   --disable-keyboard-controls
-  # Give the bag player's publishers time to match existing subscribers so
-  # the first IMU samples are not lost during DDS discovery.
-  --delay 2
+  # Keep the bag at its exact prefix until the player, localizer, and recorder
+  # endpoints have established QoS-compatible DDS graph matches.
+  --start-paused
   --topics
   /pandar_points_ex
   /sensor/imu/data_raw
@@ -435,6 +502,47 @@ play_command+=(
 )
 if [[ -n "$playback_duration" ]]; then
   play_command+=(--playback-duration "$playback_duration")
+fi
+playback_handshake_status="$output/playback_start_handshake.json"
+playback_handshake_command=(
+  python3 "$ROOT/script/rosbag_paused_start_handshake.py"
+  --bag "$bag"
+  --input-route /pandar_points_ex=/points_raw=/imu_undistorter
+  --input-route /sensor/imu/data_raw=/imu=/imu_undistorter
+  --input-route /sensor/gnss/nmea_sentence=/nmea_sentence=/nmea_gga_conversion
+  --player-node /rosbag2_player
+  --status-file "$playback_handshake_status"
+)
+if [[ "$record_output" == true ]]; then
+  playback_handshake_command+=(
+    --recorder-node /vehicle_localizer_output_recorder
+    --record-topic /clock
+    --record-topic /tf
+    --record-topic /tf_static
+    --record-topic /diagnostics
+    --record-topic /diagnostics_agg
+    --record-topic /localization/gyro_lidar_odom
+    --record-topic /localization/imu_corrected
+    --record-topic /localization/is_stopped
+    --record-topic /localization/ekf_odom
+    --record-topic /localization/ekf_pose
+    --record-topic /localization/gnss_map_odom_fusion_authority
+    --record-topic /localization/gnss_odometry
+    --record-topic /localization/gnss_fusion_input
+    --record-topic /localization/global_pose_with_covariance
+    --record-topic /localization/gnss_confidence
+  )
+  if [[ "$localization_mode" == "precision" || "$accepted_scan_control" == true ]]; then
+    playback_handshake_command+=(--record-topic /localization/submap_scan)
+  fi
+  if [[ "$localization_mode" == "precision" ]]; then
+    playback_handshake_command+=(
+      --record-topic /localization/submap_correction
+      --record-topic /localization/precision_local_odom
+      --record-topic /localization/precision_global_odom
+      --record-topic /localization/precision_global_pose
+    )
+  fi
 fi
 
 log "bag: $bag"
@@ -445,6 +553,8 @@ log "ROS_DOMAIN_ID: $ROS_DOMAIN_ID"
 log "localization mode: $localization_mode"
 log "odometer tracking mode: scan_to_scan"
 log "accepted-scan control instrumentation: $accepted_scan_control"
+log "odometer parameter file: $ODOM_PARAM"
+log "rqt robot monitor: $rqt_robot_monitor"
 
 if [[ "$dry_run" == true ]]; then
   if [[ "$lsim_interface_test" != true ]]; then
@@ -456,10 +566,14 @@ if [[ "$dry_run" == true ]]; then
   if [[ "$localization_mode" == "precision" ]]; then
     print_command "${precision_launch_command[@]}"
   fi
+  if [[ "$rqt_robot_monitor" == true ]]; then
+    print_command "${rqt_robot_monitor_command[@]}"
+  fi
   if [[ "$record_output" == true ]]; then
     print_command "${record_command[@]}"
   fi
   print_command "${play_command[@]}"
+  print_command "${playback_handshake_command[@]}"
   exit 0
 fi
 
@@ -593,8 +707,11 @@ fi
   printf 'tf_base_to_imu_xyz_rpy=%q\n' "0.0 0.0 -0.1874 3.14159 0.0 0.0"
   printf 'tf_base_to_gnss_xyz_rpy=%q\n' "0.0 0.0 -0.1326 0.0 0.0 0.0"
   printf 'playback_duration=%q\n' "$playback_duration"
+  printf 'playback_start_policy=%q\n' "paused_graph_handshake"
+  printf 'playback_start_handshake=%q\n' "$playback_handshake_status"
   printf 'record_output=%q\n' "$record_output"
   printf 'lsim_interface_test=%q\n' "$lsim_interface_test"
+  printf 'rqt_robot_monitor=%q\n' "$rqt_robot_monitor"
   printf 'ROS_DOMAIN_ID=%q\n' "$ROS_DOMAIN_ID"
 } > "$output/run.env"
 ros2 bag info "$bag" > "$output/input_bag_info.txt" 2>&1 || true
@@ -604,6 +721,9 @@ tf_imu_pid=""
 tf_gnss_pid=""
 launch_pid=""
 precision_launch_pid=""
+rqt_robot_monitor_pid=""
+rqt_robot_monitor_node=""
+rqt_robot_monitor_readiness_error=""
 record_pid=""
 play_pid=""
 started_pid=""
@@ -667,6 +787,7 @@ cleanup() {
   trap - EXIT INT TERM
   stop_process_group "$play_pid" "bag player"
   stop_process_group "$record_pid" "bag recorder"
+  stop_process_group "$rqt_robot_monitor_pid" "rqt robot monitor"
   stop_process_group "$precision_launch_pid" "precision overlay launch"
   stop_process_group "$launch_pid" "localization launch"
   stop_process_group "$tf_gnss_pid" "GNSS static TF"
@@ -705,6 +826,40 @@ wait_for_node() {
     fi
     sleep 0.2
   done
+  return 1
+}
+
+wait_for_rqt_robot_monitor() {
+  local timeout_sec="$1"
+  local deadline=$((SECONDS + timeout_sec))
+  local expected_node="/rqt_gui_py_node_${rqt_robot_monitor_pid}"
+  local node_info_path="$output/rqt_robot_monitor_node_info.txt"
+  local node_seen=false
+  rqt_robot_monitor_readiness_error=""
+
+  while ((SECONDS < deadline)); do
+    if ! process_alive "$rqt_robot_monitor_pid"; then
+      rqt_robot_monitor_readiness_error="rqt_robot_monitor exited before its plugin became ready"
+      printf '%s\n' "$rqt_robot_monitor_readiness_error" > "$node_info_path"
+      return 2
+    fi
+    if ros2 node info --no-daemon --spin-time 1 "$expected_node" \
+      > "$node_info_path" 2>&1
+    then
+      node_seen=true
+      if grep -Fq "/diagnostics_agg" "$node_info_path"; then
+        rqt_robot_monitor_node="$expected_node"
+        return 0
+      fi
+    fi
+    sleep 0.2
+  done
+
+  if [[ "$node_seen" == true ]]; then
+    rqt_robot_monitor_readiness_error="$expected_node did not subscribe to /diagnostics_agg"
+  else
+    rqt_robot_monitor_readiness_error="$expected_node did not appear"
+  fi
   return 1
 }
 
@@ -763,6 +918,23 @@ then
 fi
 log "localization publishers are ready"
 
+if [[ "$rqt_robot_monitor" == true ]]; then
+  if ! wait_for_topic /diagnostics_agg 60 "$launch_pid"; then
+    fail "aggregated diagnostics did not become ready; see $output/launch.log"
+  fi
+  start_process_group "$output/rqt_robot_monitor.log" \
+    "${rqt_robot_monitor_command[@]}"
+  rqt_robot_monitor_pid=$started_pid
+  if ! wait_for_rqt_robot_monitor 60; then
+    fail "$rqt_robot_monitor_readiness_error; see" \
+      "$output/rqt_robot_monitor.log and" \
+      "$output/rqt_robot_monitor_node_info.txt"
+  fi
+  printf 'rqt_robot_monitor_node=%q\n' "$rqt_robot_monitor_node" \
+    >> "$output/run.env"
+  log "rqt_robot_monitor is ready: $rqt_robot_monitor_node"
+fi
+
 if [[ "$record_output" == true ]]; then
   start_process_group "$output/record.log" "${record_command[@]}"
   record_pid=$started_pid
@@ -774,7 +946,16 @@ fi
 
 start_process_group "$output/play.log" "${play_command[@]}"
 play_pid=$started_pid
-log "bag playback started"
+log "bag player started in paused state"
+if ! "${playback_handshake_command[@]}" \
+  > "$output/playback_start_handshake.log" 2>&1
+then
+  fail "bag playback start handshake failed; see" \
+    "$output/playback_start_handshake.log and $playback_handshake_status"
+fi
+process_alive "$play_pid" ||
+  fail "bag player exited during the start handshake; see $output/play.log"
+log "bag playback resumed after graph and prefix handshake"
 
 set +e
 wait "$play_pid"
@@ -821,6 +1002,8 @@ if [[ "$localization_mode" == "precision" ]]; then
 fi
 stop_process_group "$record_pid" "bag recorder"
 record_pid=""
+stop_process_group "$rqt_robot_monitor_pid" "rqt robot monitor"
+rqt_robot_monitor_pid=""
 stop_process_group "$precision_launch_pid" "precision overlay launch"
 precision_launch_pid=""
 stop_process_group "$launch_pid" "localization launch"

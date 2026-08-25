@@ -28,6 +28,8 @@ Options:
   --rate <factor>           rosbag playback rate (default: 1.0)
   --playback-duration <s>   Limit playback for a smoke test
   --no-evaluate             Skip GLIM evaluation after recording
+  --rqt-robot-monitor       Open rqt_robot_monitor for /diagnostics_agg
+                            (requires a host graphical session)
   --dry-run                 Print commands without starting ROS processes
   -h, --help                Show this help
 
@@ -51,6 +53,7 @@ glim_override=""
 rate="1.0"
 playback_duration=""
 evaluate=true
+rqt_robot_monitor=false
 dry_run=false
 
 while (($# > 0)); do
@@ -95,6 +98,7 @@ while (($# > 0)); do
       [[ $# -ge 2 ]] || { echo "--playback-duration requires a value" >&2; exit 2; }
       playback_duration="$2"; shift 2 ;;
     --no-evaluate) evaluate=false; shift ;;
+    --rqt-robot-monitor) rqt_robot_monitor=true; shift ;;
     --dry-run) dry_run=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -321,6 +325,33 @@ source "$ROOT/install/setup.bash"
 set -u
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-$default_domain}"
 
+if [[ "$rqt_robot_monitor" == true ]]; then
+  if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+    echo "--rqt-robot-monitor requires DISPLAY or WAYLAND_DISPLAY" >&2
+    exit 2
+  fi
+  if [[ -z "${DISPLAY:-}" && -n "${WAYLAND_DISPLAY:-}" ]] &&
+    [[ -z "${XDG_RUNTIME_DIR:-}" || ! -d "${XDG_RUNTIME_DIR:-}" ]]
+  then
+    echo "WAYLAND_DISPLAY requires an accessible XDG_RUNTIME_DIR" >&2
+    exit 2
+  fi
+  if ! rqt_robot_monitor_prefix="$(
+    ros2 pkg prefix rqt_robot_monitor 2>/dev/null
+  )"; then
+    echo "ROS package rqt_robot_monitor is not installed" >&2
+    exit 2
+  fi
+  rqt_robot_monitor_executable="$rqt_robot_monitor_prefix"
+  rqt_robot_monitor_executable+="/lib/rqt_robot_monitor/rqt_robot_monitor"
+  if [[ ! -x "$rqt_robot_monitor_executable" ]]; then
+    echo "rqt_robot_monitor executable is unavailable: $rqt_robot_monitor_executable" >&2
+    exit 2
+  fi
+else
+  rqt_robot_monitor_executable=""
+fi
+
 launch_command=(
   ros2 launch pure_odometry_bringup lidar_imu_only.launch.py
   use_sim_time:=true
@@ -334,6 +365,9 @@ launch_command=(
   odom_tuning_override_param:="$odom_tuning_override_param"
   log_level:=info
 )
+if [[ "$rqt_robot_monitor" == true ]]; then
+  launch_command+=(launch_diagnostic_aggregator:=true)
+fi
 precision_launch_command=()
 if [[ "$localization_mode" == "precision" ]]; then
   precision_launch_command=(
@@ -346,6 +380,9 @@ if [[ "$localization_mode" == "precision" ]]; then
     log_level:=info
   )
 fi
+rqt_robot_monitor_command=(
+  "$rqt_robot_monitor_executable"
+)
 record_directory="$output/localization_output"
 record_command=(
   ros2 bag record --storage mcap --output "$record_directory"
@@ -354,6 +391,9 @@ record_command=(
   /localization/gyro_lidar_odom_scan
   /localization/imu_corrected /localization/is_stopped
 )
+if [[ "$rqt_robot_monitor" == true ]]; then
+  record_command+=(/diagnostics_agg)
+fi
 if [[ "$localization_mode" == "precision" ]]; then
   record_command+=(
     /localization/submap_scan /localization/submap_correction
@@ -385,6 +425,9 @@ if [[ "$dry_run" == true ]]; then
   print_command "${launch_command[@]}"
   if [[ "$localization_mode" == "precision" ]]; then
     print_command "${precision_launch_command[@]}"
+  fi
+  if [[ "$rqt_robot_monitor" == true ]]; then
+    print_command "${rqt_robot_monitor_command[@]}"
   fi
   print_command "${record_command[@]}"
   print_command "${play_command[@]}"
@@ -494,6 +537,7 @@ global_param_sha256=$global_param_sha256
 global_override_param=$global_override_param
 global_override_param_sha256=$global_override_param_sha256
 ros_domain_id=$ROS_DOMAIN_ID
+rqt_robot_monitor=$rqt_robot_monitor
 recorded_tf_used=false
 gnss_started=false
 map_odom_fusion_started=false
@@ -502,6 +546,9 @@ EOF
 pids=()
 launch_pid=""
 precision_pid=""
+rqt_robot_monitor_pid=""
+rqt_robot_monitor_node=""
+rqt_robot_monitor_readiness_error=""
 record_pid=""
 play_pid=""
 tf_pids=()
@@ -509,7 +556,10 @@ started_pid=""
 
 process_alive() {
   local pid="$1"
-  [[ "$pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$pid" 2>/dev/null
+  local state
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  state="$(ps -o stat= -p "$pid" 2>/dev/null | tr -d '[:space:]')" || return 1
+  [[ -n "$state" && "$state" != Z* ]]
 }
 
 process_group_alive() {
@@ -552,6 +602,7 @@ cleanup() {
   local status=$?
   trap - EXIT INT TERM
   stop_process_group "$play_pid"
+  stop_process_group "$rqt_robot_monitor_pid"
   stop_process_group "$launch_pid"
   stop_process_group "$precision_pid"
   local pid
@@ -574,6 +625,40 @@ wait_for_topic() {
     fi
     sleep 0.5
   done
+  return 1
+}
+
+wait_for_rqt_robot_monitor() {
+  local timeout_sec="$1"
+  local deadline=$((SECONDS + timeout_sec))
+  local expected_node="/rqt_gui_py_node_${rqt_robot_monitor_pid}"
+  local node_info_path="$output/rqt_robot_monitor_node_info.txt"
+  local node_seen=false
+  rqt_robot_monitor_readiness_error=""
+
+  while ((SECONDS < deadline)); do
+    if ! process_alive "$rqt_robot_monitor_pid"; then
+      rqt_robot_monitor_readiness_error="rqt_robot_monitor exited before its plugin became ready"
+      printf '%s\n' "$rqt_robot_monitor_readiness_error" > "$node_info_path"
+      return 2
+    fi
+    if ros2 node info --no-daemon --spin-time 1 "$expected_node" \
+      > "$node_info_path" 2>&1
+    then
+      node_seen=true
+      if grep -Fq "/diagnostics_agg" "$node_info_path"; then
+        rqt_robot_monitor_node="$expected_node"
+        return 0
+      fi
+    fi
+    sleep 0.2
+  done
+
+  if [[ "$node_seen" == true ]]; then
+    rqt_robot_monitor_readiness_error="$expected_node did not subscribe to /diagnostics_agg"
+  else
+    rqt_robot_monitor_readiness_error="$expected_node did not appear"
+  fi
   return 1
 }
 
@@ -624,6 +709,24 @@ if [[ "$localization_mode" == "precision" ]]; then
   fi
 fi
 
+if [[ "$rqt_robot_monitor" == true ]]; then
+  if ! wait_for_topic /diagnostics_agg "$launch_pid"; then
+    echo "aggregated diagnostics did not become ready; see $output/launch.log" >&2
+    exit 1
+  fi
+  start_process_group "$output/rqt_robot_monitor.log" \
+    "${rqt_robot_monitor_command[@]}"
+  rqt_robot_monitor_pid=$started_pid
+  if ! wait_for_rqt_robot_monitor 60; then
+    echo "$rqt_robot_monitor_readiness_error; see" \
+      "$output/rqt_robot_monitor.log and" \
+      "$output/rqt_robot_monitor_node_info.txt" >&2
+    exit 1
+  fi
+  printf 'rqt_robot_monitor_node=%q\n' "$rqt_robot_monitor_node" \
+    >> "$output/run.env"
+fi
+
 start_process_group "$output/record.log" "${record_command[@]}"
 record_pid=$started_pid
 sleep 2
@@ -649,6 +752,8 @@ fi
 # the recorder remains alive.  /clock is frozen here, so regular timer topics
 # repeat its final stamp; accepted-scan odometry remains one message per scan.
 sleep 2
+stop_process_group "$rqt_robot_monitor_pid"
+rqt_robot_monitor_pid=""
 stop_process_group "$launch_pid"
 launch_pid=""
 if [[ "$localization_mode" == "precision" ]]; then

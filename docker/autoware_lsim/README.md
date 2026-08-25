@@ -1,8 +1,12 @@
-# Autoware Logging Simulation Docker profile
+# Docker-Based Autoware Localization-Interface Evaluation
 
 This profile runs the localization-only Autoware integration and rosbag replay
 inside one CPU-only Docker container. The host needs Docker Engine and the
 Docker Compose v2 plugin, but it does not need ROS 2 or Autoware installed.
+
+The retained `autoware_lsim` paths and command names are project-local
+compatibility identifiers, not names of an official Autoware component or
+workflow.
 
 The image is built on the pinned no-CUDA development image:
 
@@ -47,7 +51,7 @@ profile applies no evaluation-origin override. Do not combine it with
 ROS_DOMAIN_ID=83 ./script/run_autoware_lsim_docker.sh \
   --bag <hesai_course_2_bag> \
   --profile hesai-rosbag23 \
-  --run-name hesai_course_2_lsim \
+  --run-name hesai_course_2_autoware_interface \
   --no-build
 ```
 
@@ -104,7 +108,19 @@ selected Autoware vehicle and sensor models exactly match the recorded sensor
 installation. The `hesai-rosbag23` profile is the other supported
 `isolate-all` case because it publishes its own calibrated static transforms.
 
-## RViz without a discrete GPU
+## GUI diagnostics and RViz without a discrete GPU
+
+GUI tools are disabled by default. To inspect the aggregated localization
+diagnostics in a separate Robot Monitor window, use:
+
+```bash
+./script/run_autoware_lsim_docker.sh ... --rqt-robot-monitor
+```
+
+The monitor runs inside the container and subscribes to `/diagnostics_agg`.
+The runner checks that the GUI process and its subscription remain available
+through replay completion. It can be combined with `--rviz`. Either GUI option
+requires a working host X11 `DISPLAY` and `xhost` command.
 
 RViz is disabled by default. Enable CPU software rendering with:
 
@@ -190,20 +206,21 @@ vehicle model. Do not combine
 Autoware image and is not copied into this repository; the upstream
 `sample_vehicle_description` package is Apache 2.0 licensed.
 
-The wrapper adds `compose.rviz.yaml`, mounts the X11 socket, and sets
-`LIBGL_ALWAYS_SOFTWARE=1`. A localization-specific RViz profile displays the
-deskewed point cloud, generated line trajectory, an XY-only covariance ellipse,
-kinematic-state arrows, the dedicated localization-status entry in the Displays
-panel, and `base_link` axes in the `map` frame. Its point-cloud subscription
-explicitly uses best-effort/volatile SensorDataQoS. `/rviz2` is a required node
-at startup and replay completion, so a display or OpenGL failure makes the run
-fail instead of silently passing. Headless evaluation is preferred for timing
-and CPU measurements.
+When either GUI is requested, the wrapper adds `compose.rviz.yaml`, mounts the
+X11 socket, and sets `LIBGL_ALWAYS_SOFTWARE=1`. A localization-specific RViz
+profile displays the deskewed point cloud, generated line trajectory, an XY-only
+covariance ellipse, kinematic-state arrows, the dedicated localization-status
+entry in the Displays panel, and `base_link` axes in the `map` frame. Its
+point-cloud subscription explicitly uses best-effort/volatile SensorDataQoS.
+`/rviz2` is a required node at startup and replay completion, so a display or
+OpenGL failure makes the run fail instead of silently passing. Headless
+evaluation is preferred for timing and CPU measurements.
 
 ## Useful controls
 
 ```text
 --already-deskewed      bypass internal point-cloud deskew
+--rqt-robot-monitor     show the /diagnostics_agg tree in Robot Monitor
 --rviz-sample-vehicle   enable the body, trajectory, Displays status, and XY ellipse
 --rviz-sample-vehicle-z-offset <m>
                         override only the rendered body/ellipse height
@@ -216,7 +233,7 @@ and CPU measurements.
 ```
 
 The Compose service deliberately uses host networking and host IPC so ROS 2 DDS
-and shared-memory transports behave like a native single-host LSim deployment.
+and shared-memory transports behave like a single-host Autoware integration.
 It is marked privileged because the official Autoware entrypoint configures
 loopback multicast and DDS-related kernel settings. This profile is for a local
 development machine, not an untrusted multi-tenant host.

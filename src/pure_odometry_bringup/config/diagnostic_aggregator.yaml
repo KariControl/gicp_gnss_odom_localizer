@@ -11,6 +11,16 @@ diagnostic_aggregator:
         type: diagnostic_aggregator/GenericAnalyzer
         path: gyro_odometer
         startswith: ["localization/gyro_odometer"]
+      submap_matcher:
+        type: diagnostic_aggregator/GenericAnalyzer
+        path: submap_matcher
+        startswith: ["localization/submap_matcher"]
+        num_items: 0
+      precision_global_localizer:
+        type: diagnostic_aggregator/GenericAnalyzer
+        path: precision_global_localizer
+        startswith: ["localization/precision_global_localizer"]
+        num_items: 0
       nmea_gga_conversion:
         type: diagnostic_aggregator/GenericAnalyzer
         path: nmea_gga_conversion

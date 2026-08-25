@@ -1576,15 +1576,27 @@ def outage_yaw_guard_summary(diagnostics: list[dict[str, Any]]) -> dict[str, Any
     the maximum-step envelope.  Exact output/nominal/offset composition is
     checked independently at every finite snapshot.
     """
-    raw_samples = [
-        item
+    guard_schema_observed = any(
+        any(
+            str(key).startswith("outage_yaw_guard.")
+            for key in item.get("values", {})
+        )
         for item in diagnostics
-        if "outage_yaw_guard.enabled" in item.get("values", {})
-    ]
+    )
+    # ``diagnostics`` already contains only this node's status snapshots. Once
+    # the guard schema is observed, retain every snapshot so a missing guard
+    # field (including a snapshot missing the whole guard block) is evidence,
+    # not an implicit filter that can hide a discontinuity.
+    raw_samples = list(diagnostics) if guard_schema_observed else []
+    epoch_key = "outage_yaw_guard.active_reference_epoch"
+    epoch_presence = [epoch_key in item.get("values", {}) for item in raw_samples]
+    epoch_accounting_available = bool(epoch_presence) and all(epoch_presence)
+    epoch_accounting_mixed = any(epoch_presence) and not all(epoch_presence)
     counter_keys = {
         "accepted_reference_count": "outage_yaw_guard.accepted_reference_count",
         "rejected_reference_count": "outage_yaw_guard.rejected_reference_count",
         "outage_count": "outage_yaw_guard.outage_count",
+        "active_reference_epoch": epoch_key,
         "recovery_count": "outage_yaw_guard.recovery_count",
         "applied_step_count": "outage_yaw_guard.applied_step_count",
         "invalid_advance_count": "outage_yaw_guard.invalid_advance_count",
@@ -1592,32 +1604,13 @@ def outage_yaw_guard_summary(diagnostics: list[dict[str, Any]]) -> dict[str, Any
         "suppressed_invalid_count": "publish.global_suppressed_yaw_guard_invalid",
     }
     samples = list(raw_samples)
+    # Preserve recorder order, including every equal-stamp snapshot.  A paused
+    # ROS clock can legitimately produce several wall-timer diagnostics with
+    # the same header stamp, but they remain distinct observations: counters
+    # may advance, regress, or expose an otherwise invisible control edge.
+    # Folding them (or synthesizing a payload from per-field maxima) would hide
+    # precisely the continuity violations this evaluator is meant to detect.
     folded_tail_duplicate_samples = 0
-    if len(samples) >= 2:
-        stamps = [int(item["stamp_ns"]) for item in samples]
-        for index in range(1, len(stamps)):
-            if stamps[index] != stamps[index - 1]:
-                continue
-            duplicate_stamp = stamps[index]
-            if all(stamp == duplicate_stamp for stamp in stamps[index - 1 :]):
-                tail_begin = index - 1
-                tail = samples[tail_begin:]
-                merged = dict(tail[-1])
-                merged_values = dict(tail[-1]["values"])
-                # The wall-timer tail is not additional physical evidence, but
-                # a cumulative fault counter observed in any repeated snapshot
-                # must not be lost by folding it to the final causal sample.
-                for key in counter_keys.values():
-                    observed = [
-                        _outage_yaw_counter(item["values"], key) for item in tail
-                    ]
-                    finite = [value for value in observed if value is not None]
-                    if finite:
-                        merged_values[key] = str(max(finite))
-                merged["values"] = merged_values
-                samples = samples[:tail_begin] + [merged]
-                folded_tail_duplicate_samples = len(tail) - 1
-            break
     required_keys = {
         "outage_yaw_guard.enabled",
         "outage_yaw_guard.state",
@@ -1642,13 +1635,21 @@ def outage_yaw_guard_summary(diagnostics: list[dict[str, Any]]) -> dict[str, Any
         "fusion.health.healthy",
         "fusion.anchor.state",
         "local_correction.odom_session_resets",
-        *counter_keys.values(),
+        *(
+            key
+            for name, key in counter_keys.items()
+            if name != "active_reference_epoch"
+        ),
         *(
             f"outage_yaw_guard.config.{name}"
             for name in OUTAGE_YAW_GUARD_EXPECTED_CONFIG
         ),
     }
     field_errors: list[str] = []
+    if epoch_accounting_mixed:
+        field_errors.append(
+            "outage_yaw_guard.active_reference_epoch has mixed presence"
+        )
     config_errors: list[str] = []
     semantic_errors: list[str] = []
     counter_errors: list[str] = []
@@ -1677,9 +1678,12 @@ def outage_yaw_guard_summary(diagnostics: list[dict[str, Any]]) -> dict[str, Any
     composition_samples = 0
     variance_samples = 0
     bounded_intervals = 0
+    same_stamp_intervals = 0
     release_bounded_intervals = 0
     release_step_diagnostic_samples = 0
     observed_release_step_counter_delta = 0
+    unproven_active_reference_intervals = 0
+    cross_epoch_active_reference_intervals = 0
 
     previous: dict[str, Any] | None = None
     for index, item in enumerate(samples):
@@ -1704,10 +1708,10 @@ def outage_yaw_guard_summary(diagnostics: list[dict[str, Any]]) -> dict[str, Any
             previous_state = previous["state"]
             if previous_state != state:
                 transition_counts[f"{previous_state}->{state}"] += 1
-            if stamp_ns <= previous["stamp_ns"]:
+            if stamp_ns < previous["stamp_ns"]:
                 _limited_error(
                     continuity_errors,
-                    f"sample {index} diagnostic stamp is not strictly increasing: "
+                    f"sample {index} diagnostic stamp backstep: "
                     f"{previous['stamp_ns']}->{stamp_ns}",
                 )
 
@@ -1781,6 +1785,11 @@ def outage_yaw_guard_summary(diagnostics: list[dict[str, Any]]) -> dict[str, Any
 
         counters: dict[str, int | None] = {}
         for name, key in counter_keys.items():
+            if name == "active_reference_epoch" and not (
+                epoch_accounting_available
+            ):
+                counters[name] = None
+                continue
             counter = _outage_yaw_counter(values, key)
             counters[name] = counter
             if counter is None:
@@ -1813,7 +1822,28 @@ def outage_yaw_guard_summary(diagnostics: list[dict[str, Any]]) -> dict[str, Any
                 f"odom={odom_session_resets}",
             )
         outage_count = counters.get("outage_count")
+        active_reference_epoch = counters.get("active_reference_epoch")
         recovery_count = counters.get("recovery_count")
+        if (
+            active_reference_epoch is not None
+            and outage_count is not None
+            and active_reference_epoch > outage_count
+        ):
+            _limited_error(
+                counter_errors,
+                f"stamp={stamp_ns} active_reference_epoch="
+                f"{active_reference_epoch} exceeds outage={outage_count}",
+            )
+        if (
+            state in OUTAGE_YAW_GUARD_ACTIVE_STATES
+            and active_reference_epoch is not None
+            and active_reference_epoch == 0
+        ):
+            _limited_error(
+                counter_errors,
+                f"stamp={stamp_ns} active state={state} has zero "
+                "active_reference_epoch",
+            )
         if (
             outage_count is not None
             and recovery_count is not None
@@ -2101,6 +2131,27 @@ def outage_yaw_guard_summary(diagnostics: list[dict[str, Any]]) -> dict[str, Any
             recovery_after = counters.get("recovery_count")
             accepted_before = previous["counters"].get("accepted_reference_count")
             accepted_after = counters.get("accepted_reference_count")
+            if dt_sec == 0.0:
+                same_stamp_intervals += 1
+                if (
+                    reset_before is not None
+                    and reset_after == reset_before
+                    and steps_before is not None
+                    and steps_after is not None
+                ):
+                    offset_delta = abs(float(wrap(applied - previous["applied"])))
+                    if steps_after != steps_before:
+                        _limited_error(
+                            continuity_errors,
+                            f"stamp={stamp_ns} same-stamp interval changed applied "
+                            f"step count {steps_before}->{steps_after}",
+                        )
+                    if offset_delta > OUTAGE_YAW_GUARD_FLOAT_TOLERANCE:
+                        _limited_error(
+                            continuity_errors,
+                            f"stamp={stamp_ns} same-stamp interval changed applied "
+                            f"offset by {offset_delta}",
+                        )
             if all(
                 value is not None
                 for value in (
@@ -2118,6 +2169,15 @@ def outage_yaw_guard_summary(diagnostics: list[dict[str, Any]]) -> dict[str, Any
                 outage_delta = outage_after - outage_before
                 recovery_delta = recovery_after - recovery_before
                 accepted_delta = accepted_after - accepted_before
+                epoch_before = previous["counters"].get(
+                    "active_reference_epoch"
+                )
+                epoch_after = counters.get("active_reference_epoch")
+                epoch_delta = (
+                    epoch_after - epoch_before
+                    if epoch_before is not None and epoch_after is not None
+                    else None
+                )
                 previous_state = previous["state"]
                 previous_outage = previous_state in {"OUTAGE_SLEW", "OUTAGE_HOLD"}
                 current_outage = state in {"OUTAGE_SLEW", "OUTAGE_HOLD"}
@@ -2136,6 +2196,15 @@ def outage_yaw_guard_summary(diagnostics: list[dict[str, Any]]) -> dict[str, Any
                             f"previous_state={previous_state} state={state} "
                             f"expected_outage_delta={expected_outage_delta}",
                         )
+                    if epoch_delta is not None and not 0 <= epoch_delta <= (
+                        outage_delta
+                    ):
+                        _limited_error(
+                            counter_errors,
+                            f"stamp={stamp_ns} active-reference epoch delta="
+                            f"{epoch_delta} is outside outage delta="
+                            f"{outage_delta}",
+                        )
                 if (
                     reset_delta == 0
                     and previous_state in OUTAGE_YAW_GUARD_ACTIVE_STATES
@@ -2149,8 +2218,10 @@ def outage_yaw_guard_summary(diagnostics: list[dict[str, Any]]) -> dict[str, Any
                         "active_reference_variance"
                     ]
                     expected_active_variance = previous_active_variance
+                    same_epoch = epoch_delta is None or epoch_delta == 0
                     visible_reoutage = (
-                        previous_state == "RECOVERY_RELEASE"
+                        same_epoch
+                        and previous_state == "RECOVERY_RELEASE"
                         and current_outage
                         and outage_delta == 1
                         and recovery_delta == 0
@@ -2170,21 +2241,34 @@ def outage_yaw_guard_summary(diagnostics: list[dict[str, Any]]) -> dict[str, Any
                                 )
                         elif last_reason in OUTAGE_YAW_GUARD_REOUTAGE_RETAIN_REASONS:
                             expected_active_variance = previous_active_variance
-                    elif outage_delta > 0:
-                        # Diagnostic sampling can hide a release followed by a
-                        # re-outage.  Its exact reason is unavailable, but every
-                        # runtime branch preserves or increases the snapshot.
-                        if (
-                            active_reference_variance
-                            + OUTAGE_YAW_GUARD_FLOAT_TOLERANCE
-                            < previous_active_variance
-                        ):
+                    elif outage_delta > 0 and epoch_delta == 0:
+                        # The epoch proves that no completed release and fresh
+                        # snapshot occurred between these sparse diagnostics.
+                        # Every same-epoch re-outage branch retains or raises
+                        # the active uncertainty snapshot.
+                        if active_reference_variance + (
+                            OUTAGE_YAW_GUARD_FLOAT_TOLERANCE
+                        ) < previous_active_variance:
                             _limited_error(
                                 continuity_errors,
-                                f"stamp={stamp_ns} hidden re-outage decreased active "
-                                "reference variance "
-                                f"{previous_active_variance}->{active_reference_variance}",
+                                f"stamp={stamp_ns} same-epoch hidden re-outage "
+                                "decreased active reference variance "
+                                f"{previous_active_variance}->"
+                                f"{active_reference_variance}",
                             )
+                        expected_active_variance = None
+                    elif outage_delta > 0 and epoch_delta is not None:
+                        # A new epoch means the prior release completed and the
+                        # old snapshot was cleared. The new independently gated
+                        # variance is not ordered relative to the prior epoch.
+                        cross_epoch_active_reference_intervals += 1
+                        expected_active_variance = None
+                    elif outage_delta > 0:
+                        # Legacy diagnostics cannot distinguish a direct
+                        # re-outage from release-complete -> READY -> new
+                        # outage. Report this invariant as unproven rather than
+                        # guessing and producing a false failure.
+                        unproven_active_reference_intervals += 1
                         expected_active_variance = None
                     if (
                         expected_active_variance is not None
@@ -2320,6 +2404,12 @@ def outage_yaw_guard_summary(diagnostics: list[dict[str, Any]]) -> dict[str, Any
         "state_transition_counts": dict(sorted(transition_counts.items())),
         "counters": final_counters,
         "counter_monotonic": not counter_errors,
+        "active_reference_epoch_accounting": {
+            "available": epoch_accounting_available,
+            "mixed_presence": epoch_accounting_mixed,
+            "unproven_intervals": unproven_active_reference_intervals,
+            "cross_epoch_intervals": cross_epoch_active_reference_intervals,
+        },
         "maxima": {
             "abs_applied_offset_rad": maximum_abs_applied_offset,
             "abs_target_offset_rad": maximum_abs_target_offset,
@@ -2358,6 +2448,7 @@ def outage_yaw_guard_summary(diagnostics: list[dict[str, Any]]) -> dict[str, Any
             "composition_samples": composition_samples,
             "variance_samples": variance_samples,
             "bounded_diagnostic_intervals": bounded_intervals,
+            "same_stamp_control_intervals": same_stamp_intervals,
             "maximum_composition_residual_rad": maximum_composition_residual,
             "maximum_observed_offset_rate_radps": maximum_observed_offset_rate,
             "errors": continuity_errors,
@@ -2376,15 +2467,17 @@ def outage_yaw_guard_summary(diagnostics: list[dict[str, Any]]) -> dict[str, Any
 def outage_yaw_guard_contract_checks(
     summary: dict[str, Any], dataset_outage_available: bool
 ) -> list[dict[str, Any]]:
-    """Return hard acceptance checks without changing accuracy gates."""
+    """Return acceptance checks without changing accuracy gates."""
     counters = summary["counters"]
 
-    def check(name: str, passed: bool, detail: str) -> dict[str, Any]:
+    def check(
+        name: str, passed: bool, detail: str, category: str = "hard"
+    ) -> dict[str, Any]:
         return {
             "name": name,
             "passed": bool(passed),
             "detail": detail,
-            "category": "hard",
+            "category": category,
         }
 
     exercise_passed = not dataset_outage_available or (
@@ -2443,6 +2536,26 @@ def outage_yaw_guard_contract_checks(
             "outage yaw guard state agrees with fusion authority",
             summary["fusion_health_state_contract"]["valid"],
             json.dumps(summary["fusion_health_state_contract"], sort_keys=True),
+        ),
+        check(
+            "outage yaw guard active-reference epoch accounting",
+            summary["active_reference_epoch_accounting"]["available"],
+            (
+                json.dumps(
+                    summary["active_reference_epoch_accounting"], sort_keys=True
+                )
+                if summary["active_reference_epoch_accounting"]["available"]
+                else "N/A: legacy diagnostics cannot prove hidden re-outage "
+                "snapshot lineage; "
+                + json.dumps(
+                    summary["active_reference_epoch_accounting"], sort_keys=True
+                )
+            ),
+            (
+                "hard"
+                if summary["active_reference_epoch_accounting"]["available"]
+                else "warn"
+            ),
         ),
         check(
             "outage yaw guard composition and bounded continuity",

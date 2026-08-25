@@ -10,6 +10,7 @@
     initialpose_topic: /initialpose
     out_pose_topic: /localization/ekf_pose
     out_odom_topic: /localization/ekf_odom
+    authority_topic: /localization/gnss_map_odom_fusion_authority
     publish_tf: true
     publish_rate_hz: 50.0
     heartbeat_hz: 2.0

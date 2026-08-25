@@ -3,15 +3,15 @@
 set -Eeuo pipefail
 
 log() {
-  printf '[autoware-lsim] %s\n' "$*"
+  printf '[autoware-interface] %s\n' "$*"
 }
 
 warn() {
-  printf '[autoware-lsim] WARN: %s\n' "$*" >&2
+  printf '[autoware-interface] WARN: %s\n' "$*" >&2
 }
 
 fail() {
-  printf '[autoware-lsim] ERROR: %s\n' "$*" >&2
+  printf '[autoware-interface] ERROR: %s\n' "$*" >&2
   exit 2
 }
 
@@ -73,6 +73,7 @@ USE_IMU_DESKEW="$(normalize_bool "${USE_IMU_DESKEW:-true}")"
 LAUNCH_VEHICLE="$(normalize_bool "${LAUNCH_VEHICLE:-false}")"
 LAUNCH_SENSING="$(normalize_bool "${LAUNCH_SENSING:-false}")"
 RVIZ="$(normalize_bool "${RVIZ:-false}")"
+RQT_ROBOT_MONITOR="$(normalize_bool "${RQT_ROBOT_MONITOR:-false}")"
 RVIZ_SAMPLE_VEHICLE="$(normalize_bool "${RVIZ_SAMPLE_VEHICLE:-false}")"
 RVIZ_SAMPLE_VEHICLE_Z_OFFSET="${RVIZ_SAMPLE_VEHICLE_Z_OFFSET:--1.66}"
 RECORD_OUTPUT="$(normalize_bool "${RECORD_OUTPUT:-true}")"
@@ -119,6 +120,7 @@ SAMPLE_VEHICLE_BODY_XACRO="$BRINGUP_SHARE/urdf/autoware_sample_vehicle_body.urdf
 LOCALIZATION_STATUS_PLUGIN_XML="$BRINGUP_SHARE/localization_status_plugin.xml"
 LOCALIZATION_STATUS_PLUGIN_LIBRARY="${GICP_GNSS_ODOM_INSTALL}/lib/libpure_odometry_localization_status_rviz_plugin.so"
 SAMPLE_VEHICLE_DESCRIPTION_SHARE=""
+RQT_ROBOT_MONITOR_EXECUTABLE=""
 EMPTY_PARAM="$BRINGUP_SHARE/config/autoware_lsim/empty_params.yaml"
 SUBMAP_SNAPSHOT_OVERRIDE_PARAM="$PRECISION_BRINGUP_SHARE/config/submap_snapshot_override.yaml"
 PRECISION_MATCHER_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_lidar_submap_matcher/param/param.yaml"
@@ -224,8 +226,19 @@ if [[ "$TF_POLICY" == isolate-all && "$LAUNCH_VEHICLE" != true && \
   "$SENSOR_PROFILE" == generic ]]; then
   fail "TF_POLICY=isolate-all requires LAUNCH_VEHICLE=true or a calibrated sensor profile."
 fi
-if [[ "$RVIZ" == true && -z "${DISPLAY:-}" ]]; then
-  fail "RVIZ=true requires DISPLAY and the RViz compose overlay."
+if [[ ("$RVIZ" == true || "$RQT_ROBOT_MONITOR" == true) && -z "${DISPLAY:-}" ]]; then
+  fail "RVIZ=true or RQT_ROBOT_MONITOR=true requires DISPLAY and the GUI compose overlay."
+fi
+if [[ "$RQT_ROBOT_MONITOR" == true ]]; then
+  if ! rqt_robot_monitor_prefix="$(
+    ros2 pkg prefix rqt_robot_monitor 2>/dev/null
+  )"; then
+    fail "RQT_ROBOT_MONITOR=true requires the rqt_robot_monitor package."
+  fi
+  RQT_ROBOT_MONITOR_EXECUTABLE="$rqt_robot_monitor_prefix"
+  RQT_ROBOT_MONITOR_EXECUTABLE+="/lib/rqt_robot_monitor/rqt_robot_monitor"
+  [[ -x "$RQT_ROBOT_MONITOR_EXECUTABLE" ]] ||
+    fail "rqt_robot_monitor executable is unavailable: $RQT_ROBOT_MONITOR_EXECUTABLE"
 fi
 
 safe_run_name="$(printf '%s' "$RUN_NAME" | tr -cs 'A-Za-z0-9._-' '_')"
@@ -238,6 +251,8 @@ mkdir -p "$run_directory"
 
 launch_pid=""
 precision_launch_pid=""
+rqt_robot_monitor_pid=""
+rqt_robot_monitor_node=""
 bag_pid=""
 record_pid=""
 
@@ -267,6 +282,7 @@ cleanup() {
   trap - EXIT INT TERM
   stop_process "$bag_pid" INT
   stop_process "$record_pid" INT
+  stop_process "$rqt_robot_monitor_pid" INT
   stop_process "$precision_launch_pid" INT
   stop_process "$launch_pid" INT
   if [[ "${HOST_UID:-}" =~ ^[0-9]+$ && "${HOST_GID:-}" =~ ^[0-9]+$ ]]; then
@@ -319,6 +335,7 @@ write_manifest() {
     printf 'VEHICLE_MODEL=%q\n' "$VEHICLE_MODEL"
     printf 'SENSOR_MODEL=%q\n' "$SENSOR_MODEL"
     printf 'RVIZ=%q\n' "$RVIZ"
+    printf 'RQT_ROBOT_MONITOR=%q\n' "$RQT_ROBOT_MONITOR"
     printf 'RVIZ_SAMPLE_VEHICLE=%q\n' "$RVIZ_SAMPLE_VEHICLE"
     printf 'RVIZ_SAMPLE_VEHICLE_Z_OFFSET=%q\n' "$RVIZ_SAMPLE_VEHICLE_Z_OFFSET"
     printf 'RVIZ_CONFIG=%q\n' "$RVIZ_CONFIG"
@@ -433,6 +450,24 @@ wait_for_node() {
   return 1
 }
 
+wait_for_rqt_robot_monitor() {
+  local deadline=$((SECONDS + STARTUP_WAIT_SEC))
+  local expected_node="/rqt_gui_py_node_${rqt_robot_monitor_pid}"
+  while ((SECONDS < deadline)); do
+    kill -0 "$rqt_robot_monitor_pid" 2>/dev/null || return 2
+    if ros2 node info --no-daemon --spin-time 1 "$expected_node" \
+      > "$run_directory/rqt_robot_monitor_node_info.txt" 2>&1 &&
+      grep -Fq "/diagnostics_agg" \
+        "$run_directory/rqt_robot_monitor_node_info.txt"
+    then
+      rqt_robot_monitor_node="$expected_node"
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
 wait_for_topic() {
   local topic="$1"
   local owner_pid="${2:-$launch_pid}"
@@ -485,6 +520,9 @@ check_required_nodes() {
   if [[ "$RVIZ" == true ]]; then
     required+=(/rviz2)
   fi
+  if [[ "$RQT_ROBOT_MONITOR" == true ]]; then
+    required+=(/diagnostic_aggregator)
+  fi
   if [[ "$RVIZ_SAMPLE_VEHICLE" == true ]]; then
     required+=(
       /sample_vehicle_body_state_publisher
@@ -499,6 +537,18 @@ check_required_nodes() {
       missing+=("$node")
     fi
   done
+  if [[ "$RQT_ROBOT_MONITOR" == true ]]; then
+    if [[ -z "$rqt_robot_monitor_pid" ]] ||
+      ! kill -0 "$rqt_robot_monitor_pid" 2>/dev/null
+    then
+      missing+=("rqt_robot_monitor process")
+    fi
+    if [[ -z "$rqt_robot_monitor_node" ]] ||
+      ! grep -Fxq "$rqt_robot_monitor_node" <<< "$snapshot"
+    then
+      missing+=("${rqt_robot_monitor_node:-/rqt_gui_py_node_<pid>}")
+    fi
+  fi
   if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
     local topic_snapshot
     if ! topic_snapshot="$(ros2 topic list --no-daemon --spin-time 2 2>/dev/null)"; then
@@ -612,7 +662,7 @@ if [[ -n "$TWIST_SOURCE_TOPIC" ]]; then
   launch_command+=(twist_input_topic:=/localization/input_twist)
 fi
 
-printf '[autoware-lsim] launch:'
+printf '[autoware-interface] launch:'
 printf ' %q' "${launch_command[@]}"
 printf '\n'
 stdbuf -oL -eL "${launch_command[@]}" \
@@ -630,13 +680,21 @@ if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
     global_override_param:="$PRECISION_GLOBAL_OVERRIDE_PARAM"
     log_level:="$LOG_LEVEL"
   )
-  printf '[autoware-lsim] precision overlay:'
+  printf '[autoware-interface] precision overlay:'
   printf ' %q' "${precision_launch_command[@]}"
   printf '\n'
   stdbuf -oL -eL "${precision_launch_command[@]}" \
     > >(tee "$run_directory/precision_launch.log") \
     2>&1 &
   precision_launch_pid=$!
+fi
+
+if [[ "$RQT_ROBOT_MONITOR" == true ]]; then
+  log "starting rqt_robot_monitor for /diagnostics_agg."
+  stdbuf -oL -eL "$RQT_ROBOT_MONITOR_EXECUTABLE" \
+    > >(tee "$run_directory/rqt_robot_monitor.log") \
+    2>&1 &
+  rqt_robot_monitor_pid=$!
 fi
 
 if ! wait_for_topic /localization/kinematic_state; then
@@ -658,6 +716,13 @@ if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
   if ! wait_for_topic /localization/precision_global_pose "$precision_launch_pid"; then
     fail "precision global pose did not start; see $run_directory/precision_launch.log"
   fi
+fi
+if [[ "$RQT_ROBOT_MONITOR" == true ]]; then
+  if ! wait_for_rqt_robot_monitor; then
+    fail "rqt_robot_monitor did not subscribe to /diagnostics_agg; see" \
+      "$run_directory/rqt_robot_monitor.log"
+  fi
+  log "rqt_robot_monitor is ready: $rqt_robot_monitor_node"
 fi
 if ! wait_for_required_nodes; then
   fail "required Autoware/localizer node(s) did not start: $missing_required_nodes"
@@ -743,7 +808,7 @@ else
   play_command+=(-- --disable-keyboard-controls --delay 2)
 fi
 
-printf '[autoware-lsim] replay:'
+printf '[autoware-interface] replay:'
 printf ' %q' "${play_command[@]}"
 printf '\n'
 stdbuf -oL -eL "${play_command[@]}" \
@@ -779,6 +844,7 @@ bag_pid=""
 sleep "$DRAIN_WAIT_SEC"
 launch_was_alive="false"
 precision_launch_was_alive="true"
+rqt_robot_monitor_was_alive="true"
 record_was_alive="true"
 required_nodes_were_alive="true"
 if [[ -n "$launch_pid" ]] && kill -0 "$launch_pid" 2>/dev/null; then
@@ -788,6 +854,11 @@ if [[ "$TRACKING_MODE" == scan_to_submap ]] &&
   { [[ -z "$precision_launch_pid" ]] || ! kill -0 "$precision_launch_pid" 2>/dev/null; }
 then
   precision_launch_was_alive="false"
+fi
+if [[ "$RQT_ROBOT_MONITOR" == true ]] &&
+  { [[ -z "$rqt_robot_monitor_pid" ]] || ! kill -0 "$rqt_robot_monitor_pid" 2>/dev/null; }
+then
+  rqt_robot_monitor_was_alive="false"
 fi
 if [[ "$RECORD_OUTPUT" == true ]] &&
   { [[ -z "$record_pid" ]] || ! kill -0 "$record_pid" 2>/dev/null; }
@@ -801,6 +872,20 @@ if [[ "$RVIZ" == true && "$required_nodes_were_alive" == true ]]; then
   if ! ros2 node info /rviz2 > "$run_directory/rviz_node_info.txt" 2>&1; then
     required_nodes_were_alive="false"
     missing_required_nodes="/rviz2 node info failed"
+  fi
+fi
+if [[ "$RQT_ROBOT_MONITOR" == true && "$required_nodes_were_alive" == true ]]; then
+  if [[ -z "$rqt_robot_monitor_node" ]] ||
+    ! ros2 node info --no-daemon --spin-time 1 "$rqt_robot_monitor_node" \
+      > "$run_directory/rqt_robot_monitor_node_info.txt" 2>&1
+  then
+    required_nodes_were_alive="false"
+    missing_required_nodes="rqt_robot_monitor node info failed"
+  elif ! grep -Fq "/diagnostics_agg" \
+    "$run_directory/rqt_robot_monitor_node_info.txt"
+  then
+    required_nodes_were_alive="false"
+    missing_required_nodes="rqt_robot_monitor does not subscribe to /diagnostics_agg"
   fi
 fi
 if [[ "$RVIZ_SAMPLE_VEHICLE" == true && "$required_nodes_were_alive" == true ]]; then
@@ -884,6 +969,8 @@ if [[ "$RVIZ_SAMPLE_VEHICLE" == true && "$required_nodes_were_alive" == true ]];
 fi
 stop_process "$record_pid" INT
 record_pid=""
+stop_process "$rqt_robot_monitor_pid" INT
+rqt_robot_monitor_pid=""
 stop_process "$precision_launch_pid" INT
 precision_launch_pid=""
 stop_process "$launch_pid" INT
@@ -897,6 +984,9 @@ if [[ "$launch_was_alive" != true ]]; then
 fi
 if [[ "$precision_launch_was_alive" != true ]]; then
   fail "precision overlay exited before replay completed; see $run_directory/precision_launch.log"
+fi
+if [[ "$rqt_robot_monitor_was_alive" != true ]]; then
+  fail "rqt_robot_monitor exited before replay completed; see $run_directory/rqt_robot_monitor.log"
 fi
 if [[ "$record_was_alive" != true ]]; then
   fail "output recorder exited before replay completed; see $run_directory/record.log"

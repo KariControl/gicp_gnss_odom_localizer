@@ -201,6 +201,7 @@ bool OutageYawGuard::startOutage(
   last_advance_stamp_sec_ = stamp_sec;
   has_last_advance_stamp_ = true;
   ++outage_count_;
+  ++active_reference_epoch_;
   reason = state_ == OutageYawState::OUTAGE_HOLD ?
     "trusted_outage_yaw_already_held" : "trusted_outage_yaw_slew_started";
   last_reason_ = reason;
@@ -309,17 +310,14 @@ OutageYawUpdate OutageYawGuard::advance(
     update.output_yaw_rad = std::numeric_limits<double>::quiet_NaN();
     return update;
   }
-  if (has_last_advance_stamp_ &&
-    stamp_sec <= last_advance_stamp_sec_ + kStampToleranceSec)
-  {
-    last_reason_ = "duplicate_outage_yaw_stamp_hold";
-    return makeUpdate(nominal_global_yaw_rad, last_reason_);
-  }
-
   if (!has_last_advance_stamp_) {
     has_last_advance_stamp_ = true;
     last_advance_stamp_sec_ = stamp_sec;
   }
+
+  // A repeated physical stamp can still carry a later typed-authority
+  // sequence. Process that control edge; stepTowardTarget() independently
+  // rejects zero dt, so an equal stamp can never double-apply yaw correction.
 
   bool outage_started = false;
   bool recovery_started = false;

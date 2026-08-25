@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Static checks for the CPU-only Autoware LSim Docker profile."""
+"""Static checks for the CPU-only Autoware integration Docker profile."""
 from __future__ import annotations
 
 import os
@@ -51,11 +51,17 @@ def check_compose() -> None:
     if build.get("dockerfile") != "docker/autoware_lsim/Dockerfile":
         fail("Dockerfile path changed unexpectedly")
     if service.get("network_mode") != "host":
-        fail("LSim service must use host networking for single-host DDS")
+        fail(
+            "Autoware integration service must use host networking for "
+            "single-host DDS"
+        )
     if service.get("ipc") != "host":
-        fail("LSim service must use host IPC")
+        fail("Autoware integration service must use host IPC")
     if service.get("privileged") is not True:
-        fail("LSim service must remain privileged for the official entrypoint DDS tuning")
+        fail(
+            "Autoware integration service must remain privileged for the "
+            "official entrypoint DDS tuning"
+        )
 
     environment = service.get("environment", {})
     required_environment = {
@@ -64,6 +70,7 @@ def check_compose() -> None:
         "DATASET_PROFILE": "${DATASET_PROFILE:-generic}",
         "CLOCK_FREQUENCY": "${CLOCK_FREQUENCY:-100.0}",
         "RVIZ": "${RVIZ:-false}",
+        "RQT_ROBOT_MONITOR": "${RQT_ROBOT_MONITOR:-false}",
         "RVIZ_SAMPLE_VEHICLE": "${RVIZ_SAMPLE_VEHICLE:-false}",
         "RVIZ_SAMPLE_VEHICLE_Z_OFFSET": "${RVIZ_SAMPLE_VEHICLE_Z_OFFSET:--1.66}",
         "LOCALIZER_IMAGE_ID": "${LOCALIZER_IMAGE_ID:-unknown}",
@@ -95,9 +102,20 @@ def check_compose() -> None:
     rviz = load_yaml(rviz_path).get("services", {}).get("lsim", {})
     rviz_environment = rviz.get("environment", {}) if isinstance(rviz, dict) else {}
     if rviz_environment.get("LIBGL_ALWAYS_SOFTWARE") != "1":
-        fail("RViz overlay must force software rendering")
-    if rviz_environment.get("RVIZ") != "true":
-        fail("RViz overlay must enable RVIZ")
+        fail("GUI overlay must force software rendering")
+    if rviz_environment.get("DISPLAY") != (
+        "${DISPLAY:?DISPLAY is required when a GUI is enabled}"
+    ):
+        fail("GUI overlay must require DISPLAY")
+    if "RVIZ" in rviz_environment:
+        fail("shared GUI overlay must not force RVIZ")
+    rviz_mounts = {
+        volume.get("target"): volume
+        for volume in rviz.get("volumes", [])
+        if isinstance(volume, dict)
+    }
+    if "/tmp/.X11-unix" not in rviz_mounts:
+        fail("GUI overlay must mount the X11 socket")
 
 
 def check_dockerfile() -> None:
@@ -425,7 +443,7 @@ def check_rviz_config() -> None:
     package_text = (ROOT / "src/pure_odometry_bringup/package.xml").read_text(
         encoding="utf-8"
     )
-    for dependency in ("robot_state_publisher", "xacro"):
+    for dependency in ("robot_state_publisher", "rqt_robot_monitor", "xacro"):
         if f"<exec_depend>{dependency}</exec_depend>" not in package_text:
             fail(f"pure_odometry_bringup missing visualization dependency: {dependency}")
     for dependency in ("pluginlib", "rviz_common"):
@@ -452,7 +470,7 @@ def check_rviz_config() -> None:
         '"localization_visualization_covariance_z_offset_m"',
     ):
         if token not in launch_text:
-            fail(f"Autoware LSim presentation launch contract missing: {token}")
+            fail(f"Autoware integration presentation contract missing: {token}")
 
 
 def check_container_runner() -> None:
@@ -495,6 +513,12 @@ def check_container_runner() -> None:
         "wait_for_required_nodes",
         "/pointcloud_container",
         "/rviz2",
+        "RQT_ROBOT_MONITOR",
+        "rqt_robot_monitor",
+        "/diagnostic_aggregator",
+        "/diagnostics_agg",
+        "rqt_robot_monitor_node_info.txt",
+        "rqt_robot_monitor_was_alive",
         "RVIZ_SAMPLE_VEHICLE",
         "sample_vehicle_description",
         "/sample_vehicle_body_state_publisher",
@@ -591,7 +615,7 @@ def check_host_wrapper() -> None:
         bag.mkdir()
         output.mkdir()
         environment = dict(os.environ)
-        environment.setdefault("DISPLAY", ":99")
+        environment["DISPLAY"] = ":99"
         result = subprocess.run(
             [
                 str(wrapper),
@@ -609,6 +633,7 @@ def check_host_wrapper() -> None:
                 "--tracking-mode",
                 "scan_to_submap",
                 "--rviz",
+                "--rqt-robot-monitor",
                 "--rviz-sample-vehicle",
             ],
             cwd=ROOT,
@@ -625,6 +650,7 @@ def check_host_wrapper() -> None:
             "Tracking mode:       scan_to_submap",
             "GNSS:                true",
             "compose.rviz.yaml",
+            "RQT Robot Monitor:   true",
             "RViz sample vehicle: true",
             "RViz body Z offset:   -1.66 m",
             "build lsim",
@@ -668,9 +694,101 @@ def check_host_wrapper() -> None:
             "TF policy:           isolate-all",
             "RViz sample vehicle: true",
             "RViz body Z offset:   -1.66 m",
+            "RQT Robot Monitor:   false",
         ):
             if token not in profile_result.stdout:
                 fail(f"Hesai profile dry run missing: {token}")
+
+        gui_cases = (
+            (
+                "headless",
+                [],
+                False,
+                "RViz:                false",
+                "RQT Robot Monitor:   false",
+            ),
+            (
+                "RViz only",
+                ["--rviz"],
+                True,
+                "RViz:                true",
+                "RQT Robot Monitor:   false",
+            ),
+            (
+                "Robot Monitor only",
+                ["--rqt-robot-monitor"],
+                True,
+                "RViz:                false",
+                "RQT Robot Monitor:   true",
+            ),
+            (
+                "both GUI tools",
+                ["--rviz", "--rqt-robot-monitor"],
+                True,
+                "RViz:                true",
+                "RQT Robot Monitor:   true",
+            ),
+        )
+        for case_name, options, expects_overlay, rviz_line, rqt_line in gui_cases:
+            gui_result = subprocess.run(
+                [
+                    str(wrapper),
+                    "--dry-run",
+                    "--bag",
+                    str(bag),
+                    "--output",
+                    str(output),
+                    *options,
+                ],
+                cwd=ROOT,
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            if gui_result.returncode != 0:
+                fail(
+                    f"Docker wrapper {case_name} dry run failed:\n"
+                    + gui_result.stdout
+                    + gui_result.stderr
+                )
+                continue
+            has_overlay = "compose.rviz.yaml" in gui_result.stdout
+            if has_overlay != expects_overlay:
+                fail(
+                    f"Docker wrapper {case_name} overlay selection was "
+                    f"{has_overlay}, expected {expects_overlay}"
+                )
+            for expected_line in (rviz_line, rqt_line):
+                if expected_line not in gui_result.stdout:
+                    fail(
+                        f"Docker wrapper {case_name} dry run missing: "
+                        f"{expected_line}"
+                    )
+
+        no_display_environment = dict(environment)
+        no_display_environment.pop("DISPLAY", None)
+        no_display_result = subprocess.run(
+            [
+                str(wrapper),
+                "--dry-run",
+                "--bag",
+                str(bag),
+                "--output",
+                str(output),
+                "--rqt-robot-monitor",
+            ],
+            cwd=ROOT,
+            env=no_display_environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if (
+            no_display_result.returncode == 0
+            or "require DISPLAY" not in no_display_result.stderr
+        ):
+            fail("--rqt-robot-monitor must fail closed without DISPLAY")
 
         no_rviz_result = subprocess.run(
             [

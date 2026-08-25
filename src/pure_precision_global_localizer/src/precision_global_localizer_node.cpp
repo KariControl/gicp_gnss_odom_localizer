@@ -26,6 +26,7 @@
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <pure_gnss_msgs/msg/fusion_authority.hpp>
 #include <pure_gnss_msgs/msg/gnss_fusion_input.hpp>
 #include <pure_lidar_msgs/msg/submap_correction.hpp>
 #include <pure_lidar_msgs/msg/submap_scan.hpp>
@@ -34,6 +35,7 @@
 
 #include "pure_precision_global_localizer/existing_fusion_anchor_tracker.hpp"
 #include "pure_precision_global_localizer/outage_yaw_guard.hpp"
+#include "pure_precision_global_localizer/pre_clock_event_buffer.hpp"
 #include "pure_precision_global_localizer/precision_anchor_estimator.hpp"
 #include "pure_precision_global_localizer/precision_local_compositor.hpp"
 
@@ -43,6 +45,7 @@ namespace pure_precision_global_localizer
 namespace
 {
 using GnssInput = pure_gnss_msgs::msg::GnssFusionInput;
+using FusionAuthority = pure_gnss_msgs::msg::FusionAuthority;
 using SubmapCorrection = pure_lidar_msgs::msg::SubmapCorrection;
 using SubmapScan = pure_lidar_msgs::msg::SubmapScan;
 
@@ -50,6 +53,7 @@ constexpr std::size_t kScanCacheLimit = 512U;
 constexpr std::size_t kAcceptedKeyLimit = 2048U;
 constexpr std::size_t kPendingCorrectionLimit = 64U;
 constexpr std::size_t kPendingGnssLimit = 64U;
+constexpr std::size_t kPendingFusionAuthorityLimit = 64U;
 constexpr double kPoseContractTolerance = 1.0e-5;
 
 double stampSeconds(const builtin_interfaces::msg::Time & stamp)
@@ -57,10 +61,30 @@ double stampSeconds(const builtin_interfaces::msg::Time & stamp)
   return static_cast<double>(stamp.sec) + 1.0e-9 * static_cast<double>(stamp.nanosec);
 }
 
+std::uint64_t stampNanoseconds(const builtin_interfaces::msg::Time & stamp)
+{
+  return static_cast<std::uint64_t>(stamp.sec) * 1000000000ULL +
+         static_cast<std::uint64_t>(stamp.nanosec);
+}
+
 bool validStamp(const builtin_interfaces::msg::Time & stamp)
 {
   return stamp.sec >= 0 && stamp.nanosec < 1000000000U &&
          (stamp.sec != 0 || stamp.nanosec != 0U);
+}
+
+const char * authorityStateToString(std::uint8_t state)
+{
+  if (state == FusionAuthority::FULL_SE2_HEALTHY) {
+    return "full_se2_healthy";
+  }
+  if (state == FusionAuthority::SOFT_BAD_HOLD) {
+    return "soft_bad_hold";
+  }
+  if (state == FusionAuthority::UNHEALTHY) {
+    return "unhealthy";
+  }
+  return "unknown";
 }
 
 struct ScanKey
@@ -242,6 +266,7 @@ struct ScanRecord
 struct LocalRecord
 {
   double stamp_sec{0.0};
+  std::uint64_t stamp_ns{0U};
   Pose2 pose;
   double z{0.0};
   Eigen::Matrix3d covariance{Eigen::Matrix3d::Identity()};
@@ -258,6 +283,7 @@ struct InterpolatedLocal
 struct ExistingGlobalRecord
 {
   double stamp_sec{0.0};
+  std::uint64_t stamp_ns{0U};
   Pose2 pose;
   double z{0.0};
   Eigen::Matrix3d covariance{Eigen::Matrix3d::Identity()};
@@ -271,6 +297,8 @@ struct InterpolatedGlobal
   Eigen::Matrix3d covariance{Eigen::Matrix3d::Identity()};
   double sync_error_sec{std::numeric_limits<double>::quiet_NaN()};
   std::string mode{"none"};
+  std::uint64_t lower_stamp_ns{0U};
+  std::uint64_t upper_stamp_ns{0U};
 };
 
 struct FusionHealthSnapshot
@@ -278,14 +306,74 @@ struct FusionHealthSnapshot
   bool received{false};
   bool strict_fields_healthy{false};
   double stamp_sec{std::numeric_limits<double>::quiet_NaN()};
+  double source_stamp_sec{std::numeric_limits<double>::quiet_NaN()};
+  double received_stamp_sec{std::numeric_limits<double>::quiet_NaN()};
+  double source_age_sec{std::numeric_limits<double>::quiet_NaN()};
+  double transport_age_sec{std::numeric_limits<double>::quiet_NaN()};
+  std::uint64_t stamp_ns{0U};
+  std::uint64_t source_stamp_ns{0U};
+  std::uint64_t received_stamp_ns{0U};
+  uint64_t session_id{0U};
+  uint64_t sequence{0U};
+  uint8_t authority_state{FusionAuthority::UNHEALTHY};
   uint8_t level{diagnostic_msgs::msg::DiagnosticStatus::STALE};
   std::string recovery_state{"unknown"};
   std::string anchor_valid{"false"};
   std::string position_fused{"false"};
   std::string yaw_fused{"false"};
   std::string last_fix_state{"unknown"};
-  std::string reason{"fusion_diagnostics_unavailable"};
+  std::string authority_reason{"fusion_authority_unavailable"};
+  std::string reason{"fusion_authority_unavailable"};
 };
+
+struct ActivationEvidence
+{
+  bool valid{false};
+  std::uint64_t stamp_ns{0U};
+  std::uint64_t committed_stable_candidate_count{0U};
+  double committed_candidate_delta_rad{std::numeric_limits<double>::quiet_NaN()};
+  std::uint64_t authority_session_id{0U};
+  std::uint64_t authority_sequence{0U};
+  std::uint64_t authority_stamp_ns{0U};
+  std::uint64_t authority_source_stamp_ns{0U};
+  std::uint64_t authority_received_stamp_ns{0U};
+  std::uint64_t existing_global_lower_stamp_ns{0U};
+  std::uint64_t existing_global_upper_stamp_ns{0U};
+  std::uint64_t existing_global_watermark_ns{0U};
+  std::uint64_t existing_global_max_interpolation_gap_ns{0U};
+  std::string existing_global_mode{"none"};
+};
+
+struct FusionAuthorityEndpointEvidence
+{
+  bool valid{false};
+  std::uint64_t session_id{0U};
+  std::uint64_t sequence{0U};
+  std::uint64_t stamp_ns{0U};
+  std::uint64_t source_stamp_ns{0U};
+  std::uint64_t received_stamp_ns{0U};
+};
+
+struct FusionRearmEvidence
+{
+  std::uint64_t reset_stamp_ns{0U};
+  FusionAuthorityEndpointEvidence unhealthy;
+  FusionAuthorityEndpointEvidence healthy;
+};
+
+FusionAuthorityEndpointEvidence endpointEvidence(const FusionHealthSnapshot & snapshot)
+{
+  FusionAuthorityEndpointEvidence evidence;
+  evidence.valid = snapshot.received && snapshot.session_id > 0U && snapshot.sequence > 0U &&
+    snapshot.stamp_ns > 0U && snapshot.source_stamp_ns > 0U &&
+    snapshot.received_stamp_ns > 0U;
+  evidence.session_id = snapshot.session_id;
+  evidence.sequence = snapshot.sequence;
+  evidence.stamp_ns = snapshot.stamp_ns;
+  evidence.source_stamp_ns = snapshot.source_stamp_ns;
+  evidence.received_stamp_ns = snapshot.received_stamp_ns;
+  return evidence;
+}
 
 struct Counters
 {
@@ -302,9 +390,11 @@ struct Counters
   uint64_t existing_global_accepted{0U};
   uint64_t existing_global_rejected{0U};
   uint64_t existing_global_duplicate_stamp{0U};
-  uint64_t fusion_diagnostics_received{0U};
-  uint64_t fusion_diagnostics_accepted{0U};
-  uint64_t fusion_diagnostics_rejected{0U};
+  uint64_t fusion_authority_received{0U};
+  uint64_t fusion_authority_accepted{0U};
+  uint64_t fusion_authority_rejected{0U};
+  uint64_t fusion_authority_deferred{0U};
+  uint64_t fusion_authority_deferred_overflow{0U};
   uint64_t fusion_sync_accepted{0U};
   uint64_t fusion_sync_rejected{0U};
   uint64_t scan_received{0U};
@@ -364,11 +454,10 @@ public:
       std::bind(
         &PrecisionGlobalLocalizerNode::onExistingGlobal, this, std::placeholders::_1),
       subscription_options);
-    fusion_diagnostics_subscription_ =
-      create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
-      fusion_diagnostics_topic_, rclcpp::QoS(50).reliable(),
+    fusion_authority_subscription_ = create_subscription<FusionAuthority>(
+      fusion_authority_topic_, rclcpp::QoS(10).reliable().transient_local(),
       std::bind(
-        &PrecisionGlobalLocalizerNode::onFusionDiagnostics, this, std::placeholders::_1),
+        &PrecisionGlobalLocalizerNode::onFusionAuthority, this, std::placeholders::_1),
       subscription_options);
     if (gnss_position_diagnostics_enabled_ || outage_yaw_guard_enabled_) {
       gnss_subscription_ = create_subscription<GnssInput>(
@@ -406,16 +495,21 @@ private:
   void onSubmapScan(SubmapScan::ConstSharedPtr message);
   void onSubmapCorrection(SubmapCorrection::ConstSharedPtr message);
   void onExistingGlobal(nav_msgs::msg::Odometry::ConstSharedPtr message);
-  void onFusionDiagnostics(diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr message);
+  void onFusionAuthority(FusionAuthority::ConstSharedPtr message);
+  void processFusionAuthorityLocked(
+    FusionAuthority::ConstSharedPtr message, const rclcpp::Time & received_stamp);
+  void processPendingFusionAuthoritiesLocked(const rclcpp::Time & received_stamp);
   void onGnss(GnssInput::ConstSharedPtr message);
   bool processCorrectionLocked(const SubmapCorrection & message, std::string & reason);
   bool processGnssLocked(const GnssInput & message, std::string & reason);
   InterpolatedLocal interpolateLocalLocked(double stamp_sec) const;
-  InterpolatedGlobal interpolateExistingGlobalLocked(double stamp_sec) const;
+  InterpolatedGlobal interpolateExistingGlobalLocked(
+    double stamp_sec, std::uint64_t stamp_ns) const;
   void processFusionCandidatesLocked();
   bool strictFusionHealthLocked(double reference_stamp_sec, std::string & reason);
   void updateFusionHealthLocked(double reference_stamp_sec);
   void forceFusionUnhealthyLocked(double reference_stamp_sec, const std::string & reason);
+  void synchronizeOutageYawAuthorityLocked();
   void processPendingCorrectionsLocked();
   void processPendingGnssLocked();
   nav_msgs::msg::Odometry makePrecisionLocalLocked(
@@ -441,8 +535,7 @@ private:
   std::string submap_correction_topic_;
   std::string gnss_input_topic_;
   std::string existing_global_odom_topic_;
-  std::string fusion_diagnostics_topic_;
-  std::string fusion_diagnostic_status_name_;
+  std::string fusion_authority_topic_;
   std::string precision_local_odom_topic_;
   std::string precision_global_odom_topic_;
   std::string precision_global_pose_topic_;
@@ -470,8 +563,7 @@ private:
   rclcpp::Subscription<SubmapCorrection>::SharedPtr correction_subscription_;
   rclcpp::Subscription<GnssInput>::SharedPtr gnss_subscription_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr existing_global_subscription_;
-  rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
-    fusion_diagnostics_subscription_;
+  rclcpp::Subscription<FusionAuthority>::SharedPtr fusion_authority_subscription_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr local_publisher_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr global_publisher_;
   rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr pose_publisher_;
@@ -487,7 +579,18 @@ private:
   std::deque<LocalRecord> pending_fusion_locals_;
   std::deque<ExistingGlobalRecord> existing_global_history_;
   std::deque<GnssInput::ConstSharedPtr> pending_gnss_;
+  PreClockReceiveGate fusion_authority_receive_clock_gate_;
+  PreClockEventBuffer<FusionAuthority::ConstSharedPtr> pending_fusion_authorities_{
+    kPendingFusionAuthorityLimit};
+  bool fusion_authority_startup_overflow_latched_{false};
   FusionHealthSnapshot fusion_health_;
+  ActivationEvidence activation_evidence_;
+  FusionRearmEvidence fusion_rearm_evidence_;
+  std::set<std::uint64_t> retired_fusion_authority_sessions_;
+  bool fusion_authority_order_received_{false};
+  std::uint64_t active_fusion_authority_session_id_{0U};
+  std::uint64_t active_fusion_authority_sequence_{0U};
+  std::uint64_t active_fusion_authority_stamp_ns_{0U};
   FusionRearmState fusion_rearm_state_;
   double fusion_rearm_reset_stamp_sec_{std::numeric_limits<double>::quiet_NaN()};
   Counters counters_;
@@ -536,9 +639,12 @@ void PrecisionGlobalLocalizerNode::loadParameters()
     "gnss_input_topic", "/localization/gnss_fusion_input");
   existing_global_odom_topic_ = declare_parameter<std::string>(
     "existing_global_odom_topic", "/localization/ekf_odom");
-  fusion_diagnostics_topic_ = declare_parameter<std::string>(
-    "fusion_diagnostics_topic", "/diagnostics");
-  fusion_diagnostic_status_name_ = declare_parameter<std::string>(
+  fusion_authority_topic_ = declare_parameter<std::string>(
+    "fusion_authority_topic", "/localization/gnss_map_odom_fusion_authority");
+  // Retained as accepted compatibility parameters. Machine authority is no
+  // longer inferred from the sampled diagnostic heartbeat.
+  (void)declare_parameter<std::string>("fusion_diagnostics_topic", "/diagnostics");
+  (void)declare_parameter<std::string>(
     "fusion_health.status_name", "localization/gnss_map_odom_fusion");
   precision_local_odom_topic_ = declare_parameter<std::string>(
     "precision_local_odom_topic", "/localization/precision_local_odom");
@@ -739,8 +845,7 @@ void PrecisionGlobalLocalizerNode::validateParameters() const
     [](double value) {return !std::isfinite(value);});
   const bool invalid_topics = raw_odom_topic_.empty() || submap_scan_topic_.empty() ||
     submap_correction_topic_.empty() || gnss_input_topic_.empty() ||
-    existing_global_odom_topic_.empty() || fusion_diagnostics_topic_.empty() ||
-    fusion_diagnostic_status_name_.empty() ||
+    existing_global_odom_topic_.empty() || fusion_authority_topic_.empty() ||
     precision_local_odom_topic_.empty() || precision_global_odom_topic_.empty() ||
     precision_global_pose_topic_.empty() || precision_frame_.empty() || map_frame_.empty() ||
     base_frame_.empty();
@@ -842,6 +947,7 @@ void PrecisionGlobalLocalizerNode::noteStateTransition(
 void PrecisionGlobalLocalizerNode::onSubmapScan(SubmapScan::ConstSharedPtr message)
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  processPendingFusionAuthoritiesLocked(get_clock()->now());
   ++counters_.scan_received;
   Pose2 raw_pose;
   QuaternionInfo raw_pose_quaternion;
@@ -888,6 +994,9 @@ void PrecisionGlobalLocalizerNode::onSubmapScan(SubmapScan::ConstSharedPtr messa
       pending_fusion_locals_.clear();
       existing_global_history_.clear();
       fusion_health_ = FusionHealthSnapshot{};
+      activation_evidence_ = ActivationEvidence{};
+      fusion_rearm_evidence_ = FusionRearmEvidence{};
+      fusion_rearm_evidence_.reset_stamp_ns = stampNanoseconds(message->header.stamp);
       fusion_rearm_state_.required = true;
       fusion_rearm_state_.saw_unhealthy = false;
       fusion_rearm_state_.rearmed = false;
@@ -1088,6 +1197,7 @@ void PrecisionGlobalLocalizerNode::onSubmapCorrection(
   SubmapCorrection::ConstSharedPtr message)
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  processPendingFusionAuthoritiesLocked(get_clock()->now());
   ++counters_.correction_received;
   const ScanKey incoming_key = keyFrom(*message);
   if (incoming_key.session == 0U || incoming_key.generation == 0U ||
@@ -1279,6 +1389,7 @@ void PrecisionGlobalLocalizerNode::onRawOdom(
   nav_msgs::msg::Odometry::ConstSharedPtr message)
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  processPendingFusionAuthoritiesLocked(get_clock()->now());
   ++counters_.raw_received;
   Pose2 raw_pose;
   QuaternionInfo raw_quaternion;
@@ -1318,6 +1429,7 @@ void PrecisionGlobalLocalizerNode::onRawOdom(
   if (!has_latest_local_stamp_ || stamp_sec > latest_local_stamp_sec_) {
     LocalRecord record;
     record.stamp_sec = stamp_sec;
+    record.stamp_ns = stampNanoseconds(message->header.stamp);
     record.pose = local_pose;
     record.z = local.pose.pose.position.z;
     record.covariance = covariance3From(local.pose.covariance);
@@ -1404,19 +1516,19 @@ InterpolatedLocal PrecisionGlobalLocalizerNode::interpolateLocalLocked(
 }
 
 InterpolatedGlobal PrecisionGlobalLocalizerNode::interpolateExistingGlobalLocked(
-  double stamp_sec) const
+  double stamp_sec, std::uint64_t stamp_ns) const
 {
   InterpolatedGlobal result;
-  if (existing_global_history_.empty() || !std::isfinite(stamp_sec)) {
+  if (existing_global_history_.empty() || !std::isfinite(stamp_sec) || stamp_ns == 0U) {
     return result;
   }
   const auto upper = std::lower_bound(
-    existing_global_history_.begin(), existing_global_history_.end(), stamp_sec,
-    [](const ExistingGlobalRecord & record, double stamp) {
-      return record.stamp_sec < stamp;
+    existing_global_history_.begin(), existing_global_history_.end(), stamp_ns,
+    [](const ExistingGlobalRecord & record, std::uint64_t stamp) {
+      return record.stamp_ns < stamp;
     });
   if (upper != existing_global_history_.end() &&
-    std::fabs(upper->stamp_sec - stamp_sec) <= 1.0e-9)
+    upper->stamp_ns == stamp_ns)
   {
     result.valid = true;
     result.pose = upper->pose;
@@ -1424,6 +1536,8 @@ InterpolatedGlobal PrecisionGlobalLocalizerNode::interpolateExistingGlobalLocked
     result.covariance = upper->covariance;
     result.sync_error_sec = 0.0;
     result.mode = "exact";
+    result.lower_stamp_ns = upper->stamp_ns;
+    result.upper_stamp_ns = upper->stamp_ns;
     return result;
   }
   // No causal extrapolation: retain the local sample until a future global
@@ -1432,11 +1546,18 @@ InterpolatedGlobal PrecisionGlobalLocalizerNode::interpolateExistingGlobalLocked
     return result;
   }
   const auto lower = upper - 1;
-  const double interval = upper->stamp_sec - lower->stamp_sec;
-  if (!(interval > 0.0) || interval > fusion_sync_max_interpolation_gap_sec_) {
+  const std::uint64_t interval_ns = upper->stamp_ns - lower->stamp_ns;
+  const std::uint64_t maximum_interval_ns = static_cast<std::uint64_t>(std::llround(
+      fusion_sync_max_interpolation_gap_sec_ * 1.0e9));
+  if (interval_ns == 0U || maximum_interval_ns == 0U || interval_ns > maximum_interval_ns) {
     return result;
   }
-  const double ratio = std::clamp((stamp_sec - lower->stamp_sec) / interval, 0.0, 1.0);
+  // Header stamps are the interpolation contract.  Keep the bracket and gap
+  // decisions in integer nanoseconds so epoch-sized double precision cannot
+  // admit an endpoint pair that the latched evidence correctly rejects.
+  const double ratio = std::clamp(
+    static_cast<double>(stamp_ns - lower->stamp_ns) / static_cast<double>(interval_ns),
+    0.0, 1.0);
   result.valid = true;
   result.pose.x = lower->pose.x + ratio * (upper->pose.x - lower->pose.x);
   result.pose.y = lower->pose.y + ratio * (upper->pose.y - lower->pose.y);
@@ -1445,9 +1566,11 @@ InterpolatedGlobal PrecisionGlobalLocalizerNode::interpolateExistingGlobalLocked
   result.z = lower->z + ratio * (upper->z - lower->z);
   result.covariance = projectCovariancePsd(
     (1.0 - ratio) * lower->covariance + ratio * upper->covariance);
-  result.sync_error_sec = std::min(
-    stamp_sec - lower->stamp_sec, upper->stamp_sec - stamp_sec);
+  result.sync_error_sec = 1.0e-9 * static_cast<double>(std::min(
+      stamp_ns - lower->stamp_ns, upper->stamp_ns - stamp_ns));
   result.mode = "interpolated";
+  result.lower_stamp_ns = lower->stamp_ns;
+  result.upper_stamp_ns = upper->stamp_ns;
   return result;
 }
 
@@ -1456,7 +1579,7 @@ bool PrecisionGlobalLocalizerNode::strictFusionHealthLocked(
 {
   if (!fusion_health_.received) {
     fusion_health_age_sec_ = std::numeric_limits<double>::quiet_NaN();
-    reason = "fusion_diagnostics_unavailable";
+    reason = "fusion_authority_unavailable";
     return false;
   }
   const double now_sec = get_clock()->now().seconds();
@@ -1538,25 +1661,34 @@ void PrecisionGlobalLocalizerNode::updateFusionHealthLocked(double reference_sta
   evaluation.healthy = strictFusionHealthLocked(reference_stamp_sec, reason);
   evaluation.reason = reason;
   evaluation.age_sec = fusion_health_age_sec_;
-  const bool diagnostic_is_post_reset =
+  const bool authority_is_post_reset =
     !fusion_rearm_state_.required ||
-    (std::isfinite(fusion_health_.stamp_sec) &&
-    std::isfinite(fusion_rearm_reset_stamp_sec_) &&
-    fusion_health_.stamp_sec > fusion_rearm_reset_stamp_sec_ + 1.0e-9);
-  if (fusion_rearm_state_.required && !diagnostic_is_post_reset) {
+    (fusion_rearm_evidence_.reset_stamp_ns > 0U &&
+    fusion_health_.stamp_ns > fusion_rearm_evidence_.reset_stamp_ns);
+  if (fusion_rearm_state_.required && !authority_is_post_reset) {
     evaluation.healthy = false;
-    evaluation.reason = "fusion_rearm_pre_reset_diagnostic";
+    evaluation.reason = "fusion_rearm_pre_reset_authority";
   }
   const bool qualifying_unhealthy =
-    diagnostic_is_post_reset && fusion_health_.received &&
+    authority_is_post_reset && fusion_health_.received &&
     !fusion_health_.strict_fields_healthy && reason == fusion_health_.reason;
+  if (fusion_rearm_state_.required && qualifying_unhealthy &&
+    !fusion_rearm_evidence_.unhealthy.valid)
+  {
+    fusion_rearm_evidence_.unhealthy = endpointEvidence(fusion_health_);
+  }
+  const bool rearm_was_required = fusion_rearm_state_.required;
   evaluation = applyExistingFusionRearmGate(
     evaluation, qualifying_unhealthy, fusion_rearm_state_);
   if (!evaluation.healthy) {
     forceFusionUnhealthyLocked(reference_stamp_sec, evaluation.reason);
     return;
   }
+  if (rearm_was_required && !fusion_rearm_state_.required) {
+    fusion_rearm_evidence_.healthy = endpointEvidence(fusion_health_);
+  }
   fusion_anchor_->setFusionHealthy(true, reference_stamp_sec, evaluation.reason);
+  synchronizeOutageYawAuthorityLocked();
 }
 
 void PrecisionGlobalLocalizerNode::forceFusionUnhealthyLocked(
@@ -1577,6 +1709,36 @@ void PrecisionGlobalLocalizerNode::forceFusionUnhealthyLocked(
     frozen_anchor_residual_covariance_ = residual * residual.transpose();
   }
   fusion_anchor_->setFusionHealthy(false, reference_stamp_sec, reason);
+  synchronizeOutageYawAuthorityLocked();
+}
+
+void PrecisionGlobalLocalizerNode::synchronizeOutageYawAuthorityLocked()
+{
+  if (!outage_yaw_guard_enabled_ || !fusion_anchor_->globalOutputReady() ||
+    local_history_.empty())
+  {
+    return;
+  }
+
+  // Typed authority can change in its own callback between two raw odometry
+  // callbacks. Apply that control edge immediately at the latest visible local
+  // endpoint so diagnostics can never report an outage state with TRACKING
+  // authority (or a release state with unhealthy authority). Equal-stamp
+  // advance processes the sequence edge but applies no numerical yaw step.
+  const LocalRecord & local = local_history_.back();
+  const Pose2 nominal_global = compose(fusion_anchor_->appliedAnchor(), local.pose);
+  const bool authority_tracking = fusion_anchor_->fusionHealthy() &&
+    fusion_anchor_->state() == FusionAnchorState::TRACKING;
+  last_outage_yaw_nominal_global_yaw_rad_ = nominal_global.yaw;
+  last_outage_yaw_update_ = outage_yaw_guard_->advance(
+    local.stamp_sec,
+    fusion_anchor_->appliedAnchor().yaw,
+    nominal_global.yaw,
+    authority_tracking);
+  if (last_outage_yaw_update_.valid) {
+    last_outage_yaw_output_global_yaw_rad_ =
+      last_outage_yaw_update_.output_yaw_rad;
+  }
 }
 
 void PrecisionGlobalLocalizerNode::processFusionCandidatesLocked()
@@ -1586,11 +1748,11 @@ void PrecisionGlobalLocalizerNode::processFusionCandidatesLocked()
       return;
     }
     const LocalRecord local = pending_fusion_locals_.front();
-    if (local.stamp_sec > existing_global_history_.back().stamp_sec + 1.0e-9) {
+    if (local.stamp_ns > existing_global_history_.back().stamp_ns) {
       return;
     }
     pending_fusion_locals_.pop_front();
-    if (local.stamp_sec < existing_global_history_.front().stamp_sec - 1.0e-9) {
+    if (local.stamp_ns < existing_global_history_.front().stamp_ns) {
       ++counters_.fusion_sync_rejected;
       last_fusion_sync_reason_ = "local_before_global_history";
       last_fusion_sync_mode_ = "none";
@@ -1598,7 +1760,8 @@ void PrecisionGlobalLocalizerNode::processFusionCandidatesLocked()
       continue;
     }
 
-    const InterpolatedGlobal global = interpolateExistingGlobalLocked(local.stamp_sec);
+    const InterpolatedGlobal global = interpolateExistingGlobalLocked(
+      local.stamp_sec, local.stamp_ns);
     if (!global.valid) {
       ++counters_.fusion_sync_rejected;
       last_fusion_sync_reason_ = "global_interpolation_gap";
@@ -1629,6 +1792,27 @@ void PrecisionGlobalLocalizerNode::processFusionCandidatesLocked()
     // conservatively adds live P uncertainty in publishGlobalLocked().
     candidate.covariance = projectCovariancePsd(global.covariance);
     const FusionAnchorUpdate update = fusion_anchor_->observeCandidate(candidate);
+    if (update.startup_activated) {
+      ActivationEvidence evidence;
+      evidence.valid = true;
+      evidence.stamp_ns = local.stamp_ns;
+      evidence.committed_stable_candidate_count = update.stable_candidate_count;
+      evidence.committed_candidate_delta_rad = update.candidate_yaw_delta_rad;
+      evidence.authority_session_id = fusion_health_.session_id;
+      evidence.authority_sequence = fusion_health_.sequence;
+      evidence.authority_stamp_ns = fusion_health_.stamp_ns;
+      evidence.authority_source_stamp_ns = fusion_health_.source_stamp_ns;
+      evidence.authority_received_stamp_ns = fusion_health_.received_stamp_ns;
+      evidence.existing_global_lower_stamp_ns = global.lower_stamp_ns;
+      evidence.existing_global_upper_stamp_ns = global.upper_stamp_ns;
+      evidence.existing_global_watermark_ns =
+        existing_global_history_.empty() ? 0U : existing_global_history_.back().stamp_ns;
+      evidence.existing_global_max_interpolation_gap_ns =
+        static_cast<std::uint64_t>(std::llround(
+          fusion_sync_max_interpolation_gap_sec_ * 1.0e9));
+      evidence.existing_global_mode = global.mode;
+      activation_evidence_ = evidence;
+    }
     if (update.anchor_frozen) {
       Eigen::Vector3d residual;
       residual << update.frozen_residual_x_m, update.frozen_residual_y_m,
@@ -1655,6 +1839,7 @@ void PrecisionGlobalLocalizerNode::onExistingGlobal(
   nav_msgs::msg::Odometry::ConstSharedPtr message)
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  processPendingFusionAuthoritiesLocked(get_clock()->now());
   ++counters_.existing_global_received;
   Pose2 pose;
   QuaternionInfo quaternion;
@@ -1670,21 +1855,23 @@ void PrecisionGlobalLocalizerNode::onExistingGlobal(
     return;
   }
   const double stamp_sec = stampSeconds(message->header.stamp);
+  const std::uint64_t physical_stamp_ns = stampNanoseconds(message->header.stamp);
   if (!existing_global_history_.empty() &&
-    stamp_sec < existing_global_history_.back().stamp_sec - 1.0e-9)
+    physical_stamp_ns < existing_global_history_.back().stamp_ns)
   {
     ++counters_.existing_global_rejected;
     last_fusion_sync_reason_ = "existing_global_backstep";
     return;
   }
   if (!existing_global_history_.empty() &&
-    std::fabs(stamp_sec - existing_global_history_.back().stamp_sec) <= 1.0e-9)
+    physical_stamp_ns == existing_global_history_.back().stamp_ns)
   {
     ++counters_.existing_global_duplicate_stamp;
     return;
   }
   existing_global_history_.push_back({
-    stamp_sec, pose, message->pose.pose.position.z, covariance});
+    stamp_sec, physical_stamp_ns,
+    pose, message->pose.pose.position.z, covariance});
   ++counters_.existing_global_accepted;
   while (!existing_global_history_.empty() &&
     stamp_sec - existing_global_history_.front().stamp_sec > sync_history_sec_)
@@ -1697,79 +1884,152 @@ void PrecisionGlobalLocalizerNode::onExistingGlobal(
   processFusionCandidatesLocked();
 }
 
-void PrecisionGlobalLocalizerNode::onFusionDiagnostics(
-  diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr message)
+void PrecisionGlobalLocalizerNode::onFusionAuthority(
+  FusionAuthority::ConstSharedPtr message)
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  const diagnostic_msgs::msg::DiagnosticStatus * selected = nullptr;
-  for (const auto & status : message->status) {
-    if (status.name == fusion_diagnostic_status_name_) {
-      if (selected != nullptr) {
-        ++counters_.fusion_diagnostics_rejected;
-        fusion_health_ = FusionHealthSnapshot{};
-        fusion_health_.reason = "duplicate_fusion_status";
-        forceFusionUnhealthyLocked(0.0, fusion_health_.reason);
-        return;
-      }
-      selected = &status;
-    }
-  }
-  if (selected == nullptr) {
+  ++counters_.fusion_authority_received;
+  if (fusion_authority_startup_overflow_latched_) {
+    ++counters_.fusion_authority_rejected;
+    fusion_health_ = FusionHealthSnapshot{};
+    fusion_health_.reason = "fusion_authority_pre_clock_queue_overflow_latched";
+    forceFusionUnhealthyLocked(0.0, fusion_health_.reason);
     return;
   }
-  ++counters_.fusion_diagnostics_received;
-  if (!validStamp(message->header.stamp)) {
-    ++counters_.fusion_diagnostics_rejected;
+  const rclcpp::Time received_stamp = get_clock()->now();
+  if (fusion_authority_receive_clock_gate_.observe(received_stamp.nanoseconds()) ==
+    PreClockReceiveAction::DEFER)
+  {
+    ++counters_.fusion_authority_deferred;
+    const auto evicted = pending_fusion_authorities_.defer(message);
+    if (evicted.has_value()) {
+      ++counters_.fusion_authority_deferred_overflow;
+      fusion_authority_startup_overflow_latched_ = true;
+      const std::size_t rejected_now = pending_fusion_authorities_.size() + 1U;
+      counters_.fusion_authority_rejected += rejected_now;
+      pending_fusion_authorities_.drain(
+        [](const FusionAuthority::ConstSharedPtr &) {});
+      fusion_health_ = FusionHealthSnapshot{};
+      fusion_health_.reason = "fusion_authority_pre_clock_queue_overflow";
+      forceFusionUnhealthyLocked(0.0, fusion_health_.reason);
+    }
+    return;
+  }
+  processPendingFusionAuthoritiesLocked(received_stamp);
+  processFusionAuthorityLocked(message, received_stamp);
+}
+
+void PrecisionGlobalLocalizerNode::processPendingFusionAuthoritiesLocked(
+  const rclcpp::Time & received_stamp)
+{
+  if (fusion_authority_receive_clock_gate_.observe(received_stamp.nanoseconds()) ==
+    PreClockReceiveAction::DEFER)
+  {
+    return;
+  }
+  pending_fusion_authorities_.drain(
+    [this, &received_stamp](const FusionAuthority::ConstSharedPtr & pending) {
+      processFusionAuthorityLocked(pending, received_stamp);
+    });
+}
+
+void PrecisionGlobalLocalizerNode::processFusionAuthorityLocked(
+  FusionAuthority::ConstSharedPtr message, const rclcpp::Time & received_stamp)
+{
+  const bool valid_state =
+    message->state == FusionAuthority::UNHEALTHY ||
+    message->state == FusionAuthority::FULL_SE2_HEALTHY ||
+    message->state == FusionAuthority::SOFT_BAD_HOLD;
+  const bool valid_fix_state =
+    message->last_fix_state == FusionAuthority::FIX_UNKNOWN ||
+    message->last_fix_state == FusionAuthority::FIX_GOOD ||
+    message->last_fix_state == FusionAuthority::FIX_BAD;
+  if (!validStamp(message->header.stamp) || !validStamp(message->source_stamp) ||
+    message->header.frame_id != map_frame_ || message->session_id == 0U ||
+    message->sequence == 0U || !valid_state || !valid_fix_state)
+  {
+    ++counters_.fusion_authority_rejected;
     fusion_health_ = FusionHealthSnapshot{};
-    fusion_health_.reason = "invalid_fusion_diagnostic_stamp";
-    forceFusionUnhealthyLocked(0.0, "invalid_fusion_diagnostic_stamp");
+    fusion_health_.reason = "invalid_fusion_authority_contract";
+    forceFusionUnhealthyLocked(0.0, fusion_health_.reason);
     return;
   }
   const double stamp_sec = stampSeconds(message->header.stamp);
-  if (fusion_health_.received && stamp_sec <= fusion_health_.stamp_sec + 1.0e-9) {
-    ++counters_.fusion_diagnostics_rejected;
-    return;
-  }
-
-  std::map<std::string, std::string> values;
-  for (const auto & value : selected->values) {
-    if (!values.emplace(value.key, value.value).second) {
-      ++counters_.fusion_diagnostics_rejected;
-      fusion_health_ = FusionHealthSnapshot{};
-      fusion_health_.received = true;
-      fusion_health_.stamp_sec = stamp_sec;
-      fusion_health_.reason = "duplicate_fusion_health_key";
-      forceFusionUnhealthyLocked(stamp_sec, "duplicate_fusion_health_key");
-      return;
-    }
-  }
-  constexpr std::array<const char *, 5> required_keys{
-    "recovery.state", "anchor_valid", "recovery.position_fused",
-    "recovery.yaw_fused", "last_fix_state"};
-  if (!std::all_of(
-      required_keys.begin(), required_keys.end(),
-      [&values](const char * key) {return values.count(key) == 1U;}))
-  {
-    ++counters_.fusion_diagnostics_rejected;
+  const double source_stamp_sec = stampSeconds(message->source_stamp);
+  const double received_stamp_sec = received_stamp.seconds();
+  const std::int64_t received_stamp_ns_signed = received_stamp.nanoseconds();
+  const std::uint64_t received_stamp_ns = received_stamp_ns_signed > 0 ?
+    static_cast<std::uint64_t>(received_stamp_ns_signed) : 0U;
+  const FusionAuthorityTimingEvaluation timing = evaluateFusionAuthorityTiming(
+    source_stamp_sec, stamp_sec, received_stamp_sec,
+    fusion_health_max_age_sec_, fusion_health_max_future_skew_sec_);
+  if (!timing.valid) {
+    ++counters_.fusion_authority_rejected;
     fusion_health_ = FusionHealthSnapshot{};
-    fusion_health_.received = true;
-    fusion_health_.stamp_sec = stamp_sec;
-    fusion_health_.reason = "missing_fusion_health_key";
-    forceFusionUnhealthyLocked(stamp_sec, "missing_fusion_health_key");
+    fusion_health_.reason = timing.reason;
+    forceFusionUnhealthyLocked(stamp_sec, fusion_health_.reason);
     return;
   }
+  const FusionAuthorityOrderEvaluation order = evaluateFusionAuthorityOrder(
+    fusion_authority_order_received_, active_fusion_authority_session_id_,
+    active_fusion_authority_sequence_, active_fusion_authority_stamp_ns_,
+    retired_fusion_authority_sessions_.count(message->session_id) != 0U,
+    message->session_id, message->sequence, stampNanoseconds(message->header.stamp));
+  if (!order.accepted) {
+    ++counters_.fusion_authority_rejected;
+    // A replay/backstep is an observed authority-contract violation, not an
+    // absent heartbeat.  Revoke the previously healthy snapshot immediately
+    // so it cannot remain authoritative for fusion_health_max_age_sec_.
+    fusion_health_ = FusionHealthSnapshot{};
+    fusion_health_.stamp_sec = stamp_sec;
+    fusion_health_.source_stamp_sec = source_stamp_sec;
+    fusion_health_.received_stamp_sec = received_stamp_sec;
+    fusion_health_.source_age_sec = timing.source_age_sec;
+    fusion_health_.transport_age_sec = timing.transport_age_sec;
+    fusion_health_.stamp_ns = stampNanoseconds(message->header.stamp);
+    fusion_health_.source_stamp_ns = stampNanoseconds(message->source_stamp);
+    fusion_health_.received_stamp_ns = received_stamp_ns;
+    fusion_health_.session_id = message->session_id;
+    fusion_health_.sequence = message->sequence;
+    fusion_health_.authority_state = message->state;
+    fusion_health_.authority_reason = message->reason;
+    fusion_health_.reason = order.reason;
+    forceFusionUnhealthyLocked(stamp_sec, order.reason);
+    return;
+  }
+  if (fusion_authority_order_received_ &&
+    message->session_id != active_fusion_authority_session_id_)
+  {
+    retired_fusion_authority_sessions_.insert(active_fusion_authority_session_id_);
+  }
+  fusion_authority_order_received_ = true;
+  active_fusion_authority_session_id_ = message->session_id;
+  active_fusion_authority_sequence_ = message->sequence;
+  active_fusion_authority_stamp_ns_ = stampNanoseconds(message->header.stamp);
 
   FusionHealthSnapshot snapshot;
   snapshot.received = true;
   snapshot.stamp_sec = stamp_sec;
-  snapshot.level = selected->level;
-  snapshot.recovery_state = values.at("recovery.state");
-  snapshot.anchor_valid = values.at("anchor_valid");
-  snapshot.position_fused = values.at("recovery.position_fused");
-  snapshot.yaw_fused = values.at("recovery.yaw_fused");
-  snapshot.last_fix_state = values.at("last_fix_state");
+  snapshot.source_stamp_sec = source_stamp_sec;
+  snapshot.received_stamp_sec = received_stamp_sec;
+  snapshot.source_age_sec = timing.source_age_sec;
+  snapshot.transport_age_sec = timing.transport_age_sec;
+  snapshot.stamp_ns = stampNanoseconds(message->header.stamp);
+  snapshot.source_stamp_ns = stampNanoseconds(message->source_stamp);
+  snapshot.received_stamp_ns = received_stamp_ns;
+  snapshot.session_id = message->session_id;
+  snapshot.sequence = message->sequence;
+  snapshot.authority_state = message->state;
+  snapshot.recovery_state = message->recovery_state;
+  snapshot.anchor_valid = message->anchor_valid ? "true" : "false";
+  snapshot.position_fused = message->position_fused ? "true" : "false";
+  snapshot.yaw_fused = message->yaw_fused ? "true" : "false";
+  snapshot.last_fix_state =
+    message->last_fix_state == FusionAuthority::FIX_GOOD ? "good" :
+    message->last_fix_state == FusionAuthority::FIX_BAD ? "bad" : "unknown";
+  snapshot.authority_reason = message->reason;
   ExistingFusionHealthFields fields;
-  fields.level = snapshot.level;
+  fields.authority_state = snapshot.authority_state;
   fields.recovery_state = snapshot.recovery_state;
   fields.anchor_valid = snapshot.anchor_valid;
   fields.position_fused = snapshot.position_fused;
@@ -1777,9 +2037,11 @@ void PrecisionGlobalLocalizerNode::onFusionDiagnostics(
   fields.last_fix_state = snapshot.last_fix_state;
   const FusionHealthEvaluation evaluation = evaluateStrictExistingFusionHealth(fields);
   snapshot.strict_fields_healthy = evaluation.healthy;
+  snapshot.level = evaluation.healthy ? diagnostic_msgs::msg::DiagnosticStatus::OK :
+    diagnostic_msgs::msg::DiagnosticStatus::WARN;
   snapshot.reason = evaluation.reason;
   fusion_health_ = snapshot;
-  ++counters_.fusion_diagnostics_accepted;
+  ++counters_.fusion_authority_accepted;
   updateFusionHealthLocked(stamp_sec);
 }
 
@@ -1973,6 +2235,7 @@ void PrecisionGlobalLocalizerNode::processPendingGnssLocked()
 void PrecisionGlobalLocalizerNode::onGnss(GnssInput::ConstSharedPtr message)
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  processPendingFusionAuthoritiesLocked(get_clock()->now());
   ++counters_.gnss_received;
   last_fix_quality_ = message->fix_quality;
   if (message->heading_valid) {
@@ -2034,8 +2297,10 @@ void PrecisionGlobalLocalizerNode::onGnss(GnssInput::ConstSharedPtr message)
 void PrecisionGlobalLocalizerNode::publishDiagnostics()
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  const rclcpp::Time diagnostic_stamp = get_clock()->now();
+  processPendingFusionAuthoritiesLocked(diagnostic_stamp);
   diagnostic_msgs::msg::DiagnosticArray array;
-  array.header.stamp = now();
+  array.header.stamp = diagnostic_stamp;
   const double diagnostic_stamp_sec = stampSeconds(array.header.stamp);
   if (diagnostic_stamp_sec > 0.0) {
     updateFusionHealthLocked(diagnostic_stamp_sec);
@@ -2109,16 +2374,54 @@ void PrecisionGlobalLocalizerNode::publishDiagnostics()
   addUnsigned("activation.stable_candidate_count", fusion_anchor_->stableCandidateCount());
   addUnsigned(
     "activation.required_candidate_count", fusion_anchor_->requiredStableCandidateCount());
+  add("activation.max_candidate_delta_rad", number(fusion_anchor_config_.stable_max_yaw_rad));
   add("activation.candidate_yaw_rad", number(fusion_anchor_->activationCandidateYaw()));
   add("activation.candidate_delta_rad", number(fusion_anchor_->candidateYawDelta()));
   add("activation.reason", fusion_anchor_->activationReason());
   addUnsigned("activation.epoch", fusion_anchor_->activationEpoch());
   addUnsigned("activation.commit_count", fusion_anchor_->activationCount());
+  add("activation.evidence_valid", activation_evidence_.valid ? "true" : "false");
+  addUnsigned("activation.stamp_ns", activation_evidence_.stamp_ns);
+  addUnsigned(
+    "activation.committed_stable_candidate_count",
+    activation_evidence_.committed_stable_candidate_count);
+  add(
+    "activation.committed_candidate_delta_rad",
+    number(activation_evidence_.committed_candidate_delta_rad));
+  addUnsigned(
+    "activation.authority_session_id", activation_evidence_.authority_session_id);
+  addUnsigned("activation.authority_sequence", activation_evidence_.authority_sequence);
+  addUnsigned("activation.authority_stamp_ns", activation_evidence_.authority_stamp_ns);
+  addUnsigned(
+    "activation.authority_source_stamp_ns", activation_evidence_.authority_source_stamp_ns);
+  addUnsigned(
+    "activation.authority_received_stamp_ns", activation_evidence_.authority_received_stamp_ns);
+  addUnsigned(
+    "activation.existing_global_lower_stamp_ns",
+    activation_evidence_.existing_global_lower_stamp_ns);
+  addUnsigned(
+    "activation.existing_global_upper_stamp_ns",
+    activation_evidence_.existing_global_upper_stamp_ns);
+  addUnsigned(
+    "activation.existing_global_watermark_ns",
+    activation_evidence_.existing_global_watermark_ns);
+  addUnsigned(
+    "activation.existing_global_max_interpolation_gap_ns",
+    activation_evidence_.existing_global_max_interpolation_gap_ns);
+  add("activation.existing_global_mode", activation_evidence_.existing_global_mode);
 
   add("fusion.health.healthy", fusion_anchor_->fusionHealthy() ? "true" : "false");
   add("fusion.health.age_sec", number(fusion_health_age_sec_));
   add("fusion.health.status_stamp_sec", number(fusion_health_.stamp_sec));
   add("fusion.health.level", std::to_string(static_cast<int>(fusion_health_.level)));
+  add("fusion.health.authority_state", authorityStateToString(fusion_health_.authority_state));
+  add("fusion.health.authority_source_stamp_sec", number(fusion_health_.source_stamp_sec));
+  add("fusion.health.authority_received_stamp_sec", number(fusion_health_.received_stamp_sec));
+  add("fusion.health.authority_source_age_sec", number(fusion_health_.source_age_sec));
+  add("fusion.health.authority_transport_age_sec", number(fusion_health_.transport_age_sec));
+  addUnsigned("fusion.health.authority_session_id", fusion_health_.session_id);
+  addUnsigned("fusion.health.authority_sequence", fusion_health_.sequence);
+  add("fusion.health.authority_reason", fusion_health_.authority_reason);
   add("fusion.health.recovery_state", fusion_health_.recovery_state);
   add("fusion.health.anchor_valid", fusion_health_.anchor_valid);
   add("fusion.health.position_fused", fusion_health_.position_fused);
@@ -2131,9 +2434,55 @@ void PrecisionGlobalLocalizerNode::publishDiagnostics()
     fusion_rearm_state_.saw_unhealthy ? "true" : "false");
   add("fusion.health.rearmed", fusion_rearm_state_.rearmed ? "true" : "false");
   add("fusion.health.rearm_reset_stamp_sec", number(fusion_rearm_reset_stamp_sec_));
-  addUnsigned("fusion.health.received", counters_.fusion_diagnostics_received);
-  addUnsigned("fusion.health.accepted", counters_.fusion_diagnostics_accepted);
-  addUnsigned("fusion.health.rejected", counters_.fusion_diagnostics_rejected);
+  addUnsigned("fusion.health.rearm.reset_stamp_ns", fusion_rearm_evidence_.reset_stamp_ns);
+  add(
+    "fusion.health.rearm.unhealthy_evidence_valid",
+    fusion_rearm_evidence_.unhealthy.valid ? "true" : "false");
+  addUnsigned(
+    "fusion.health.rearm.unhealthy_session_id",
+    fusion_rearm_evidence_.unhealthy.session_id);
+  addUnsigned(
+    "fusion.health.rearm.unhealthy_sequence", fusion_rearm_evidence_.unhealthy.sequence);
+  addUnsigned(
+    "fusion.health.rearm.unhealthy_stamp_ns", fusion_rearm_evidence_.unhealthy.stamp_ns);
+  addUnsigned(
+    "fusion.health.rearm.unhealthy_source_stamp_ns",
+    fusion_rearm_evidence_.unhealthy.source_stamp_ns);
+  addUnsigned(
+    "fusion.health.rearm.unhealthy_received_stamp_ns",
+    fusion_rearm_evidence_.unhealthy.received_stamp_ns);
+  add(
+    "fusion.health.rearm.healthy_evidence_valid",
+    fusion_rearm_evidence_.healthy.valid ? "true" : "false");
+  addUnsigned(
+    "fusion.health.rearm.healthy_session_id", fusion_rearm_evidence_.healthy.session_id);
+  addUnsigned(
+    "fusion.health.rearm.healthy_sequence", fusion_rearm_evidence_.healthy.sequence);
+  addUnsigned(
+    "fusion.health.rearm.healthy_stamp_ns", fusion_rearm_evidence_.healthy.stamp_ns);
+  addUnsigned(
+    "fusion.health.rearm.healthy_source_stamp_ns",
+    fusion_rearm_evidence_.healthy.source_stamp_ns);
+  addUnsigned(
+    "fusion.health.rearm.healthy_received_stamp_ns",
+    fusion_rearm_evidence_.healthy.received_stamp_ns);
+  addUnsigned("fusion.health.received", counters_.fusion_authority_received);
+  addUnsigned("fusion.health.accepted", counters_.fusion_authority_accepted);
+  addUnsigned("fusion.health.rejected", counters_.fusion_authority_rejected);
+  addUnsigned("fusion.authority.received", counters_.fusion_authority_received);
+  addUnsigned("fusion.authority.accepted", counters_.fusion_authority_accepted);
+  addUnsigned("fusion.authority.rejected", counters_.fusion_authority_rejected);
+  addUnsigned("fusion.authority.deferred", counters_.fusion_authority_deferred);
+  addUnsigned(
+    "fusion.authority.deferred_overflow",
+    counters_.fusion_authority_deferred_overflow);
+  addUnsigned("fusion.authority.pending", pending_fusion_authorities_.size());
+  add(
+    "fusion.authority.receive_clock_initialized",
+    fusion_authority_receive_clock_gate_.observedPositive() ? "true" : "false");
+  add(
+    "fusion.authority.startup_overflow_latched",
+    fusion_authority_startup_overflow_latched_ ? "true" : "false");
 
   add("fusion.anchor.state", toString(fusion_anchor_->state()));
   addUnsigned("fusion.anchor.candidate_count", fusion_anchor_->stableCandidateCount());
@@ -2172,6 +2521,9 @@ void PrecisionGlobalLocalizerNode::publishDiagnostics()
   add("fusion.sync.existing_global_stamp_sec",
     existing_global_history_.empty() ? "nan" :
     number(existing_global_history_.back().stamp_sec));
+  addUnsigned(
+    "fusion.sync.existing_global_stamp_ns",
+    existing_global_history_.empty() ? 0U : existing_global_history_.back().stamp_ns);
   add("fusion.sync.existing_global_age_sec", number(existing_global_age_sec_));
   add("fusion.sync.last_valid_stamp_sec", number(last_valid_fusion_sync_stamp_sec_));
   add("fusion.sync.last_valid_age_sec", number(valid_fusion_sync_age_sec_));
@@ -2238,6 +2590,9 @@ void PrecisionGlobalLocalizerNode::publishDiagnostics()
     "outage_yaw_guard.rejected_reference_count",
     outage_yaw_guard_->rejectedReferenceCount());
   addUnsigned("outage_yaw_guard.outage_count", outage_yaw_guard_->outageCount());
+  addUnsigned(
+    "outage_yaw_guard.active_reference_epoch",
+    outage_yaw_guard_->activeReferenceEpoch());
   addUnsigned("outage_yaw_guard.recovery_count", outage_yaw_guard_->recoveryCount());
   addUnsigned(
     "outage_yaw_guard.applied_step_count", outage_yaw_guard_->appliedStepCount());

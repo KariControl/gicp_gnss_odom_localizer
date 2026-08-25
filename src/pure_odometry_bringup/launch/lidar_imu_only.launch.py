@@ -8,7 +8,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import ComposableNodeContainer
+from launch_ros.actions import ComposableNodeContainer, Node
 from launch_ros.descriptions import ComposableNode
 
 
@@ -25,9 +25,17 @@ def generate_launch_description():
         "autoware_lsim",
         "empty_params.yaml",
     )
+    default_diagnostic_aggregator_param = os.path.join(
+        get_package_share_directory("pure_odometry_bringup"),
+        "config",
+        "diagnostic_aggregator.yaml",
+    )
 
     use_sim_time = LaunchConfiguration("use_sim_time")
     use_imu_deskew = LaunchConfiguration("use_imu_deskew")
+    launch_diagnostic_aggregator = LaunchConfiguration(
+        "launch_diagnostic_aggregator"
+    )
     points_input_topic = LaunchConfiguration("points_input_topic")
     deskewed_points_topic = LaunchConfiguration("deskewed_points_topic")
     imu_input_topic = LaunchConfiguration("imu_input_topic")
@@ -36,6 +44,7 @@ def generate_launch_description():
     odom_override_param = LaunchConfiguration("odom_override_param")
     odom_aux_override_param = LaunchConfiguration("odom_aux_override_param")
     odom_tuning_override_param = LaunchConfiguration("odom_tuning_override_param")
+    diagnostic_aggregator_param = LaunchConfiguration("diagnostic_aggregator_param")
     log_level = LaunchConfiguration("log_level")
 
     common_extra_arguments = [{"use_intra_process_comms": True}]
@@ -110,11 +119,23 @@ def generate_launch_description():
         output="screen",
         arguments=["--ros-args", "--log-level", log_level],
     )
+    diagnostic_aggregator_node = Node(
+        condition=IfCondition(launch_diagnostic_aggregator),
+        package="diagnostic_aggregator",
+        executable="aggregator_node",
+        name="diagnostic_aggregator",
+        output="screen",
+        parameters=[diagnostic_aggregator_param, {"use_sim_time": use_sim_time}],
+        arguments=["--ros-args", "--log-level", log_level],
+    )
 
     return LaunchDescription(
         [
             DeclareLaunchArgument("use_sim_time", default_value="true"),
             DeclareLaunchArgument("use_imu_deskew", default_value="true"),
+            DeclareLaunchArgument(
+                "launch_diagnostic_aggregator", default_value="false"
+            ),
             DeclareLaunchArgument("points_input_topic", default_value="/points_raw"),
             DeclareLaunchArgument(
                 "deskewed_points_topic",
@@ -132,8 +153,13 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "odom_tuning_override_param", default_value=default_empty_param
             ),
+            DeclareLaunchArgument(
+                "diagnostic_aggregator_param",
+                default_value=default_diagnostic_aggregator_param,
+            ),
             DeclareLaunchArgument("log_level", default_value="info"),
             deskew_container,
             direct_container,
+            diagnostic_aggregator_node,
         ]
     )

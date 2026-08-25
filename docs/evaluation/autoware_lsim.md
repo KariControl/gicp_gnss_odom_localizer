@@ -1,4 +1,4 @@
-# Autoware Logging Simulation Evaluation
+# Autoware Localization-Interface Evaluation
 
 ## Conclusion
 
@@ -94,7 +94,7 @@ hashes, and publication manifest together. The maintainer procedure is in the
 - [Reusable rosbag and Autoware workflow](../rosbag_and_autoware_lsim_evaluation.md)
 - [Docker profile](../../docker/autoware_lsim/README.md)
 - [Docker runner](../../script/run_autoware_lsim_docker.sh)
-- [Autoware Logging Simulation launch](../../src/pure_odometry_bringup/launch/autoware_lsim_localization.launch.py)
+- [Autoware localization-interface launch](../../src/pure_odometry_bringup/launch/autoware_lsim_localization.launch.py)
 - [Hesai RViz configuration](../../src/pure_odometry_bringup/config/autoware_lsim/hesai_rosbag23.rviz)
-- [RViz Compose override](../../docker/autoware_lsim/compose.rviz.yaml)
+- [GUI Compose overlay](../../docker/autoware_lsim/compose.rviz.yaml)
 - [Output-bag validator](../../tools/analyze_autoware_lsim_output.py)

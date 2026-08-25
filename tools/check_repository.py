@@ -364,7 +364,7 @@ def check_required_semantics() -> None:
         expected_assignment = f'"{key}": "false"'
         if expected_assignment not in lsim_launch:
             fail(
-                "localization-only Autoware LSim guard missing: "
+                "localization-only Autoware integration guard missing: "
                 f"{expected_assignment}"
             )
     for token in (
@@ -380,7 +380,7 @@ def check_required_semantics() -> None:
         "fusion_xy_only_recovery",
     ):
         if token not in lsim_launch:
-            fail(f"Autoware LSim launch path missing: {token}")
+            fail(f"Autoware integration launch path missing: {token}")
 
     bringup_launch = (
         ROOT / "src/pure_odometry_bringup/launch/odometry_standalone.launch.py"
@@ -783,12 +783,46 @@ def check_replay_helper() -> None:
             "/recorded/imu:=/imu",
             "/recorded/nmea:=/nmea_sentence",
             "/localization/kinematic_state:=/reference/localization/kinematic_state",
+            "/localization/gnss_map_odom_fusion_authority:="
+            "/reference/localization/gnss_map_odom_fusion_authority",
             "/tf:=/reference/tf",
         ):
             if token not in result.stdout:
                 fail(f"bag replay helper dry run missing: {token}")
         if "--progress-bar-update-rate" in result.stdout:
             fail("bag replay helper uses unsupported --progress-bar-update-rate")
+
+
+def check_hesai_paused_start_handshake() -> None:
+    runner = (ROOT / "script/run_hesai_localization_bag.sh").read_text(
+        encoding="utf-8"
+    )
+    for token in (
+        "--start-paused",
+        "rosbag_paused_start_handshake.py",
+        "/rosbag2_player",
+        "/localization/gnss_map_odom_fusion_authority",
+    ):
+        if token not in runner:
+            fail(f"Hesai paused-start runner contract missing: {token}")
+    if "--delay 2" in runner:
+        fail("Hesai runner still relies on the retired fixed playback delay")
+
+    helper = ROOT / "script/rosbag_paused_start_handshake.py"
+    result = subprocess.run(
+        [sys.executable, "-B", str(helper), "--self-test"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        fail(
+            "rosbag paused-start handshake self-test failed: "
+            + result.stdout
+            + result.stderr
+        )
+
 
 def check_diff_whitespace() -> None:
     # Archives intentionally do not contain .git, so always perform a source-tree
@@ -834,6 +868,7 @@ def main() -> int:
     check_hygiene()
     check_shell()
     check_replay_helper()
+    check_hesai_paused_start_handshake()
     check_diff_whitespace()
     if ERRORS:
         print("Repository checks FAILED", file=sys.stderr)

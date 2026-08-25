@@ -46,6 +46,170 @@ evaluation, and is not a safety-certified localization system. CPU utilization
 and RSS have not yet been measured; CPU-only support is not a claim of low CPU
 load.
 
+## Build
+
+ROS 2 Jazzy on Ubuntu 24.04 is the primary target.
+
+```bash
+git clone --recurse-submodules \
+  https://github.com/KariControl/gicp_gnss_odom_localizer.git
+cd gicp_gnss_odom_localizer
+
+source /opt/ros/jazzy/setup.bash
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+source install/setup.bash
+```
+
+## Quick start
+
+Every terminal must source ROS 2 and `install/setup.bash`. Publish the calibrated
+sensor static transforms before expecting accepted localization output.
+
+The managed Hesai, LiDAR/IMU GLIM, and Docker runners accept
+`--rqt-robot-monitor` to open the aggregated `/diagnostics_agg` view in a
+graphical session. The option is disabled by default so headless and timing
+evaluation runs are unchanged.
+
+### Scan-to-scan mode: LiDAR + IMU local odometry
+
+```bash
+ros2 launch pure_odometry_bringup odometry_container.launch.py \
+  use_gnss:=false \
+  points_input_topic:=/points_raw \
+  imu_input_topic:=/imu
+```
+
+The primary output is `/localization/gyro_lidar_odom` in the `odom` frame.
+
+For rosbag replay, start the estimator with simulated time:
+
+```bash
+ros2 launch pure_odometry_bringup odometry_container.launch.py \
+  use_sim_time:=true \
+  use_gnss:=false \
+  points_input_topic:=/points_raw \
+  imu_input_topic:=/imu
+```
+
+Then use the replay helper in a second sourced terminal:
+
+```bash
+BAG_DIR=/path/to/recording
+POINTS_TOPIC=/recorded/pointcloud
+IMU_TOPIC=/recorded/imu
+
+./script/play_localization_bag.sh \
+  --bag "$BAG_DIR" --points "$POINTS_TOPIC" --imu "$IMU_TOPIC"
+```
+
+The helper isolates recorded dynamic localization TF by default while retaining
+recorded static sensor transforms.
+
+### Scan-to-submap mode: rolling-submap output
+
+Keep the scan-to-scan odometer in `scan_to_scan`, enable only its accepted-scan
+snapshot bridge, and start the overlay in another sourced terminal:
+
+```bash
+ros2 launch pure_odometry_bringup odometry_container.launch.py \
+  use_gnss:=false \
+  odom_override_param:=$(ros2 pkg prefix pure_precision_bringup)/share/pure_precision_bringup/config/submap_snapshot_override.yaml
+
+ros2 launch pure_precision_bringup precision_overlay.launch.py
+```
+
+This adds `/localization/precision_local_odom`; it does not replace or feed back
+into `/localization/gyro_lidar_odom`.
+
+### LiDAR + IMU + GNSS global localization
+
+When the packaged projection matches the deployment's map metadata, launch with
+the calibrated GNSS static TF and no evaluation-origin override:
+
+```bash
+ros2 launch pure_odometry_bringup odometry_container.launch.py \
+  use_gnss:=true
+```
+
+For a different map projection, create a deployment-owned ROS parameter override
+whose projector, datum, origin, and scale match that map's projector metadata;
+do not pass `map_projector_info.yaml` directly as a ROS parameter file.
+
+The principal global output is `/localization/ekf_odom`, with the corresponding
+`map -> odom` TF when TF publication is enabled. See
+[NMEA observation semantics](docs/nmea_heading_and_covariance.md) and
+[GNSS initialization and recovery](docs/gnss_recovery.md) before deployment.
+
+### Optional integration example: Autoware localization-interface integration
+
+Autoware is one possible downstream consumer, not a dependency of the
+localization stack. The optional Docker workflow connects the standard fused
+output to Autoware localization interfaces without requiring a host Autoware
+workspace.
+
+The retained `autoware_lsim` filenames and command names are project-local
+compatibility identifiers, not names of an official Autoware component or
+workflow.
+
+A minimal run is:
+
+```bash
+BAG_DIR=/path/to/recording
+
+./script/run_autoware_lsim_docker.sh \
+  --bag "$BAG_DIR" \
+  --points /recorded/pointcloud \
+  --imu /recorded/imu
+```
+
+See the [Docker guide](docker/autoware_lsim/README.md) for GNSS, sensor profiles,
+RViz, and scan-to-submap options.
+
+For the ROSBAG2/3 presentation view, add `--rviz --rviz-sample-vehicle`. It shows
+the illustrative Autoware Lexus body, a generated line trajectory, live
+pose/yaw/speed and interface/TF/rate/registration/GNSS status in a dedicated
+RViz Displays entry, and a bounded XY-only covariance ellipse in the 3D view.
+The current Hesai profile applies a visual-only `-1.66 m` mesh offset fitted to
+the observed ground. The sample mesh is not evidence of the recorded vehicle
+model or geometry, and the offset is not a sensor-height calibration.
+
+### Replay the public synthetic rosbag
+
+Complete the [build steps](#build) first. Then start the LiDAR/IMU estimator
+from the repository root in terminal 1:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+ros2 launch pure_odometry_bringup lidar_imu_only.launch.py \
+  use_sim_time:=true \
+  use_imu_deskew:=true \
+  points_input_topic:=/points_raw \
+  imu_input_topic:=/imu
+```
+
+Replay the included synthetic rosbag from terminal 2:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+./script/play_localization_bag.sh \
+  --bag data/synthetic_output_pointcloud2 \
+  --points /pandar_points_ex \
+  --imu /sensor/imu/data_raw \
+  --clock-frequency 100 \
+  --tf-policy isolate-dynamic \
+  -- --disable-keyboard-controls \
+  --topics /pandar_points_ex /sensor/imu/data_raw /tf_static
+```
+
+Keep `--tf-policy isolate-dynamic`; `isolate-all` removes the static sensor
+transforms required by the fail-closed deskewer and odometer. The resulting
+local odometry is published on `/localization/gyro_lidar_odom`.
+
 ## Evaluation results
 
 The evaluation uses [GLIM](https://github.com/koide3/glim) as a correlated
@@ -53,19 +217,16 @@ LiDAR/IMU pseudo-reference; it is not independent ground truth. The RMSE values
 compare the estimator output with that pseudo-reference. Representative results
 are summarized below.
 
-The published Hesai primary accuracy result uses exact-initial-pose alignment. Its
-separate startup yaw-safety check uses a fixed legacy-global/GLIM calibration
-window and does not contribute to the primary RMSE values or plots.
+The published Hesai primary accuracy result uses exact-initial-pose alignment.
+Its initialization timing and typed-authority checks are evaluated separately
+and do not contribute to the primary RMSE values or plots.
 
-| Sensor configuration | Demonstrated result | Evaluation target |
-|---|---|---|
-| Velodyne 32-Line + External IMU — LiDAR/IMU-Only (No GNSS) | On the valid 45.991 s prefix, scan-to-submap reduced XY/yaw RMSE from **0.4946 m / 0.3140 deg** to **0.2156 m / 0.1227 deg** | LiDAR/IMU-only local odometry |
-| Livox MID-360 + Internal IMU — LiDAR/IMU-Only (No GNSS) | Tuned rolling scan-to-submap reduced XY/yaw RMSE from **0.6303 m / 2.9064 deg** to **0.2941 m / 0.6024 deg** over 294.099 s | LiDAR/IMU-only local odometry |
-| Hesai 32-Line + IMU + RTK GNSS — Course 2 | Scan-to-submap global XY/yaw RMSE improved over scan-to-scan from **1.7105 m / 2.4647 deg** to **0.5060 m / 1.4484 deg**; GNSS-outage yaw RMSE improved from **2.0770 deg** to **0.7077 deg** | LiDAR/IMU/GNSS local and global localization |
-| Example integration: Autoware localization-interface test — Hesai Course 2 | Current default-projection 1.0x headless replay produced **99.113 Hz** effective state output and **99.5316%** registration acceptance | Autoware localization-interface integration |
-
-Additional private recordings are used for internal regression testing. Their
-identities, measurements, and artifacts are intentionally not published.
+| Sensor | Scope | XY RMSE (scan-to-scan mode) | XY RMSE (submap mode) | Yaw RMSE (scan-to-scan mode) | Yaw RMSE (submap mode) |
+|---|---|---:|---:|---:|---:|
+| Velodyne 32-Line + External IMU (No GNSS) | local | 0.495 m | 0.216 m | 0.314° | 0.123° |
+| MID-360  + Internal IMU (No GNSS) | local | 0.630 m | 0.294 m | 2.906° | 0.602° |
+| Hesai + External IMU + RTK-GNSS | local (current 2026-08-25 profile) | 1.457 m | 0.389 m | 0.917° | 0.792° |
+| Hesai + External IMU + RTK-GNSS | global (current 2026-08-25 profile) | 1.406 m | 0.516 m | 2.099° | 1.568° |
 
 ### Representative plots
 
@@ -73,18 +234,17 @@ identities, measurements, and artifacts are intentionally not published.
 
 [![Velodyne LiDAR and external IMU scan-to-scan and scan-to-submap trajectories](docs/evaluation/assets/velodyne_32line_external_imu/trajectory.png)](docs/evaluation/assets/velodyne_32line_external_imu/trajectory.png)
 
-*Scan-to-scan and scan-to-submap over the accepted 45.991 s continuous prefix.*
+*Scan-to-scan and scan-to-submap.*
 
 **Assessment:** Scan-to-submap met the project's predefined accuracy criteria
-on the accepted 45.991 s prefix, with **0.2156 m XY RMSE** and **0.1227 deg yaw
+over the accepted 45.991 s prefix, with **0.2156 m XY RMSE** and **0.1227 deg yaw
 RMSE**.
 
 #### Livox MID-360 + Internal IMU
 
 [![Livox MID-360 and internal IMU tuned scan-to-scan and rolling scan-to-submap trajectories](docs/evaluation/assets/livox_mid360_internal_imu/trajectory.png)](docs/evaluation/assets/livox_mid360_internal_imu/trajectory.png)
 
-*Tuned scan-to-scan and rolling scan-to-submap over the complete 294.099 s
-evaluation interval.*
+*Tuned scan-to-scan and rolling scan-to-submap.*
 
 **Assessment:** Rolling scan-to-submap passed all predefined acceptance
 criteria over the complete evaluated interval, with **0.2941 m XY RMSE** and
@@ -93,34 +253,44 @@ evaluation.
 
 #### Hesai 32-Line + IMU + RTK GNSS
 
-https://github.com/user-attachments/assets/6ce8b916-13e5-4779-87e9-c0f477a6e14b
-
-[Open the repository-local Hesai Course 2 RViz replay (WebM)](docs/evaluation/assets/autoware_lsim_hesai_course_2/rviz_replay.webm)
+[Open the GitHub-hosted Hesai Course 2 RViz replay](https://github.com/user-attachments/assets/6ce8b916-13e5-4779-87e9-c0f477a6e14b)
 
 The global plots compare the GNSS-anchored **scan-to-scan** and
 **scan-to-submap** outputs.
 
-| Hesai Course 2 global XY error | Hesai Course 2 global yaw error |
-|---|---|
-| [![Hesai 32-Line, IMU, and RTK GNSS Course 2 scan-to-scan and scan-to-submap global XY error during GNSS outage and recovery](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/global_xy_error.png)](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/global_xy_error.png) | [![Hesai 32-Line, IMU, and RTK GNSS Course 2 scan-to-scan and scan-to-submap global yaw error during GNSS outage and recovery](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/global_yaw_error.png)](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/global_yaw_error.png) |
+**Hesai Course 2 global XY error**
 
-*The hatched span marks 117.3 seconds without usable GNSS positioning. The red
-marker shows GNSS returning; the green marker shows global localization
-resuming 5.2 seconds later.*
+[![Hesai 32-Line, IMU, and RTK GNSS Course 2 scan-to-scan and scan-to-submap global XY error during GNSS outage and recovery](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/global_xy_error.png)](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/global_xy_error.png)
 
-**Assessment:** The scan-to-submap global output passed the Course 2 acceptance
-criteria, with **0.5060 m XY RMSE** and **1.4484 deg yaw RMSE**. During the
-evaluated GNSS outage it remained within the predefined limits, and global
-localization resumed 5.2 seconds after usable GNSS positioning returned.
+**Hesai Course 2 global yaw error**
+
+[![Hesai 32-Line, IMU, and RTK GNSS Course 2 scan-to-scan and scan-to-submap global yaw error during GNSS outage and recovery](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/global_yaw_error.png)](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/global_yaw_error.png)
+
+*The hatched span marks the 117.252446 s RTK-Q4-unavailable interval. The red
+marker shows Q4 returning; the green marker shows finite global localization
+resuming 4.147737 s later. The separately evaluated fusion-outage RMSE window
+is 121.500028 s because it follows the fusion-state definition rather than the
+raw Q4-gap boundaries.*
+
+**Assessment:** Across 7,805 exact common global samples, scan-to-submap reduced
+XY/yaw RMSE from **1.406461 m / 2.099877 deg** to
+**0.516555 m / 1.568195 deg**. During the 121.500028 s fusion-outage metric
+window, its XY/yaw RMSE was **0.579715 m / 0.861855 deg**, and finite global
+localization resumed 4.147737 s after RTK-Q4 returned.
 
 The local plots compare **scan-to-scan** with **scan-to-submap** odometry.
 
-| Hesai Course 2 local XY error | Hesai Course 2 local yaw error |
-|---|---|
-| [![Hesai 32-Line, IMU, and RTK GNSS Course 2 scan-to-scan and scan-to-submap local XY error](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/local_xy_error.png)](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/local_xy_error.png) | [![Hesai 32-Line, IMU, and RTK GNSS Course 2 scan-to-scan and scan-to-submap local yaw error](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/local_yaw_error.png)](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/local_yaw_error.png) |
+**Hesai Course 2 local XY error**
 
-**Assessment:** The scan-to-submap local output met the Course 2 accuracy
-criteria, with **0.4785 m XY RMSE** and **0.7390 deg yaw RMSE**.
+[![Hesai 32-Line, IMU, and RTK GNSS Course 2 scan-to-scan and scan-to-submap local XY error](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/local_xy_error.png)](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/local_xy_error.png)
+
+**Hesai Course 2 local yaw error**
+
+[![Hesai 32-Line, IMU, and RTK GNSS Course 2 scan-to-scan and scan-to-submap local yaw error](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/local_yaw_error.png)](docs/evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/local_yaw_error.png)
+
+**Assessment:** Across 8,477 exact common local samples, scan-to-submap reduced
+XY/yaw RMSE from **1.457149 m / 0.917636 deg** to
+**0.389683 m / 0.792790 deg**.
 
 These are dataset-scoped engineering acceptance results. They do not establish
 fitness for safety-critical use or accuracy across other datasets,
@@ -204,159 +374,6 @@ recovery only. It does not establish full-stack integration, closed-loop driving
 planning/control readiness, or safety certification. CPU-only execution was
 demonstrated, but CPU utilization and memory usage were not measured.
 
-## Build
-
-ROS 2 Jazzy on Ubuntu 24.04 is the primary target.
-
-```bash
-git clone --recurse-submodules \
-  https://github.com/KariControl/gicp_gnss_odom_localizer.git
-cd gicp_gnss_odom_localizer
-
-source /opt/ros/jazzy/setup.bash
-rosdep install --from-paths src --ignore-src -r -y
-colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
-source install/setup.bash
-```
-
-## Quick start
-
-Every terminal must source ROS 2 and `install/setup.bash`. Publish the calibrated
-sensor static transforms before expecting accepted localization output.
-
-### Scan-to-scan mode: LiDAR + IMU local odometry
-
-```bash
-ros2 launch pure_odometry_bringup odometry_container.launch.py \
-  use_gnss:=false \
-  points_input_topic:=/points_raw \
-  imu_input_topic:=/imu
-```
-
-The primary output is `/localization/gyro_lidar_odom` in the `odom` frame.
-
-For rosbag replay, start the estimator with simulated time:
-
-```bash
-ros2 launch pure_odometry_bringup odometry_container.launch.py \
-  use_sim_time:=true \
-  use_gnss:=false \
-  points_input_topic:=/points_raw \
-  imu_input_topic:=/imu
-```
-
-Then use the replay helper in a second sourced terminal:
-
-```bash
-BAG_DIR=/path/to/recording
-POINTS_TOPIC=/recorded/pointcloud
-IMU_TOPIC=/recorded/imu
-
-./script/play_localization_bag.sh \
-  --bag "$BAG_DIR" --points "$POINTS_TOPIC" --imu "$IMU_TOPIC"
-```
-
-The helper isolates recorded dynamic localization TF by default while retaining
-recorded static sensor transforms.
-
-### Scan-to-submap mode: rolling-submap output
-
-Keep the scan-to-scan odometer in `scan_to_scan`, enable only its accepted-scan
-snapshot bridge, and start the overlay in another sourced terminal:
-
-```bash
-ros2 launch pure_odometry_bringup odometry_container.launch.py \
-  use_gnss:=false \
-  odom_override_param:=$(ros2 pkg prefix pure_precision_bringup)/share/pure_precision_bringup/config/submap_snapshot_override.yaml
-
-ros2 launch pure_precision_bringup precision_overlay.launch.py
-```
-
-This adds `/localization/precision_local_odom`; it does not replace or feed back
-into `/localization/gyro_lidar_odom`.
-
-### LiDAR + IMU + GNSS global localization
-
-When the packaged projection matches the deployment's map metadata, launch with
-the calibrated GNSS static TF and no evaluation-origin override:
-
-```bash
-ros2 launch pure_odometry_bringup odometry_container.launch.py \
-  use_gnss:=true
-```
-
-For a different map projection, create a deployment-owned ROS parameter override
-whose projector, datum, origin, and scale match that map's projector metadata;
-do not pass `map_projector_info.yaml` directly as a ROS parameter file.
-
-The principal global output is `/localization/ekf_odom`, with the corresponding
-`map -> odom` TF when TF publication is enabled. See
-[NMEA observation semantics](docs/nmea_heading_and_covariance.md) and
-[GNSS initialization and recovery](docs/gnss_recovery.md) before deployment.
-
-### Optional integration example: Autoware localization-interface integration
-
-Autoware is one possible downstream consumer, not a dependency of the
-localization stack. The optional Docker workflow connects the standard fused
-output to Autoware localization interfaces without requiring a host Autoware
-workspace:
-
-```bash
-BAG_DIR=/path/to/recording
-
-./script/run_autoware_lsim_docker.sh \
-  --bag "$BAG_DIR" \
-  --points /recorded/pointcloud \
-  --imu /recorded/imu
-```
-
-See the [Docker guide](docker/autoware_lsim/README.md) for GNSS, sensor profiles,
-RViz, and scan-to-submap options.
-
-For the ROSBAG2/3 presentation view, add `--rviz --rviz-sample-vehicle`. It shows
-the illustrative Autoware Lexus body, a generated line trajectory, live
-pose/yaw/speed and interface/TF/rate/registration/GNSS status in a dedicated
-RViz Displays entry, and a bounded XY-only covariance ellipse in the 3D view.
-The current Hesai profile applies a visual-only `-1.66 m` mesh offset fitted to
-the observed ground. The sample mesh is not evidence of the recorded vehicle
-model or geometry, and the offset is not a sensor-height calibration.
-
-### Replay the public synthetic rosbag
-
-Complete the [build steps](#build) first. Then start the LiDAR/IMU estimator
-from the repository root in terminal 1:
-
-```bash
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
-
-ros2 launch pure_odometry_bringup lidar_imu_only.launch.py \
-  use_sim_time:=true \
-  use_imu_deskew:=true \
-  points_input_topic:=/points_raw \
-  imu_input_topic:=/imu
-```
-
-Replay the included synthetic rosbag from terminal 2:
-
-```bash
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
-
-./script/play_localization_bag.sh \
-  --bag data/synthetic_output_pointcloud2 \
-  --points /pandar_points_ex \
-  --imu /sensor/imu/data_raw \
-  --clock-frequency 100 \
-  --tf-policy isolate-dynamic \
-  -- --disable-keyboard-controls \
-  --topics /pandar_points_ex /sensor/imu/data_raw /tf_static
-```
-
-Keep `--tf-policy isolate-dynamic`; `isolate-all` removes the static sensor
-transforms required by the fail-closed deskewer and odometer. The resulting
-local odometry is published on `/localization/gyro_lidar_odom`.
-
 ## Sensor-to-output flow
 
 ```text
@@ -403,7 +420,7 @@ gates.
 - [NMEA position, covariance, and heading](docs/nmea_heading_and_covariance.md)
 - [GNSS initialization and outage recovery](docs/gnss_recovery.md)
 - [Tuning](docs/tuning.md) and [known limitations](docs/known_limitations.md)
-- [Rosbag and Autoware LSim workflow](docs/rosbag_and_autoware_lsim_evaluation.md)
+- [Rosbag and Autoware localization-interface workflow](docs/rosbag_and_autoware_lsim_evaluation.md)
 - [Changelog and migration notes](CHANGELOG.md#unreleased)
 
 ## Citation and related work

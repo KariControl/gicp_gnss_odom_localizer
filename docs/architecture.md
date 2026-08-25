@@ -63,7 +63,7 @@ pure_odometry_container  (one Linux process, multithreaded executor)
 
 The NMEA conversion node, GNSS map-to-odom fusion node, and diagnostic
 aggregator are ordinary `launch_ros.actions.Node` actions and therefore run as
-separate Linux processes. In the Autoware LSim launch,
+separate Linux processes. In the Autoware integration launch,
 `pure_autoware_localization_adapter` is another separate process, and Autoware
 starts its own processes/containers. All of them may run inside the same Docker
 container, but a Docker container is not the same thing as a ROS 2 component
@@ -150,7 +150,7 @@ wheel topic being present. The odometer does not create a binary LiDAR observabi
 class: Hessian information is used continuously for factor weighting, covariance
 scaling, and diagnostics.
 
-## Autoware logging-simulation interface
+## Autoware localization-interface integration
 
 The optional `pure_autoware_localization_adapter` is outside the estimator core.
 It consumes fused `map -> base_link` odometry and republishes standard Autoware
@@ -167,7 +167,8 @@ pure_autoware_localization_adapter
         `-- map -> base_link TF
 ```
 
-In the localization-only LSim launch, `pure_gnss_map_odom_fusion` keeps publishing
+In the localization-only Autoware integration launch,
+`pure_gnss_map_odom_fusion` keeps publishing
 the fused odometry message but its `map -> odom` TF output is disabled. The
 adapter is the only tested global TF publisher and sends a direct
 `map -> base_link` transform. Without GNSS, `/initialpose` creates the initial

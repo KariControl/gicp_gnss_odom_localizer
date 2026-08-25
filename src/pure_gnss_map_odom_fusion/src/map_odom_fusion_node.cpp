@@ -23,7 +23,36 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr double kUnknownVariance = 1.0e6;
 constexpr double kDisabledVariance = 1.0e12;
 constexpr double kMinimumVariance = 1.0e-9;
-constexpr std::size_t kPublishedStampHistoryLimit = 8192U;
+
+template<typename CallbackT>
+class ScopeExit
+{
+public:
+  explicit ScopeExit(CallbackT callback)
+  : callback_(std::move(callback)) {}
+
+  ScopeExit(const ScopeExit &) = delete;
+  ScopeExit & operator=(const ScopeExit &) = delete;
+
+  ~ScopeExit() noexcept
+  {
+    try {
+      callback_();
+    } catch (...) {
+      // Authority publication is fail-closed at the consumer through its
+      // freshness gate. Never mask the estimator callback's own outcome.
+    }
+  }
+
+private:
+  CallbackT callback_;
+};
+
+template<typename CallbackT>
+ScopeExit<CallbackT> makeScopeExit(CallbackT callback)
+{
+  return ScopeExit<CallbackT>(std::move(callback));
+}
 
 bool quaternionIsValid(const geometry_msgs::msg::Quaternion & quaternion)
 {
@@ -350,6 +379,12 @@ MapOdomFusionNode::MapOdomFusionNode(const rclcpp::NodeOptions & options)
 {
   declareAndLoadParameters();
   validateParameters();
+  authority_session_id_ = static_cast<std::uint64_t>(
+    std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count());
+  if (authority_session_id_ == 0U) {
+    authority_session_id_ = 1U;
+  }
 
   odom_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
     odom_topic_, rclcpp::SensorDataQoS(),
@@ -378,6 +413,8 @@ MapOdomFusionNode::MapOdomFusionNode(const rclcpp::NodeOptions & options)
   pose_publisher_ =
     create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(out_pose_topic_, 10);
   odom_publisher_ = create_publisher<nav_msgs::msg::Odometry>(out_odom_topic_, 10);
+  authority_publisher_ = create_publisher<pure_gnss_msgs::msg::FusionAuthority>(
+    authority_topic_, rclcpp::QoS(10).reliable().transient_local());
   diagnostic_publisher_ =
     create_publisher<diagnostic_msgs::msg::DiagnosticArray>("diagnostics", 10);
 
@@ -412,6 +449,7 @@ void MapOdomFusionNode::declareAndLoadParameters()
   initialpose_topic_ = declare_parameter<std::string>("initialpose_topic", initialpose_topic_);
   out_pose_topic_ = declare_parameter<std::string>("out_pose_topic", out_pose_topic_);
   out_odom_topic_ = declare_parameter<std::string>("out_odom_topic", out_odom_topic_);
+  authority_topic_ = declare_parameter<std::string>("authority_topic", authority_topic_);
 
   publish_tf_ = declare_parameter<bool>("publish_tf", publish_tf_);
   publish_rate_hz_ = declare_parameter<double>("publish_rate_hz", publish_rate_hz_);
@@ -620,7 +658,8 @@ void MapOdomFusionNode::validateParameters() const
 {
   const bool valid =
     !map_frame_.empty() && !odom_frame_.empty() && !base_frame_.empty() &&
-    !odom_topic_.empty() && publish_rate_hz_ > 0.0 && heartbeat_hz_ > 0.0 &&
+    !odom_topic_.empty() && !authority_topic_.empty() &&
+    publish_rate_hz_ > 0.0 && heartbeat_hz_ > 0.0 &&
     odom_buffer_sec_ > 0.0 && odom_timeout_sec_ > 0.0 &&
     odom_max_extrapolate_sec_ >= 0.0 && measurement_max_age_sec_ >= 0.0 &&
     measurement_future_tolerance_sec_ >= 0.0 &&
@@ -2383,6 +2422,13 @@ void MapOdomFusionNode::applyMeasurement(
 
 void MapOdomFusionNode::onOdom(const nav_msgs::msg::Odometry::SharedPtr message)
 {
+  const rclcpp::Time authority_source_stamp(message->header.stamp);
+  const auto authority_on_exit = makeScopeExit(
+    [this, authority_source_stamp]() {
+      publishFusionAuthority(authority_source_stamp, false);
+    });
+  (void)authority_on_exit;
+
   if (message->header.frame_id != odom_frame_) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 5000,
@@ -2452,6 +2498,10 @@ void MapOdomFusionNode::onOdom(const nav_msgs::msg::Odometry::SharedPtr message)
 
   updateRecoveryModeFromClock(sample.stamp);
   resolvePendingMeasurement();
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    latest_completed_odom_stamp_ = sample.stamp;
+  }
   publishFused(sample.stamp, PublicationTrigger::ODOMETRY);
 }
 
@@ -2460,6 +2510,11 @@ void MapOdomFusionNode::onGnssInput(
 {
   const rclcpp::Time header_stamp(message->header.stamp);
   const rclcpp::Time odom_stamp(message->odom.header.stamp);
+  const auto authority_on_exit = makeScopeExit(
+    [this, header_stamp]() {
+      publishFusionAuthority(header_stamp, false);
+    });
+  (void)authority_on_exit;
 
   // Status-only updates may omit odometry, but they still need a real source
   // timestamp. Substituting reception time would hide sensor/transport faults.
@@ -2564,6 +2619,13 @@ void MapOdomFusionNode::onGnssInput(
 void MapOdomFusionNode::onLegacyAnchorPose(
   const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr message)
 {
+  const rclcpp::Time authority_source_stamp(message->header.stamp);
+  const auto authority_on_exit = makeScopeExit(
+    [this, authority_source_stamp]() {
+      publishFusionAuthority(authority_source_stamp, false);
+    });
+  (void)authority_on_exit;
+
   if (message->header.frame_id != map_frame_) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 5000,
@@ -2577,6 +2639,13 @@ void MapOdomFusionNode::onLegacyAnchorPose(
 void MapOdomFusionNode::onInitialPose(
   const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr message)
 {
+  const rclcpp::Time authority_source_stamp(message->header.stamp);
+  const auto authority_on_exit = makeScopeExit(
+    [this, authority_source_stamp]() {
+      publishFusionAuthority(authority_source_stamp, false);
+    });
+  (void)authority_on_exit;
+
   if (message->header.frame_id != map_frame_) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 5000,
@@ -2592,12 +2661,8 @@ void MapOdomFusionNode::publishFused(
 {
   std::lock_guard<std::mutex> publish_lock(publish_mutex_);
   const auto requested_stamp_ns = stamp.nanoseconds();
-  const bool requested_stamp_already_published = std::binary_search(
-    published_stamp_history_ns_.begin(), published_stamp_history_ns_.end(),
-    requested_stamp_ns);
-  const PublicationOrderDecision order = classifyPublicationOrder(
-    requested_stamp_ns, last_published_stamp_.nanoseconds(), trigger,
-    requested_stamp_already_published);
+  const PublicationOrderDecision order = publication_order_tracker_.classify(
+    requested_stamp_ns, trigger);
   if (order == PublicationOrderDecision::DROP_OUT_OF_ORDER_ODOMETRY) {
     out_of_order_publish_drop_count_.fetch_add(1U, std::memory_order_relaxed);
     return;
@@ -2709,21 +2774,107 @@ void MapOdomFusionNode::publishFused(
     transform_broadcaster_->sendTransform(transform);
   }
 
-  last_published_stamp_ = stamp;
-  if (published_stamp_history_ns_.empty() ||
-    published_stamp_history_ns_.back() != requested_stamp_ns)
-  {
-    published_stamp_history_ns_.push_back(requested_stamp_ns);
-    if (published_stamp_history_ns_.size() > kPublishedStampHistoryLimit) {
-      published_stamp_history_ns_.pop_front();
-    }
-  }
+  publication_order_tracker_.commit(requested_stamp_ns);
   (void)last_good_stamp;
 }
 
 void MapOdomFusionNode::onPublishTimer()
 {
-  publishFused(now(), PublicationTrigger::WALL_TIMER);
+  const rclcpp::Time current = now();
+  // Recovery timeout semantics use wall-clock ROS time. Pose/odom/TF output
+  // below remains bounded by the source watermark and cannot inherit now().
+  updateRecoveryModeFromClock(current);
+  publishFusionAuthority(current, false);
+
+  rclcpp::Time latest_completed(0, 0, RCL_ROS_TIME);
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    latest_completed = latest_completed_odom_stamp_;
+  }
+  const std::int64_t source_stamp_ns = wallTimerSourceStamp(
+    current.nanoseconds(), latest_completed.nanoseconds());
+  if (source_stamp_ns <= 0) {
+    return;
+  }
+  publishFused(
+    rclcpp::Time(source_stamp_ns, RCL_ROS_TIME),
+    PublicationTrigger::WALL_TIMER);
+}
+
+void MapOdomFusionNode::publishFusionAuthority(
+  const rclcpp::Time & source_stamp, bool force)
+{
+  using AuthorityMessage = pure_gnss_msgs::msg::FusionAuthority;
+
+  const rclcpp::Time publish_stamp = now();
+  // With use_sim_time, construction can precede the first /clock sample.
+  // Never latch an invalid transient-local authority contract at stamp zero.
+  if (publish_stamp.nanoseconds() <= 0) {
+    return;
+  }
+  AuthorityMessage message;
+  bool should_publish = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    FusionAuthorityInput input;
+    input.pending_measurement = pending_measurement_.has_value();
+    input.anchor_valid = anchor_.has_value();
+    input.recovery_state = recovery_state_;
+    input.rejection_reason = last_rejection_reason_;
+    input.last_fix_good = last_fix_state_ == GnssFixState::GOOD;
+    input.last_fix_bad = last_fix_state_ == GnssFixState::BAD;
+
+    if (!odom_buffer_.empty() && publish_stamp.nanoseconds() > 0) {
+      input.odometry_fresh =
+        std::fabs((publish_stamp - odom_buffer_.back().stamp).seconds()) <= odom_timeout_sec_;
+    }
+    bool live_status_good = false;
+    if (gnss_status_.valid && publish_stamp.nanoseconds() > 0) {
+      live_status_good =
+        std::fabs((publish_stamp - gnss_status_.stamp).seconds()) <= gnss_status_timeout_sec_ &&
+        gnss_status_.status >= gnss_fix_min_status_;
+    }
+    input.live_fix_good = fusionAuthorityLiveFixGood(
+      use_gnss_status_, live_status_good, input.last_fix_good);
+
+    const FusionAuthorityEvaluation evaluation = evaluateFusionAuthority(input);
+    message.header.stamp = publish_stamp;
+    message.header.frame_id = map_frame_;
+    message.source_stamp = source_stamp.nanoseconds() > 0 ? source_stamp : publish_stamp;
+    message.session_id = authority_session_id_;
+    message.state = static_cast<std::uint8_t>(evaluation.state);
+    message.reason = evaluation.reason;
+    message.recovery_state = toString(recovery_state_);
+    message.anchor_valid = input.anchor_valid;
+    message.position_fused = evaluation.position_fused;
+    message.yaw_fused = evaluation.yaw_fused;
+    if (last_fix_state_ == GnssFixState::GOOD) {
+      message.last_fix_state = AuthorityMessage::FIX_GOOD;
+    } else if (last_fix_state_ == GnssFixState::BAD) {
+      message.last_fix_state = AuthorityMessage::FIX_BAD;
+    } else {
+      message.last_fix_state = AuthorityMessage::FIX_UNKNOWN;
+    }
+
+    const bool unchanged = last_authority_message_.has_value() &&
+      last_authority_message_->state == message.state &&
+      last_authority_message_->reason == message.reason &&
+      last_authority_message_->recovery_state == message.recovery_state &&
+      last_authority_message_->anchor_valid == message.anchor_valid &&
+      last_authority_message_->position_fused == message.position_fused &&
+      last_authority_message_->yaw_fused == message.yaw_fused &&
+      last_authority_message_->last_fix_state == message.last_fix_state;
+    should_publish = force || !unchanged;
+    if (should_publish) {
+      message.sequence = ++authority_sequence_;
+      last_authority_message_ = message;
+    }
+  }
+
+  if (should_publish) {
+    authority_publisher_->publish(message);
+  }
 }
 
 void MapOdomFusionNode::publishDiagnostics(
@@ -2768,6 +2919,7 @@ void MapOdomFusionNode::publishDiagnostics(
   double measurement_cov_xy = 0.0;
   double measurement_cov_yaw = 0.0;
   GnssFixState last_fix_state = GnssFixState::UNKNOWN;
+  std::optional<pure_gnss_msgs::msg::FusionAuthority> authority;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     anchor = anchor_;
@@ -2795,6 +2947,7 @@ void MapOdomFusionNode::publishDiagnostics(
     measurement_cov_xy = last_measurement_cov_xy_;
     measurement_cov_yaw = last_measurement_cov_yaw_;
     last_fix_state = last_fix_state_;
+    authority = last_authority_message_;
   }
 
   add("recovery.state", toString(recovery_state));
@@ -2834,6 +2987,14 @@ void MapOdomFusionNode::publishDiagnostics(
   add("last_rejection_reason", rejection_reason);
   add("last_measurement_source", measurement_source);
   add("last_fix_state", fixStateToString(static_cast<int>(last_fix_state)));
+  add("authority.state", authority ?
+    (authority->state == pure_gnss_msgs::msg::FusionAuthority::FULL_SE2_HEALTHY ?
+    "full_se2_healthy" :
+    authority->state == pure_gnss_msgs::msg::FusionAuthority::SOFT_BAD_HOLD ?
+    "soft_bad_hold" : "unhealthy") : "unavailable");
+  add("authority.reason", authority ? authority->reason : "unavailable");
+  add("authority.session_id", authority ? std::to_string(authority->session_id) : "0");
+  add("authority.sequence", authority ? std::to_string(authority->sequence) : "0");
   add("last_innovation_xy_m", std::to_string(innovation_xy));
   add("last_innovation_yaw_rad", std::to_string(innovation_yaw));
   add("last_correction_xy_m", std::to_string(correction_xy));
@@ -2901,6 +3062,11 @@ void MapOdomFusionNode::publishDiagnostics(
 void MapOdomFusionNode::onHeartbeat()
 {
   const rclcpp::Time current = now();
+  const auto authority_on_exit = makeScopeExit(
+    [this, current]() {
+      publishFusionAuthority(current, true);
+    });
+  (void)authority_on_exit;
   updateRecoveryModeFromClock(current);
 
   bool has_anchor = false;

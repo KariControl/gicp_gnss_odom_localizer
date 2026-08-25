@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "pure_gnss_map_odom_fusion/gnss_recovery_controller.hpp"
+#include "pure_gnss_map_odom_fusion/fusion_authority.hpp"
 #include "pure_gnss_map_odom_fusion/publication_order.hpp"
 
 namespace
@@ -50,6 +51,69 @@ std::vector<pure_gnss_map_odom_fusion::RecoveryAlignmentSample> makeTrajectory(
 int main()
 {
   using namespace pure_gnss_map_odom_fusion;
+
+  {
+    require(fusionAuthorityLiveFixGood(false, false, true),
+      "status-disabled deployments derive live authority from the accepted last fix");
+    require(!fusionAuthorityLiveFixGood(true, false, true),
+      "status-enabled deployments remain fail-closed on a bad live status");
+
+    FusionAuthorityInput input;
+    input.odometry_fresh = true;
+    input.anchor_valid = true;
+    input.recovery_state = GnssRecoveryState::TRACKING;
+    input.live_fix_good = true;
+    input.last_fix_good = true;
+    const auto healthy = evaluateFusionAuthority(input);
+    require(
+      healthy.state == FusionAuthorityState::FULL_SE2_HEALTHY &&
+      healthy.position_fused && healthy.yaw_fused,
+      "strict full-SE(2) tracking authorizes downstream anchor updates");
+
+    input.last_fix_good = false;
+    input.last_fix_bad = true;
+    input.rejection_reason = "gnss_soft_bad_within_grace";
+    const auto hold = evaluateFusionAuthority(input);
+    require(
+      hold.state == FusionAuthorityState::SOFT_BAD_HOLD,
+      "soft-bad grace preserves only a hold and is never healthy authority");
+
+    input.live_fix_good = false;
+    const auto hold_with_bad_live_status = evaluateFusionAuthority(input);
+    require(
+      hold_with_bad_live_status.state == FusionAuthorityState::SOFT_BAD_HOLD,
+      "the explicit producer-side soft-bad decision is retained when live status is also bad");
+
+    input.rejection_reason = "gnss_quality_bad";
+    const auto hard_bad = evaluateFusionAuthority(input);
+    require(
+      hard_bad.state == FusionAuthorityState::UNHEALTHY &&
+      hard_bad.reason == "live_gnss_fix_not_good",
+      "a hard-bad fix remains unhealthy rather than becoming a soft hold");
+
+    input.rejection_reason = "none";
+    const auto stale_fix = evaluateFusionAuthority(input);
+    require(
+      stale_fix.state == FusionAuthorityState::UNHEALTHY &&
+      stale_fix.reason == "live_gnss_fix_not_good",
+      "a stale live fix remains unhealthy rather than becoming a soft hold");
+
+    input.live_fix_good = true;
+    input.recovery_state = GnssRecoveryState::TRACKING_XY_ONLY;
+    const auto xy_only = evaluateFusionAuthority(input);
+    require(
+      xy_only.state == FusionAuthorityState::UNHEALTHY &&
+      xy_only.position_fused && !xy_only.yaw_fused,
+      "position-only tracking cannot authorize full-SE(2) precision fusion");
+
+    input.recovery_state = GnssRecoveryState::TRACKING;
+    input.pending_measurement = true;
+    const auto pending = evaluateFusionAuthority(input);
+    require(
+      pending.state == FusionAuthorityState::UNHEALTHY &&
+      pending.reason == "pending_absolute_measurement",
+      "a pending absolute measurement remains fail-closed");
+  }
 
   RecoveryAlignmentConfig config;
   config.min_samples = 5;
@@ -372,14 +436,25 @@ int main()
   }
 
   {
+    require(wallTimerSourceStamp(125, 100) == 100,
+      "a wall timer must remain at the latest completed source stamp");
+    require(wallTimerSourceStamp(90, 100) == 0,
+      "a wall timer must not publish a source stamp ahead of ROS time");
+    require(wallTimerSourceStamp(125, 0) == 0,
+      "a wall timer must wait until one odometry callback has completed");
+
     require(
       classifyPublicationOrder(100, 0, PublicationTrigger::ODOMETRY) ==
       PublicationOrderDecision::PUBLISH,
       "the first odometry publication must be accepted");
     require(
       classifyPublicationOrder(100, 100, PublicationTrigger::WALL_TIMER) ==
-      PublicationOrderDecision::PUBLISH,
-      "same-stamp wall-timer publication remains allowed");
+      PublicationOrderDecision::COALESCE_STALE_WALL_TIMER,
+      "same-stamp wall-timer publication is a harmless retry");
+    require(
+      classifyPublicationOrder(100, 100, PublicationTrigger::ODOMETRY, true) ==
+      PublicationOrderDecision::COALESCE_ALREADY_PUBLISHED_ODOMETRY,
+      "same-stamp odometry is covered rather than published twice");
     require(
       classifyPublicationOrder(99, 100, PublicationTrigger::ODOMETRY) ==
       PublicationOrderDecision::DROP_OUT_OF_ORDER_ODOMETRY,
@@ -396,6 +471,60 @@ int main()
       classifyPublicationOrder(99, 100, PublicationTrigger::WALL_TIMER, true) ==
       PublicationOrderDecision::COALESCE_STALE_WALL_TIMER,
       "wall-timer classification does not borrow odometry coverage semantics");
+
+    // Regression for a real bag race: /clock=125 and a completed source stamp
+    // of 100 must not advance the watermark past a later-delivered stamp 110.
+    const std::int64_t timer_stamp = wallTimerSourceStamp(125, 100);
+    require(
+      classifyPublicationOrder(
+        timer_stamp, 100, PublicationTrigger::WALL_TIMER, true) ==
+      PublicationOrderDecision::COALESCE_STALE_WALL_TIMER,
+      "the source-bounded timer retry must be coalesced");
+    require(
+      classifyPublicationOrder(110, 100, PublicationTrigger::ODOMETRY) ==
+      PublicationOrderDecision::PUBLISH,
+      "the next monotonic source stamp must remain publishable after a timer retry");
+
+    PublicationOrderTracker timer_first(8U);
+    require(
+      timer_first.classify(100, PublicationTrigger::ODOMETRY) ==
+      PublicationOrderDecision::PUBLISH,
+      "the sequencer accepts its first raw source stamp");
+    timer_first.commit(100);
+    const std::int64_t bounded_timer_stamp = wallTimerSourceStamp(125, 100);
+    require(
+      timer_first.classify(bounded_timer_stamp, PublicationTrigger::WALL_TIMER) ==
+      PublicationOrderDecision::COALESCE_STALE_WALL_TIMER,
+      "timer-first scheduling cannot advance the committed watermark");
+    require(timer_first.lastPublishedStamp() == 100 && timer_first.contains(100),
+      "a coalesced timer leaves the exact raw output set unchanged");
+    require(
+      timer_first.classify(110, PublicationTrigger::ODOMETRY) ==
+      PublicationOrderDecision::PUBLISH,
+      "the delayed next raw stamp remains publishable in the stateful sequencer");
+    timer_first.commit(110);
+    require(timer_first.contains(100) && timer_first.contains(110) &&
+      timer_first.lastPublishedStamp() == 110,
+      "timer-first scheduling preserves complete monotonic raw coverage");
+
+    PublicationOrderTracker raw_first(8U);
+    raw_first.commit(100);
+    require(raw_first.classify(110, PublicationTrigger::ODOMETRY) ==
+      PublicationOrderDecision::PUBLISH,
+      "raw-first scheduling accepts the next stamp");
+    raw_first.commit(110);
+    require(
+      raw_first.classify(
+        wallTimerSourceStamp(125, 110), PublicationTrigger::WALL_TIMER) ==
+      PublicationOrderDecision::COALESCE_STALE_WALL_TIMER,
+      "a timer following raw publication is the same harmless retry");
+    require(raw_first.lastPublishedStamp() == 110 && raw_first.contains(100) &&
+      raw_first.contains(110),
+      "raw-first scheduling has the same exact output set");
+    require(
+      raw_first.classify(99, PublicationTrigger::ODOMETRY) ==
+      PublicationOrderDecision::DROP_OUT_OF_ORDER_ODOMETRY,
+      "a genuinely unknown older raw stamp remains a strict defect");
   }
 
   {

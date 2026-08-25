@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Read-only startup safety acceptance prototype for isolated precision bags.
+"""Read-only startup safety acceptance for isolated precision bags.
 
-This prototype intentionally supports the pre-fix bags.  Missing readiness
-keys are a hard failure; a separately labelled legacy-derived activation is
-reported only to prove that the proposed gates detect the prior unsafe output.
+Activation is proven from evidence latched by the producer at commit time and
+an exact typed fusion-authority event.  Live diagnostic health values are not
+accepted as historical evidence for activation.
 """
 
 from __future__ import annotations
@@ -25,7 +25,9 @@ EXISTING = "/localization/ekf_odom"
 LOCAL = "/localization/precision_local_odom"
 GLOBAL = "/localization/precision_global_odom"
 GLOBAL_POSE = "/localization/precision_global_pose"
-ACTIVATION_SERIALIZATION_TOLERANCE_NS = 20_000_000
+# Kept as a public compatibility constant.  The committed activation stamp is
+# serialized as an integer nanosecond value, so no rounding tolerance applies.
+ACTIVATION_SERIALIZATION_TOLERANCE_NS = 0
 CALIBRATION_MAXIMUM_INTERPOLATION_GAP_SEC = 0.1
 CALIBRATION_ASSOCIATION = (
     "GLIM reference timestamps inside the inclusive explicit window; "
@@ -129,15 +131,19 @@ def startup_contract(calibration: dict[str, Any]) -> dict[str, Any]:
         "readiness": "position_initialized && yaw_publishable",
         "candidate_count": 3,
         "candidate_delta_max_rad": 0.08,
-        "first_ready_anchor_lag_max_rad": 0.02,
-        "activation_stamp_serialization_tolerance_sec": 0.02,
+        "first_output_activation_yaw_application_max_rad": 0.02,
+        "activation_stamp_serialization_tolerance_sec": 0.0,
+        "activation_timestamp": "producer-latched integer nanoseconds",
         "first_publish_rule": "exactly the next unique raw stamp after activation",
         "first_global_delay_max_sec": 25.0,
         "absolute_yaw_safety_max_deg": 10.0,
         "first_legacy_global_yaw_difference_max_deg": 3.0,
         "alignment": "speed legacy-global calibration yaw offset frozen for GLIM",
         "calibration": dict(calibration),
-        "authority": "existing fusion only; position-only GNSS fallback disabled",
+        "authority": (
+            "exact producer-latched typed FULL_SE2_HEALTHY endpoint; existing "
+            "fusion only; position-only GNSS fallback disabled"
+        ),
         "session_rearm": (
             "fresh explicit unhealthy/non-TRACKING status, then fresh strict TRACKING; "
             "stale/unavailable alone never qualifies"
@@ -167,7 +173,7 @@ def interpolate_one(trajectory: Any, stamp_ns: int) -> tuple[np.ndarray, float] 
 def activation_raw_successor(
     raw_stamps: Any, activation_ns: int, tolerance_ns: int
 ) -> tuple[int | None, int | None]:
-    """Resolve a rounded diagnostic activation stamp and its next raw sample."""
+    """Resolve the exact committed activation stamp and its next raw sample."""
     ordered = sorted(set(int(value) for value in raw_stamps if int(value) > 0))
     candidates = [
         (abs(value - activation_ns), value)
@@ -216,6 +222,70 @@ def read_output_streams(repo_eval: Any, bag: Path) -> dict[str, list[dict[str, A
     return result
 
 
+def read_activation_evidence_streams(
+    repo_eval: Any, validator: Any, bag: Path
+) -> dict[str, Any]:
+    """Read exact typed authority, valid G endpoints, and odom-session resets."""
+    _, deserialize_message, get_message = repo_eval.import_ros()
+    reader = repo_eval.open_reader(bag)
+    types = {item.name: item.type for item in reader.get_all_topics_and_types()}
+    authority_topic = validator.TOPIC_AUTHORITY
+    existing_topic = validator.TOPIC_EXISTING
+    scan_topic = validator.TOPIC_SCAN
+    missing = {authority_topic, existing_topic, scan_topic} - set(types)
+    if missing:
+        raise RuntimeError(
+            f"startup activation evidence topics missing: {sorted(missing)}"
+        )
+    if types[authority_topic] != validator.TYPE_AUTHORITY:
+        raise RuntimeError(
+            "startup fusion authority has unexpected type: "
+            f"expected={validator.TYPE_AUTHORITY} actual={types[authority_topic]}"
+        )
+    classes = {
+        authority_topic: get_message(types[authority_topic]),
+        existing_topic: get_message(types[existing_topic]),
+        scan_topic: get_message(types[scan_topic]),
+    }
+    authority_records: list[dict[str, Any]] = []
+    existing_global_records: list[tuple[int, Any]] = []
+    existing_global_stamps: set[int] = set()
+    session_reset_stamps: set[int] = set()
+    prior_scan_session: int | None = None
+    while reader.has_next():
+        topic, serialized, record_ns = reader.read_next()
+        if topic not in classes:
+            continue
+        message = deserialize_message(serialized, classes[topic])
+        if topic == authority_topic:
+            authority_records.append(
+                validator.fusion_authority_record(record_ns, message)
+            )
+        elif topic == existing_topic:
+            existing_global_records.append((int(record_ns), message))
+            physical_stamp_ns = validator.stamp_ns(message.header.stamp)
+            if validator.existing_global_contract_valid(message):
+                existing_global_stamps.add(physical_stamp_ns)
+        else:
+            session = int(message.odom_session_id)
+            physical_stamp_ns = validator.stamp_ns(message.header.stamp)
+            if (
+                prior_scan_session is not None
+                and session != prior_scan_session
+                and physical_stamp_ns > 0
+            ):
+                session_reset_stamps.add(physical_stamp_ns)
+            prior_scan_session = session
+    return {
+        "authority_records": authority_records,
+        "existing_global_stamps": existing_global_stamps,
+        "existing_global_stream_contract": (
+            validator.existing_global_prefix_accounting(existing_global_records)
+        ),
+        "session_reset_stamps": session_reset_stamps,
+    }
+
+
 def diagnostic_activation(diagnostics: list[dict[str, Any]]) -> dict[str, Any]:
     required = {
         "position_initialized",
@@ -225,41 +295,52 @@ def diagnostic_activation(diagnostics: list[dict[str, Any]]) -> dict[str, Any]:
         "anchor.initialized",
         "anchor.yaw_observed",
         "anchor.yaw_publishable",
-        "activation.stamp_sec",
-        "activation.stable_candidate_count",
         "activation.required_candidate_count",
+        "activation.max_candidate_delta_rad",
         "activation.reason",
         "activation.epoch",
         "activation.commit_count",
         "activation.candidate_yaw_rad",
-        "activation.candidate_delta_rad",
-        "anchor.correction_lag.yaw_rad",
+        "activation.evidence_valid",
+        "activation.stamp_ns",
+        "activation.committed_stable_candidate_count",
+        "activation.committed_candidate_delta_rad",
+        "activation.authority_session_id",
+        "activation.authority_sequence",
+        "activation.authority_stamp_ns",
+        "activation.authority_source_stamp_ns",
+        "activation.authority_received_stamp_ns",
+        "activation.existing_global_lower_stamp_ns",
+        "activation.existing_global_upper_stamp_ns",
+        "activation.existing_global_watermark_ns",
+        "activation.existing_global_max_interpolation_gap_ns",
+        "activation.existing_global_mode",
         "publish.global_suppressed_not_ready",
         "publish.global_suppressed_activation_watermark",
         "publish.global",
         "anchor.source",
-        "fusion.health.healthy",
-        "fusion.health.age_sec",
-        "fusion.health.status_stamp_sec",
-        "fusion.health.level",
-        "fusion.health.recovery_state",
-        "fusion.health.anchor_valid",
-        "fusion.health.position_fused",
-        "fusion.health.yaw_fused",
-        "fusion.health.last_fix_state",
-        "fusion.health.reason",
         "fusion.health.rearm_required",
         "fusion.health.rearm_saw_unhealthy",
         "fusion.health.rearmed",
         "fusion.health.rearm_reset_stamp_sec",
+        "fusion.health.rearm.reset_stamp_ns",
+        "fusion.health.rearm.unhealthy_evidence_valid",
+        "fusion.health.rearm.unhealthy_session_id",
+        "fusion.health.rearm.unhealthy_sequence",
+        "fusion.health.rearm.unhealthy_stamp_ns",
+        "fusion.health.rearm.unhealthy_source_stamp_ns",
+        "fusion.health.rearm.unhealthy_received_stamp_ns",
+        "fusion.health.rearm.healthy_evidence_valid",
+        "fusion.health.rearm.healthy_session_id",
+        "fusion.health.rearm.healthy_sequence",
+        "fusion.health.rearm.healthy_stamp_ns",
+        "fusion.health.rearm.healthy_source_stamp_ns",
+        "fusion.health.rearm.healthy_received_stamp_ns",
         "fusion.anchor.state",
         "fusion.anchor.frozen_residual_variance_x_m2",
         "fusion.anchor.frozen_residual_variance_y_m2",
         "fusion.anchor.frozen_residual_variance_yaw_rad2",
-        "fusion.sync.existing_global_stamp_sec",
-        "fusion.sync.existing_global_age_sec",
-        "fusion.sync.last_valid_stamp_sec",
-        "fusion.sync.last_valid_age_sec",
+        "fusion.sync.existing_global_stamp_ns",
         "local_correction.odom_session_resets",
         "fallback.gnss_position_enabled",
     }
@@ -275,9 +356,12 @@ def diagnostic_activation(diagnostics: list[dict[str, Any]]) -> dict[str, Any]:
     activation = ready[0] if ready else None
     activation_ns = None
     if activation is not None:
-        value = float(activation["values"].get("activation.stamp_sec", "nan"))
-        if math.isfinite(value) and value > 0.0:
-            activation_ns = int(round(value * 1.0e9))
+        try:
+            value = int(activation["values"].get("activation.stamp_ns", "0"))
+        except (TypeError, ValueError):
+            value = 0
+        if value > 0:
+            activation_ns = value
     return {
         "required_keys": sorted(required),
         "missing_keys": missing,
@@ -287,171 +371,41 @@ def diagnostic_activation(diagnostics: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def diagnostic_transition_contract(diagnostics: list[dict[str, Any]]) -> dict[str, Any]:
-    """Validate readiness as a monotonic, internally exact per-epoch state."""
-    errors: list[str] = []
-    by_epoch: dict[int, list[dict[str, Any]]] = {}
-    transitions: list[dict[str, Any]] = []
-    for item in diagnostics:
-        values = item["values"]
-        try:
-            epoch = int(values["activation.epoch"])
-        except (KeyError, ValueError):
-            continue
-        position = true_value(values.get("position_initialized", "false"))
-        position_fused = true_value(values.get("position_fused", "false"))
-        yaw = true_value(values.get("yaw_publishable", "false"))
-        anchor_initialized = true_value(values.get("anchor.initialized", "false"))
-        anchor_yaw_observed = true_value(
-            values.get("anchor.yaw_observed", "false")
-        )
-        anchor_yaw = true_value(values.get("anchor.yaw_publishable", "false"))
-        ready = true_value(values.get("global_output_ready", "false"))
-        state = values.get("state", "")
-        if not (
-            ready == position == position_fused == yaw == anchor_initialized
-            == anchor_yaw_observed == anchor_yaw
-        ):
-            errors.append(f"logical readiness mismatch at {item['stamp_ns']}")
-        if not ready:
-            if int(item["level"]) != 1:
-                errors.append(f"pre-ready state is not WARN at {item['stamp_ns']}")
-            if state in ("TRACKING_SE2", "TRACKING"):
-                errors.append(f"tracking state before readiness at {item['stamp_ns']}")
-            allowed_messages = (
-                "waiting_for_first_usable_gnss_position",
-                "waiting_for_stable_absolute_yaw",
-                "gnss_outage_before_yaw_activation",
-                "waiting_for_healthy_existing_fusion",
-                "stabilizing_existing_fusion_startup",
-            )
-            if item.get("message") not in allowed_messages:
-                errors.append(f"unexpected pre-ready reason at {item['stamp_ns']}")
-        if ready and state not in (
-            "TRACKING_SE2",
-            "HOLD_SOFT_GAP",
-            "OUTAGE",
-            "TRACKING",
-            "FROZEN",
-            "STABILIZING_RECOVERY",
-        ):
-            errors.append(f"unexpected ready state {state!r} at {item['stamp_ns']}")
-        by_epoch.setdefault(epoch, []).append(item)
-
-    previous_epoch: int | None = None
-    for epoch, items in sorted(by_epoch.items()):
-        if previous_epoch is not None and epoch != previous_epoch + 1:
-            errors.append(f"activation epoch jump {previous_epoch}->{epoch}")
-        previous_epoch = epoch
-        ready_values = [
-            true_value(item["values"].get("global_output_ready", "false"))
-            for item in items
-        ]
-        if not ready_values or ready_values[0]:
-            errors.append(f"epoch {epoch} lacks an observed pre-ready diagnostic")
-            continue
-        transition_indices = [
-            index for index in range(1, len(ready_values))
-            if ready_values[index] != ready_values[index - 1]
-        ]
-        if len(transition_indices) != 1 or not ready_values[-1]:
-            errors.append(
-                f"epoch {epoch} readiness transitions={transition_indices} final={ready_values[-1]}"
-            )
-            continue
-        index = transition_indices[0]
-        first_ready = items[index]
-        first_values = first_ready["values"]
-        try:
-            stable = int(first_values["activation.stable_candidate_count"])
-            required = int(first_values["activation.required_candidate_count"])
-            commit = int(first_values["activation.commit_count"])
-            pre_commit = int(items[index - 1]["values"]["activation.commit_count"])
-            candidate_yaw = float(first_values["activation.candidate_yaw_rad"])
-            candidate_delta = float(first_values["activation.candidate_delta_rad"])
-            health_age = float(first_values["fusion.health.age_sec"])
-            existing_global_stamp = float(
-                first_values["fusion.sync.existing_global_stamp_sec"]
-            )
-            existing_global_age = float(
-                first_values["fusion.sync.existing_global_age_sec"]
-            )
-            last_valid_stamp = float(
-                first_values["fusion.sync.last_valid_stamp_sec"]
-            )
-            last_valid_age = float(first_values["fusion.sync.last_valid_age_sec"])
-        except (KeyError, ValueError):
-            errors.append(f"epoch {epoch} activation counters malformed")
-            continue
-        if (
-            required != 3
-            or stable < required
-            or commit != pre_commit + 1
-            or not math.isfinite(candidate_yaw)
-            or not math.isfinite(candidate_delta)
-            or not 0.0 <= candidate_delta <= 0.08
-        ):
-            errors.append(
-                f"epoch {epoch} activation counters stable={stable} required={required} "
-                f"commit={pre_commit}->{commit} delta={candidate_delta}"
-            )
-        if first_values.get("activation.reason") not in (
-            "stable_yaw_activated",
-            "existing_fusion_stable_activated",
-        ):
-            errors.append(
-                f"epoch {epoch} activation reason={first_values.get('activation.reason')!r}"
-            )
-        strict_health = (
-            first_values.get("anchor.source") == "existing_fusion"
-            and first_values.get("fallback.gnss_position_enabled") == "false"
-            and first_values.get("fusion.health.healthy") == "true"
-            and first_values.get("fusion.health.level") == "0"
-            and first_values.get("fusion.health.recovery_state") == "tracking"
-            and first_values.get("fusion.health.anchor_valid") == "true"
-            and first_values.get("fusion.health.position_fused") == "true"
-            and first_values.get("fusion.health.yaw_fused") == "true"
-            and first_values.get("fusion.health.last_fix_state") == "good"
-            and first_values.get("fusion.health.reason")
-            == "strict_fusion_health_ok"
-            and math.isfinite(health_age)
-            and -0.25 <= health_age <= 1.5
-            and math.isfinite(existing_global_stamp)
-            and existing_global_stamp > 0.0
-            and math.isfinite(existing_global_age)
-            and -0.05 <= existing_global_age <= 0.25
-            and math.isfinite(last_valid_stamp)
-            and last_valid_stamp > 0.0
-            and math.isfinite(last_valid_age)
-            and -0.05 <= last_valid_age <= 0.50
-            and first_values.get("fusion.health.rearm_required") == "false"
-        )
-        if not strict_health:
-            errors.append(
-                f"epoch {epoch} activation lacks strict existing-fusion health "
-                f"health_age={health_age} existing_age={existing_global_age} "
-                f"last_valid_age={last_valid_age}"
-            )
-        pre_ready_publish = {
-            item["values"].get("publish.global") for item in items[:index]
+def diagnostic_transition_contract(
+    diagnostics: list[dict[str, Any]],
+    authority_records: list[dict[str, Any]] | None = None,
+    existing_global_stamps: set[int] | None = None,
+    validator: Any | None = None,
+) -> dict[str, Any]:
+    """Validate readiness using the shared committed-evidence contract."""
+    epochs = sorted({
+        int(item["values"]["activation.epoch"])
+        for item in diagnostics
+        if str(item["values"].get("activation.epoch", "")).isdigit()
+    })
+    if authority_records is None or existing_global_stamps is None:
+        return {
+            "valid": False,
+            "epochs": epochs,
+            "transitions": [],
+            "errors": [
+                "typed fusion-authority records and existing-global stamps "
+                "are required for committed activation evidence"
+            ],
         }
-        if len(pre_ready_publish) != 1:
-            errors.append(f"epoch {epoch} publish.global changed before readiness")
-        transitions.append(
-            {
-                "epoch": epoch,
-                "first_ready_diagnostic_stamp_ns": int(first_ready["stamp_ns"]),
-                "activation_stamp_sec": first_values.get("activation.stamp_sec"),
-                "stable_candidate_count": stable,
-                "required_candidate_count": required,
-                "commit_count": commit,
-            }
+    if validator is None:
+        validator = load(
+            "startup_precision_validator_contract",
+            Path(__file__).with_name("validate_precision_bag.py"),
         )
+    valid, transitions, errors = validator.startup_transition_contract(
+        diagnostics, authority_records, existing_global_stamps
+    )
     return {
-        "valid": bool(by_epoch) and not errors,
-        "epochs": sorted(by_epoch),
+        "valid": valid,
+        "epochs": epochs,
         "transitions": transitions,
-        "errors": errors[:20],
+        "errors": errors,
     }
 
 
@@ -509,6 +463,20 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     speed = read_pose_stamps(repo_eval, args.speed_bag, canonical, False)
     precision = read_pose_stamps(repo_eval, args.precision_bag, canonical, True)
     output_streams = read_output_streams(repo_eval, args.precision_bag)
+    activation_evidence_streams = read_activation_evidence_streams(
+        repo_eval, validator, args.precision_bag
+    )
+    authority_records = activation_evidence_streams["authority_records"]
+    existing_global_stamps = activation_evidence_streams[
+        "existing_global_stamps"
+    ]
+    existing_global_stream_contract = activation_evidence_streams[
+        "existing_global_stream_contract"
+    ]
+    session_reset_stamps = activation_evidence_streams["session_reset_stamps"]
+    authority_stream_contract = validator.fusion_authority_prefix_accounting(
+        authority_records
+    )
     reference = canonical.read_glim_trajectory(args.glim_trajectory)
 
     calibration_reference, calibration = common_yaw_series(
@@ -592,7 +560,10 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     first_global_ns = int(first_global_record["stamp_ns"])
     activation = diagnostic_activation(precision["precision_diagnostics"])
     transition_contract = diagnostic_transition_contract(
-        precision["precision_diagnostics"]
+        precision["precision_diagnostics"],
+        authority_records,
+        existing_global_stamps,
+        validator,
     )
     activation_ns = activation["activation_ns"]
     activation_raw_ns, expected_first_global_ns = (
@@ -601,15 +572,15 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         else activation_raw_successor(
             raw.stamp_ns,
             activation_ns,
-            ACTIVATION_SERIALIZATION_TOLERANCE_NS,
+            0,
         )
     )
     legacy_activation = legacy_derived_activation(precision["precision_diagnostics"])
     freeze_valid, freeze_groups, freeze_errors = validator.fusion_anchor_freeze_contract(
-        precision["precision_diagnostics"]
+        precision["precision_diagnostics"], authority_records
     )
     rearm_valid, rearm_summary, rearm_errors = validator.fusion_rearm_contract(
-        precision["precision_diagnostics"]
+        precision["precision_diagnostics"], authority_records, session_reset_stamps
     )
 
     first_xy = np.asarray([first_global_record["x"], first_global_record["y"]])
@@ -640,10 +611,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     global_stamps = [item["stamp_ns"] for item in full_global]
     global_pose_stamps = [item["stamp_ns"] for item in output_streams[GLOBAL_POSE]]
     first_global_pose_ns = global_pose_stamps[0] if global_pose_stamps else None
-    activation_lower_bound_ns = (
-        None if activation_ns is None else
-        activation_ns - ACTIVATION_SERIALIZATION_TOLERANCE_NS
-    )
+    activation_lower_bound_ns = activation_ns
     before_ready_odom = None if activation_lower_bound_ns is None else sum(
         stamp < activation_lower_bound_ns for stamp in global_stamps
     )
@@ -651,68 +619,184 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         stamp < activation_lower_bound_ns for stamp in global_pose_stamps
     )
     first_ready_diag = activation["first_ready_diagnostic"]
-    first_lag = None
-    stable_count = None
+    committed_stable_count = None
     required_count = None
+    committed_candidate_delta = None
+    maximum_candidate_delta = None
     activation_reason = None
     candidate_yaw = None
     first_output_anchor_yaw_error = None
     first_ready_existing_fusion_authority = False
-    first_ready_strict_fusion_health = False
-    first_ready_freshness: dict[str, float | None] = {
-        "health_age_sec": None,
-        "existing_global_age_sec": None,
-        "last_valid_age_sec": None,
-    }
+    committed_candidate_evidence_valid = False
+    activation_authority_valid = False
+    activation_authority_endpoint: tuple[int, int] | None = None
+    activation_authority_age_ns: int | None = None
+    activation_authority_source_age_ns: int | None = None
+    activation_authority_transport_age_ns: int | None = None
+    activation_existing_global_lower_ns: int | None = None
+    activation_existing_global_upper_ns: int | None = None
+    activation_existing_global_watermark_ns: int | None = None
+    activation_existing_global_watermark_valid = False
     if first_ready_diag is not None:
         values = first_ready_diag["values"]
-        first_lag = abs(float(values.get("anchor.correction_lag.yaw_rad", "nan")))
-        stable_count = int(values.get("activation.stable_candidate_count", "-1"))
-        required_count = int(values.get("activation.required_candidate_count", "-1"))
+        try:
+            committed_stable_count = int(
+                values.get("activation.committed_stable_candidate_count", "-1")
+            )
+            required_count = int(
+                values.get("activation.required_candidate_count", "-1")
+            )
+            committed_candidate_delta = float(
+                values.get("activation.committed_candidate_delta_rad", "nan")
+            )
+            maximum_candidate_delta = float(
+                values.get("activation.max_candidate_delta_rad", "nan")
+            )
+            authority_session = int(
+                values.get("activation.authority_session_id", "0")
+            )
+            authority_sequence = int(
+                values.get("activation.authority_sequence", "0")
+            )
+            authority_stamp_ns = int(
+                values.get("activation.authority_stamp_ns", "0")
+            )
+            authority_source_stamp_ns = int(
+                values.get("activation.authority_source_stamp_ns", "0")
+            )
+            authority_received_stamp_ns = int(
+                values.get("activation.authority_received_stamp_ns", "0")
+            )
+            activation_existing_global_lower_ns = int(
+                values.get("activation.existing_global_lower_stamp_ns", "0")
+            )
+            activation_existing_global_upper_ns = int(
+                values.get("activation.existing_global_upper_stamp_ns", "0")
+            )
+            activation_existing_global_watermark_ns = int(
+                values.get("activation.existing_global_watermark_ns", "0")
+            )
+            existing_global_max_interpolation_gap_ns = int(
+                values.get(
+                    "activation.existing_global_max_interpolation_gap_ns", "0"
+                )
+            )
+            existing_global_mode = values.get(
+                "activation.existing_global_mode", "none"
+            )
+        except (TypeError, ValueError):
+            committed_stable_count = -1
+            required_count = -1
+            committed_candidate_delta = math.nan
+            maximum_candidate_delta = math.nan
+            authority_session = 0
+            authority_sequence = 0
+            authority_stamp_ns = 0
+            authority_source_stamp_ns = 0
+            authority_received_stamp_ns = 0
+            activation_existing_global_lower_ns = 0
+            activation_existing_global_upper_ns = 0
+            activation_existing_global_watermark_ns = 0
+            existing_global_max_interpolation_gap_ns = 0
+            existing_global_mode = "none"
         activation_reason = values.get("activation.reason")
-        candidate_yaw = float(values.get("activation.candidate_yaw_rad", "nan"))
+        try:
+            candidate_yaw = float(
+                values.get("activation.candidate_yaw_rad", "nan")
+            )
+        except (TypeError, ValueError):
+            candidate_yaw = math.nan
         first_ready_existing_fusion_authority = (
             values.get("anchor.source") == "existing_fusion"
             and not true_value(values.get("fallback.gnss_position_enabled", "true"))
         )
-        health_age = float(values.get("fusion.health.age_sec", "nan"))
-        existing_global_stamp = float(
-            values.get("fusion.sync.existing_global_stamp_sec", "nan")
+        committed_candidate_evidence_valid = (
+            true_value(values.get("activation.evidence_valid", "false"))
+            and required_count >= 3
+            and committed_stable_count == required_count
+            and activation_reason == "existing_fusion_stable_activated"
+            and math.isfinite(candidate_yaw)
+            and math.isfinite(committed_candidate_delta)
+            and math.isfinite(maximum_candidate_delta)
+            and maximum_candidate_delta > 0.0
+            and 0.0 <= committed_candidate_delta <= maximum_candidate_delta
         )
-        existing_global_age = float(
-            values.get("fusion.sync.existing_global_age_sec", "nan")
+        activation_authority_endpoint = (authority_session, authority_sequence)
+        matching_authorities = [
+            item for item in authority_records
+            if int(item.get("session_id", 0)) == authority_session
+            and int(item.get("sequence", 0)) == authority_sequence
+        ]
+        matching_authority = (
+            matching_authorities[0] if len(matching_authorities) == 1 else None
         )
-        last_valid_stamp = float(
-            values.get("fusion.sync.last_valid_stamp_sec", "nan")
+        activation_authority_age_ns = (
+            activation_ns - int(matching_authority.get("stamp_ns", 0))
+            if activation_ns is not None and matching_authority is not None
+            else None
         )
-        last_valid_age = float(
-            values.get("fusion.sync.last_valid_age_sec", "nan")
+        activation_authority_source_age_ns = (
+            int(matching_authority.get("stamp_ns", 0))
+            - int(matching_authority.get("source_stamp_ns", 0))
+            if matching_authority is not None else None
         )
-        first_ready_freshness = {
-            "health_age_sec": health_age,
-            "existing_global_age_sec": existing_global_age,
-            "last_valid_age_sec": last_valid_age,
-        }
-        first_ready_strict_fusion_health = (
-            true_value(values.get("fusion.health.healthy", "false"))
-            and values.get("fusion.health.level") == "0"
-            and values.get("fusion.health.recovery_state") == "tracking"
-            and values.get("fusion.health.anchor_valid") == "true"
-            and values.get("fusion.health.position_fused") == "true"
-            and values.get("fusion.health.yaw_fused") == "true"
-            and values.get("fusion.health.last_fix_state") == "good"
-            and values.get("fusion.health.reason") == "strict_fusion_health_ok"
-            and math.isfinite(health_age)
-            and -0.25 <= health_age <= 1.5
-            and math.isfinite(existing_global_stamp)
-            and existing_global_stamp > 0.0
-            and math.isfinite(existing_global_age)
-            and -0.05 <= existing_global_age <= 0.25
-            and math.isfinite(last_valid_stamp)
-            and last_valid_stamp > 0.0
-            and math.isfinite(last_valid_age)
-            and -0.05 <= last_valid_age <= 0.50
-            and values.get("fusion.health.rearm_required") == "false"
+        activation_authority_transport_age_ns = (
+            authority_received_stamp_ns
+            - int(matching_authority.get("stamp_ns", 0))
+            if matching_authority is not None else None
+        )
+        activation_authority_valid = (
+            authority_session > 0
+            and authority_sequence > 0
+            and matching_authority is not None
+            and int(matching_authority.get("state", -1)) == 1
+            and matching_authority.get("reason")
+            == "strict_full_se2_authority_ok"
+            and matching_authority.get("recovery_state") == "tracking"
+            and matching_authority.get("anchor_valid") is True
+            and matching_authority.get("position_fused") is True
+            and matching_authority.get("yaw_fused") is True
+            and int(matching_authority.get("last_fix_state", -1)) == 1
+            and int(matching_authority.get("stamp_ns", 0))
+            == authority_stamp_ns
+            and int(matching_authority.get("source_stamp_ns", 0))
+            == authority_source_stamp_ns
+            and activation_authority_age_ns is not None
+            and -validator.FUSION_AUTHORITY_MAX_FUTURE_SKEW_NS
+            <= activation_authority_age_ns
+            <= validator.FUSION_AUTHORITY_MAX_SOURCE_AGE_NS
+            and activation_authority_source_age_ns is not None
+            and -validator.FUSION_AUTHORITY_MAX_FUTURE_SKEW_NS
+            <= activation_authority_source_age_ns
+            <= validator.FUSION_AUTHORITY_MAX_SOURCE_AGE_NS
+            and activation_authority_transport_age_ns is not None
+            and -validator.FUSION_AUTHORITY_MAX_FUTURE_SKEW_NS
+            <= activation_authority_transport_age_ns
+            <= validator.FUSION_AUTHORITY_MAX_SOURCE_AGE_NS
+        )
+        exact_global_endpoint = (
+            existing_global_mode == "exact"
+            and activation_existing_global_lower_ns == activation_ns
+            and activation_existing_global_upper_ns == activation_ns
+        )
+        interpolated_global_endpoints = (
+            activation_ns is not None
+            and existing_global_mode == "interpolated"
+            and activation_existing_global_lower_ns < activation_ns
+            < activation_existing_global_upper_ns
+            and existing_global_max_interpolation_gap_ns > 0
+            and activation_existing_global_upper_ns
+            - activation_existing_global_lower_ns
+            <= existing_global_max_interpolation_gap_ns
+        )
+        activation_existing_global_watermark_valid = (
+            activation_ns is not None
+            and activation_existing_global_lower_ns in existing_global_stamps
+            and activation_existing_global_upper_ns in existing_global_stamps
+            and activation_existing_global_watermark_ns in existing_global_stamps
+            and activation_existing_global_watermark_ns
+            >= activation_existing_global_upper_ns
+            and (exact_global_endpoint or interpolated_global_endpoints)
         )
         if first_local_value is not None and math.isfinite(candidate_yaw):
             first_output_anchor_yaw_error = abs(float(wrap(
@@ -751,7 +835,17 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         f"epochs={transition_contract['epochs']} errors={transition_contract['errors']}",
     )
     add(
-        "one finite activation event exists",
+        "typed fusion-authority stream is exact and ordered",
+        authority_stream_contract["valid"],
+        f"authority_stream={authority_stream_contract}",
+    )
+    add(
+        "existing-global evidence stream is exact and ordered",
+        existing_global_stream_contract["valid"],
+        f"existing_global_stream={existing_global_stream_contract}",
+    )
+    add(
+        "one exact integer-nanosecond activation event exists",
         activation_ns is not None,
         f"activation_ns={activation_ns}",
     )
@@ -769,8 +863,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         "first global output follows activation",
         activation_lower_bound_ns is not None
         and first_global_ns >= activation_lower_bound_ns,
-        f"first_global={first_global_ns} activation={activation_ns} "
-        f"serialization_tolerance_ns={ACTIVATION_SERIALIZATION_TOLERANCE_NS}",
+        f"first_global={first_global_ns} exact_activation={activation_ns}",
     )
     add(
         "first global output is exactly the next raw sample after activation",
@@ -778,7 +871,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         and expected_first_global_ns is not None
         and first_global_ns == expected_first_global_ns
         and first_global_pose_ns == expected_first_global_ns,
-        f"serialized_activation={activation_ns} activation_raw={activation_raw_ns} "
+        f"exact_activation={activation_ns} activation_raw={activation_raw_ns} "
         f"expected_next_raw={expected_first_global_ns} "
         f"global_odom={first_global_ns} global_pose={first_global_pose_ns}",
     )
@@ -793,13 +886,11 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         f"delay={(first_global_ns-first_raw_ns)*1.0e-9:.6f}s",
     )
     add(
-        "activation uses required consecutive stable candidates",
-        stable_count is not None and required_count == 3
-        and stable_count >= required_count
-        and activation_reason in (
-            "stable_yaw_activated", "existing_fusion_stable_activated"
-        ),
-        f"stable={stable_count} required={required_count} reason={activation_reason}",
+        "activation uses committed consecutive stable candidates",
+        committed_candidate_evidence_valid,
+        f"committed_stable={committed_stable_count} required={required_count} "
+        f"committed_delta={committed_candidate_delta} "
+        f"maximum_delta={maximum_candidate_delta} reason={activation_reason}",
     )
     add(
         "global anchor authority is existing fusion only",
@@ -808,10 +899,21 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         f"all_samples_authority={authority_invariant}",
     )
     add(
-        "activation occurs under strict existing-fusion health",
-        first_ready_strict_fusion_health,
-        f"first_ready_strict_health={first_ready_strict_fusion_health} "
-        f"freshness={first_ready_freshness}",
+        "activation matches an exact strict typed fusion-authority event",
+        activation_authority_valid,
+        f"endpoint={activation_authority_endpoint} "
+        f"activation_authority_age_ns={activation_authority_age_ns} "
+        f"authority_source_age_ns={activation_authority_source_age_ns} "
+        f"authority_transport_age_ns={activation_authority_transport_age_ns} "
+        f"valid={activation_authority_valid}",
+    )
+    add(
+        "activation existing-global watermark is exact",
+        activation_existing_global_watermark_valid,
+        f"endpoints_ns={activation_existing_global_lower_ns}/"
+        f"{activation_existing_global_upper_ns} "
+        f"watermark_ns={activation_existing_global_watermark_ns} "
+        f"recorded={activation_existing_global_watermark_valid}",
     )
     add(
         "initial startup does not require session rearm",
@@ -823,11 +925,6 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         "existing-fusion anchor is exactly frozen whenever strict health is false",
         freeze_valid,
         f"groups={freeze_groups} errors={freeze_errors}",
-    )
-    add(
-        "first-ready anchor yaw lag is at most 0.02 rad",
-        first_lag is not None and math.isfinite(first_lag) and first_lag <= 0.02,
-        f"lag={first_lag}",
     )
     add(
         "first global pose applies the activation yaw atomically",
@@ -874,6 +971,8 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         "counts": {
             "precision_global_odom_positive_records": len(global_stamps),
             "precision_global_pose_positive_records": len(global_pose_stamps),
+            "fusion_authority_records": len(authority_records),
+            "existing_global_unique_positive_stamps": len(existing_global_stamps),
         },
         "startup": {
             "first_raw_ns": first_raw_ns,
@@ -883,7 +982,37 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
             "expected_first_global_ns": expected_first_global_ns,
             "first_global_delay_sec": (first_global_ns - first_raw_ns) * 1.0e-9,
             "activation": activation,
+            "committed_activation_evidence": {
+                "candidate_valid": committed_candidate_evidence_valid,
+                "committed_stable_candidate_count": committed_stable_count,
+                "required_candidate_count": required_count,
+                "committed_candidate_delta_rad": committed_candidate_delta,
+                "maximum_candidate_delta_rad": maximum_candidate_delta,
+                "authority_endpoint": activation_authority_endpoint,
+                "authority_age_ns": activation_authority_age_ns,
+                "authority_source_age_ns": activation_authority_source_age_ns,
+                "authority_transport_age_ns": (
+                    activation_authority_transport_age_ns
+                ),
+                "authority_valid": activation_authority_valid,
+                "existing_global_lower_stamp_ns": (
+                    activation_existing_global_lower_ns
+                ),
+                "existing_global_upper_stamp_ns": (
+                    activation_existing_global_upper_ns
+                ),
+                "existing_global_watermark_ns": (
+                    activation_existing_global_watermark_ns
+                ),
+                "existing_global_watermark_valid": (
+                    activation_existing_global_watermark_valid
+                ),
+            },
             "diagnostic_transition_contract": transition_contract,
+            "typed_fusion_authority_stream_contract": (
+                authority_stream_contract
+            ),
+            "existing_global_stream_contract": existing_global_stream_contract,
             "freeze_contract": {
                 "valid": freeze_valid,
                 "groups": freeze_groups,

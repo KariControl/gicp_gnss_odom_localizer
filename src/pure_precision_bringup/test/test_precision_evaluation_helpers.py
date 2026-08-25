@@ -116,45 +116,92 @@ def test_existing_fusion_causal_accounting(validator) -> None:
     assert not validator.existing_global_prefix_accounting(
         [(10, odometry(1_000_000_000, "wrong"))]
     )["valid"]
+    causal_endpoint = validator.existing_global_causal_endpoint_accounting(
+        [
+            (10, odometry(1_000_000_000)),
+            (20, odometry(2_000_000_000)),
+            (30, odometry(2_000_000_000)),
+            (40, odometry(2_000_000_000)),
+            (50, odometry(3_000_000_000)),
+        ],
+        2_000_000_000,
+    )
+    assert causal_endpoint["valid"], causal_endpoint
+    assert causal_endpoint["lower"]["received"] == 2
+    assert causal_endpoint["upper"]["received"] == 4
+    assert causal_endpoint["lower"]["accepted"] == 2
+    assert causal_endpoint["upper"]["accepted"] == 2
+    assert causal_endpoint["duplicate_tail_allowance"] == 2
+    assert not validator.existing_global_causal_endpoint_accounting(
+        [(10, odometry(1_000_000_000))], 2_000_000_000
+    )["valid"]
+    assert not validator.existing_global_causal_endpoint_accounting(
+        [(10, odometry(2_000_000_000))], 2.0
+    )["valid"]
 
-    health_values = [
-        ("recovery.state", "tracking"),
-        ("anchor_valid", "true"),
-        ("recovery.position_fused", "true"),
-        ("recovery.yaw_fused", "true"),
-        ("last_fix_state", "good"),
-    ]
-
-    def health(record_ns: int, stamp_ns: int, values=health_values):
+    def authority(
+        record_ns: int, stamp_ns: int, session: int, sequence: int,
+        state: int = 1,
+    ):
+        soft_hold = state == 2
         return {
             "record_ns": record_ns,
             "stamp_ns": stamp_ns,
-            "status_count": 1,
-            "values": values,
+            "stamp_canonical": True,
+            "source_stamp_ns": stamp_ns,
+            "source_stamp_canonical": True,
+            "frame_id": "map",
+            "session_id": session,
+            "sequence": sequence,
+            "state": state,
+            "reason": (
+                "gnss_soft_bad_within_grace" if soft_hold
+                else "strict_full_se2_authority_ok"
+            ),
+            "recovery_state": "tracking",
+            "anchor_valid": True,
+            "position_fused": True,
+            "yaw_fused": True,
+            "last_fix_state": 2 if soft_hold else 1,
         }
 
-    health_summary = validator.fusion_health_prefix_accounting(
+    health_summary = validator.fusion_authority_prefix_accounting(
         [
-            health(10, 0),
-            health(20, 0),
-            health(30, 1_000_000_000),
-            health(40, 1_000_000_000),
-            health(50, 2_000_000_000),
+            authority(10, 1_000_000_000, 10, 1),
+            authority(20, 1_000_000_000, 10, 2, state=2),
+            authority(30, 2_000_000_000, 11, 1),
         ]
     )
     assert health_summary["valid"], health_summary
-    assert health_summary["received"] == 5
-    assert health_summary["accepted"] == 2
-    assert health_summary["rejected"] == 3
-    assert health_summary["zero_stamp"] == 2
-    assert health_summary["duplicate_stamp"] == 1
-    # Three pre-recorder zero-stamp callbacks remain exactly distinguishable:
-    # they add only to received/rejected, never to accepted.
-    assert 8 == health_summary["received"] + 3
-    assert 6 == health_summary["rejected"] + 3
-    assert not validator.fusion_health_prefix_accounting(
-        [health(10, 1_000_000_000, health_values[:-1])]
+    assert health_summary["received"] == 3
+    assert health_summary["accepted"] == 3
+    assert health_summary["rejected"] == 0
+    assert health_summary["soft_bad_hold_count"] == 1
+
+    duplicate = validator.fusion_authority_prefix_accounting(
+        [
+            authority(10, 1_000_000_000, 10, 1),
+            authority(20, 1_100_000_000, 10, 1),
+        ]
+    )
+    assert not duplicate["valid"]
+    assert duplicate["accepted"] == 1 and duplicate["rejected"] == 1
+    assert not validator.fusion_authority_prefix_accounting(
+        [
+            authority(10, 1_000_000_000, 10, 1),
+            authority(20, 2_000_000_000, 11, 1),
+            authority(30, 3_000_000_000, 10, 2),
+        ]
     )["valid"]
+    assert not validator.fusion_authority_prefix_accounting(
+        [
+            authority(10, 1_000_000_000, 10, 1),
+            authority(20, 1_000_000_000, 11, 1),
+        ]
+    )["valid"]
+    bad_payload = authority(10, 1_000_000_000, 10, 1)
+    bad_payload["yaw_fused"] = False
+    assert not validator.fusion_authority_prefix_accounting([bad_payload])["valid"]
 
 
 def test_map_fusion_publication_integrity_contract(validator) -> None:
@@ -713,7 +760,10 @@ def test_outage_yaw_guard_timeline_contract(evaluator) -> None:
         *,
         trusted_variance: float = 0.0025,
         active_reference_variance: float = 0.0025,
+        active_reference_epoch: int | None = None,
     ):
+        if active_reference_epoch is None:
+            active_reference_epoch = 0 if outage_count == 0 else 1
         if state in {"OUTAGE_SLEW", "OUTAGE_HOLD"}:
             additional_variance = active_reference_variance + float(
                 evaluator.wrap(target - applied)
@@ -766,6 +816,9 @@ def test_outage_yaw_guard_timeline_contract(evaluator) -> None:
             "outage_yaw_guard.accepted_reference_count": str(accepted),
             "outage_yaw_guard.rejected_reference_count": "0",
             "outage_yaw_guard.outage_count": str(outage_count),
+            "outage_yaw_guard.active_reference_epoch": str(
+                active_reference_epoch
+            ),
             "outage_yaw_guard.recovery_count": str(recovery_count),
             "outage_yaw_guard.applied_step_count": str(applied_steps),
             "outage_yaw_guard.invalid_advance_count": "0",
@@ -850,14 +903,89 @@ def test_outage_yaw_guard_timeline_contract(evaluator) -> None:
         wall_tail.append(repeated)
     wall_tail_summary = evaluator.outage_yaw_guard_summary(wall_tail)
     assert wall_tail_summary["raw_diagnostic_samples"] == 8
-    assert wall_tail_summary["diagnostic_samples"] == 6
-    assert wall_tail_summary["folded_wall_timer_tail_samples"] == 2
+    assert wall_tail_summary["diagnostic_samples"] == 8
+    assert wall_tail_summary["folded_wall_timer_tail_samples"] == 0
     assert wall_tail_summary["counters"]["accepted_reference_count"] == 5
     assert wall_tail_summary["continuity_and_bounds"]["valid"], wall_tail_summary
 
-    physical_duplicate = copy.deepcopy(diagnostics)
-    physical_duplicate.insert(2, copy.deepcopy(diagnostics[1]))
-    assert not evaluator.outage_yaw_guard_summary(physical_duplicate)[
+    exact_duplicate_tail = copy.deepcopy(diagnostics)
+    exact_duplicate_tail.append(copy.deepcopy(diagnostics[-1]))
+    exact_duplicate_summary = evaluator.outage_yaw_guard_summary(
+        exact_duplicate_tail
+    )
+    assert exact_duplicate_summary["diagnostic_samples"] == 7
+    assert exact_duplicate_summary["continuity_and_bounds"]["valid"], (
+        exact_duplicate_summary
+    )
+
+    counter_regression_tail = copy.deepcopy(diagnostics)
+    regressed = copy.deepcopy(diagnostics[-1])
+    regressed["values"]["outage_yaw_guard.accepted_reference_count"] = "2"
+    counter_regression_tail.append(regressed)
+    assert not evaluator.outage_yaw_guard_summary(counter_regression_tail)[
+        "counter_monotonic"
+    ]
+
+    missing_enabled = copy.deepcopy(diagnostics)
+    del missing_enabled[2]["values"]["outage_yaw_guard.enabled"]
+    missing_enabled_summary = evaluator.outage_yaw_guard_summary(
+        missing_enabled
+    )
+    assert missing_enabled_summary["raw_diagnostic_samples"] == len(diagnostics)
+    assert not missing_enabled_summary["required_fields_complete"]
+
+    illegal_same_stamp_tail = copy.deepcopy(diagnostics[:-1])
+    illegal_same_stamp_tail.append(
+        sample(
+            5_000_000_000,
+            "RECOVERY_RELEASE",
+            True,
+            0.04,
+            0.0,
+            3,
+            1,
+            1,
+            11,
+            "outage_yaw_recovery_release_step",
+            trusted_variance=0.001,
+        )
+    )
+    assert not evaluator.outage_yaw_guard_summary(illegal_same_stamp_tail)[
+        "continuity_and_bounds"
+    ]["valid"]
+
+    same_stamp_snapshot = copy.deepcopy(diagnostics)
+    same_stamp_snapshot.insert(2, copy.deepcopy(diagnostics[1]))
+    same_stamp_summary = evaluator.outage_yaw_guard_summary(same_stamp_snapshot)
+    assert same_stamp_summary["continuity_and_bounds"]["valid"], same_stamp_summary
+    assert (
+        same_stamp_summary["continuity_and_bounds"][
+            "same_stamp_control_intervals"
+        ]
+        == 1
+    )
+
+    same_stamp_control_edge = copy.deepcopy(diagnostics)
+    same_stamp_control_edge.insert(
+        1,
+        sample(
+            1_000_000_000, "OUTAGE_SLEW", False, 0.0, 0.2, 2, 1, 0, 0,
+            "trusted_outage_yaw_slew_started",
+        ),
+    )
+    assert evaluator.outage_yaw_guard_summary(same_stamp_control_edge)[
+        "continuity_and_bounds"
+    ]["valid"]
+
+    same_stamp_numerical_step = copy.deepcopy(diagnostics)
+    same_stamp_numerical_step.insert(
+        2,
+        sample(
+            2_000_000_000, "OUTAGE_SLEW", False, 0.11, 0.2, 2, 1, 0, 4,
+            "trusted_outage_yaw_slew_step",
+        ),
+    )
+    assert not evaluator.outage_yaw_guard_summary(same_stamp_numerical_step)[
         "continuity_and_bounds"
     ]["valid"]
 
@@ -1054,6 +1182,73 @@ def test_outage_yaw_guard_timeline_contract(evaluator) -> None:
     assert not evaluator.outage_yaw_guard_summary(hidden_understated)[
         "continuity_and_bounds"
     ]["valid"]
+
+    cross_epoch = diagnostics[:5] + [
+        sample(
+            6_000_000_000,
+            "OUTAGE_HOLD",
+            False,
+            0.05,
+            0.05,
+            3,
+            2,
+            1,
+            10,
+            "trusted_outage_yaw_held",
+            trusted_variance=0.001,
+            active_reference_variance=0.001,
+            active_reference_epoch=2,
+        )
+    ]
+    cross_epoch_summary = evaluator.outage_yaw_guard_summary(cross_epoch)
+    assert cross_epoch_summary["continuity_and_bounds"]["valid"], (
+        cross_epoch_summary["errors"]
+    )
+    assert cross_epoch_summary["active_reference_epoch_accounting"] == {
+        "available": True,
+        "mixed_presence": False,
+        "unproven_intervals": 0,
+        "cross_epoch_intervals": 1,
+    }
+
+    legacy_understated = copy.deepcopy(hidden_understated)
+    for item in legacy_understated:
+        del item["values"]["outage_yaw_guard.active_reference_epoch"]
+    legacy_summary = evaluator.outage_yaw_guard_summary(legacy_understated)
+    assert legacy_summary["continuity_and_bounds"]["valid"], legacy_summary[
+        "errors"
+    ]
+    assert legacy_summary["active_reference_epoch_accounting"] == {
+        "available": False,
+        "mixed_presence": False,
+        "unproven_intervals": 1,
+        "cross_epoch_intervals": 0,
+    }
+    legacy_epoch_check = next(
+        item
+        for item in evaluator.outage_yaw_guard_contract_checks(
+            legacy_summary, dataset_outage_available=True
+        )
+        if item["name"]
+        == "outage yaw guard active-reference epoch accounting"
+    )
+    assert legacy_epoch_check["category"] == "warn"
+    assert not legacy_epoch_check["passed"]
+    assert legacy_epoch_check["detail"].startswith("N/A:")
+
+    mixed_epoch = copy.deepcopy(hidden_reoutage)
+    del mixed_epoch[0]["values"]["outage_yaw_guard.active_reference_epoch"]
+    assert not evaluator.outage_yaw_guard_summary(mixed_epoch)[
+        "required_fields_complete"
+    ]
+
+    impossible_epoch = copy.deepcopy(hidden_reoutage)
+    impossible_epoch[-1]["values"][
+        "outage_yaw_guard.active_reference_epoch"
+    ] = "3"
+    assert not evaluator.outage_yaw_guard_summary(impossible_epoch)[
+        "counter_monotonic"
+    ]
     hidden_bad_counters = copy.deepcopy(hidden_reoutage)
     hidden_bad_counters[-1]["values"][
         "outage_yaw_guard.recovery_count"
@@ -1331,8 +1526,23 @@ def readiness_item(stamp: int, level: int, message: str, **overrides):
         "activation.epoch": "0",
         "activation.stable_candidate_count": "0",
         "activation.required_candidate_count": "3",
+        "activation.max_candidate_delta_rad": "0.08",
         "activation.commit_count": "0",
         "activation.stamp_sec": "nan",
+        "activation.evidence_valid": "false",
+        "activation.stamp_ns": "0",
+        "activation.committed_stable_candidate_count": "0",
+        "activation.committed_candidate_delta_rad": "nan",
+        "activation.authority_session_id": "0",
+        "activation.authority_sequence": "0",
+        "activation.authority_stamp_ns": "0",
+        "activation.authority_source_stamp_ns": "0",
+        "activation.authority_received_stamp_ns": "0",
+        "activation.existing_global_lower_stamp_ns": "0",
+        "activation.existing_global_upper_stamp_ns": "0",
+        "activation.existing_global_watermark_ns": "0",
+        "activation.existing_global_max_interpolation_gap_ns": "0",
+        "activation.existing_global_mode": "none",
         "activation.candidate_yaw_rad": "nan",
         "activation.candidate_delta_rad": "nan",
         "activation.reason": "waiting_for_position_initialization",
@@ -1353,21 +1563,48 @@ def readiness_item(stamp: int, level: int, message: str, **overrides):
         "fusion.health.age_sec": "nan",
         "fusion.health.status_stamp_sec": "nan",
         "fusion.health.level": "1",
+        "fusion.health.authority_state": "unhealthy",
+        "fusion.health.authority_source_stamp_sec": "nan",
+        "fusion.health.authority_received_stamp_sec": "nan",
+        "fusion.health.authority_source_age_sec": "nan",
+        "fusion.health.authority_transport_age_sec": "nan",
+        "fusion.health.authority_session_id": "0",
+        "fusion.health.authority_sequence": "0",
+        "fusion.health.authority_reason": "fusion_authority_unavailable",
         "fusion.health.recovery_state": "uninitialized",
         "fusion.health.anchor_valid": "false",
         "fusion.health.position_fused": "false",
         "fusion.health.yaw_fused": "false",
         "fusion.health.last_fix_state": "bad",
         "fusion.health.reason": "fusion_diagnostics_unavailable",
+        "fusion.authority.deferred": "0",
+        "fusion.authority.pending": "0",
+        "fusion.authority.deferred_overflow": "0",
+        "fusion.authority.receive_clock_initialized": "true",
+        "fusion.authority.startup_overflow_latched": "false",
         "fusion.health.rearm_required": "false",
         "fusion.health.rearm_saw_unhealthy": "false",
         "fusion.health.rearmed": "true",
         "fusion.health.rearm_reset_stamp_sec": "nan",
+        "fusion.health.rearm.reset_stamp_ns": "0",
+        "fusion.health.rearm.unhealthy_evidence_valid": "false",
+        "fusion.health.rearm.unhealthy_session_id": "0",
+        "fusion.health.rearm.unhealthy_sequence": "0",
+        "fusion.health.rearm.unhealthy_stamp_ns": "0",
+        "fusion.health.rearm.unhealthy_source_stamp_ns": "0",
+        "fusion.health.rearm.unhealthy_received_stamp_ns": "0",
+        "fusion.health.rearm.healthy_evidence_valid": "false",
+        "fusion.health.rearm.healthy_session_id": "0",
+        "fusion.health.rearm.healthy_sequence": "0",
+        "fusion.health.rearm.healthy_stamp_ns": "0",
+        "fusion.health.rearm.healthy_source_stamp_ns": "0",
+        "fusion.health.rearm.healthy_received_stamp_ns": "0",
         "fusion.anchor.state": "WAITING_HEALTHY",
         "fusion.anchor.frozen_residual_variance_x_m2": "0",
         "fusion.anchor.frozen_residual_variance_y_m2": "0",
         "fusion.anchor.frozen_residual_variance_yaw_rad2": "0",
         "fusion.sync.existing_global_stamp_sec": "nan",
+        "fusion.sync.existing_global_stamp_ns": "0",
         "fusion.sync.existing_global_age_sec": "nan",
         "fusion.sync.last_valid_stamp_sec": "nan",
         "fusion.sync.last_valid_age_sec": "nan",
@@ -1403,6 +1640,7 @@ def readiness_item(stamp: int, level: int, message: str, **overrides):
         "outage_yaw_guard.accepted_reference_count": "0",
         "outage_yaw_guard.rejected_reference_count": "0",
         "outage_yaw_guard.outage_count": "0",
+        "outage_yaw_guard.active_reference_epoch": "0",
         "outage_yaw_guard.recovery_count": "0",
         "outage_yaw_guard.applied_step_count": "0",
         "outage_yaw_guard.invalid_advance_count": "0",
@@ -1527,6 +1765,20 @@ def test_startup_readiness_contract(validator, startup) -> None:
                 "activation.stable_candidate_count": "3",
                 "activation.commit_count": "1",
                 "activation.stamp_sec": "2.99",
+                "activation.evidence_valid": "true",
+                "activation.stamp_ns": "2990000000",
+                "activation.committed_stable_candidate_count": "3",
+                "activation.committed_candidate_delta_rad": "0.001",
+                "activation.authority_session_id": "10",
+                "activation.authority_sequence": "3",
+                "activation.authority_stamp_ns": "2980000000",
+                "activation.authority_source_stamp_ns": "2970000000",
+                "activation.authority_received_stamp_ns": "2985000000",
+                "activation.existing_global_lower_stamp_ns": "2980000000",
+                "activation.existing_global_upper_stamp_ns": "3000000000",
+                "activation.existing_global_watermark_ns": "3000000000",
+                "activation.existing_global_max_interpolation_gap_ns": "150000000",
+                "activation.existing_global_mode": "interpolated",
                 "activation.candidate_yaw_rad": "-1.2",
                 "activation.candidate_delta_rad": "0.001",
                 "activation.reason": "existing_fusion_stable_activated",
@@ -1534,6 +1786,14 @@ def test_startup_readiness_contract(validator, startup) -> None:
                 "fusion.health.age_sec": "0.01",
                 "fusion.health.status_stamp_sec": "2.98",
                 "fusion.health.level": "0",
+                "fusion.health.authority_state": "full_se2_healthy",
+                "fusion.health.authority_source_stamp_sec": "2.97",
+                "fusion.health.authority_received_stamp_sec": "2.99",
+                "fusion.health.authority_source_age_sec": "0.01",
+                "fusion.health.authority_transport_age_sec": "0.01",
+                "fusion.health.authority_session_id": "10",
+                "fusion.health.authority_sequence": "3",
+                "fusion.health.authority_reason": "strict_full_se2_authority_ok",
                 "fusion.health.recovery_state": "tracking",
                 "fusion.health.anchor_valid": "true",
                 "fusion.health.position_fused": "true",
@@ -1542,24 +1802,147 @@ def test_startup_readiness_contract(validator, startup) -> None:
                 "fusion.health.reason": "strict_fusion_health_ok",
                 "fusion.anchor.state": "TRACKING",
                 "fusion.sync.existing_global_stamp_sec": "2.99",
+                "fusion.sync.existing_global_stamp_ns": "3000000000",
                 "fusion.sync.existing_global_age_sec": "0.01",
                 "fusion.sync.last_valid_stamp_sec": "2.99",
                 "fusion.sync.last_valid_age_sec": "0.01",
             },
         ),
     ]
-    valid, transitions, errors = validator.startup_transition_contract(timeline)
+    authority_records = [{
+        "record_ns": 2_985_000_000,
+        "stamp_ns": 2_980_000_000,
+        "source_stamp_ns": 2_970_000_000,
+        "session_id": 10,
+        "sequence": 3,
+        "state": 1,
+        "reason": "strict_full_se2_authority_ok",
+        "recovery_state": "tracking",
+        "anchor_valid": True,
+        "position_fused": True,
+        "yaw_fused": True,
+        "last_fix_state": 1,
+    }]
+    existing_global_stamps = {2_980_000_000, 3_000_000_000}
+    valid, transitions, errors = validator.startup_transition_contract(
+        timeline, authority_records, existing_global_stamps
+    )
     assert valid, errors
     assert len(transitions) == 1
-    summary = startup.diagnostic_transition_contract(timeline)
+    publication_valid, publication_events, publication_errors = (
+        validator.startup_publication_activation_events(timeline)
+    )
+    assert publication_valid, publication_errors
+    assert publication_events[0]["activation_ns"] == 2_990_000_000
+    summary = startup.diagnostic_transition_contract(
+        timeline, authority_records, existing_global_stamps, validator
+    )
     assert summary["valid"], summary["errors"]
     broken = [dict(item) for item in timeline]
     broken[-1] = {
         **broken[-1],
         "values": {**broken[-1]["values"], "global_output_ready": "false"},
     }
-    assert not validator.startup_transition_contract(broken)[0]
-    assert not startup.diagnostic_transition_contract(broken)["valid"]
+    assert not validator.startup_transition_contract(
+        broken, authority_records, existing_global_stamps
+    )[0]
+    assert not startup.diagnostic_transition_contract(
+        broken, authority_records, existing_global_stamps, validator
+    )["valid"]
+    for key, value in (
+        ("activation.evidence_valid", "false"),
+        ("activation.stamp_ns", "0"),
+        ("activation.committed_stable_candidate_count", "2"),
+        ("activation.committed_candidate_delta_rad", "0.081"),
+        ("activation.authority_sequence", "0"),
+        ("activation.authority_stamp_ns", "2980000001"),
+        ("activation.authority_received_stamp_ns", "5000000000"),
+        ("activation.existing_global_lower_stamp_ns", "2970000000"),
+        ("activation.existing_global_upper_stamp_ns", "2990000000"),
+        ("activation.existing_global_watermark_ns", "2500000000"),
+        ("activation.existing_global_max_interpolation_gap_ns", "10000000"),
+        ("activation.existing_global_mode", "none"),
+    ):
+        invalid_authority = [dict(item) for item in timeline]
+        invalid_authority[-1] = {
+            **invalid_authority[-1],
+            "values": {**invalid_authority[-1]["values"], key: value},
+        }
+        assert not validator.startup_transition_contract(
+            invalid_authority, authority_records, existing_global_stamps
+        )[0]
+        if key != "activation.stamp_ns":
+            # Control-proof failures do not become false publication-safety
+            # failures when the exact activation marker remains available.
+            assert validator.startup_publication_activation_events(
+                invalid_authority
+            )[0]
+
+    soft_authority = [{**authority_records[0], "state": 2}]
+    assert not validator.startup_transition_contract(
+        timeline, soft_authority, existing_global_stamps
+    )[0]
+    stale_source_authority = [{
+        **authority_records[0], "source_stamp_ns": 1_000_000_000
+    }]
+    assert not validator.startup_transition_contract(
+        timeline, stale_source_authority, existing_global_stamps
+    )[0]
+
+    epoch_2_pre = readiness_item(
+        4_000_000_000,
+        1,
+        "waiting_for_healthy_existing_fusion",
+        **{"activation.epoch": "1", "activation.commit_count": "1"},
+    )
+    epoch_2_ready = copy.deepcopy(timeline[-1])
+    epoch_2_ready["stamp_ns"] = 5_000_000_000
+    epoch_2_ready["values"].update({
+        "activation.epoch": "1",
+        "activation.commit_count": "2",
+        "activation.stamp_sec": "4.99",
+        "activation.stamp_ns": "4990000000",
+        "activation.authority_sequence": "4",
+        "activation.authority_stamp_ns": "4980000000",
+        "activation.authority_source_stamp_ns": "4970000000",
+        "activation.authority_received_stamp_ns": "4985000000",
+        "activation.existing_global_lower_stamp_ns": "4980000000",
+        "activation.existing_global_upper_stamp_ns": "5000000000",
+        "activation.existing_global_watermark_ns": "5000000000",
+    })
+    epoch_2_authority = {
+        **authority_records[0],
+        "record_ns": 4_985_000_000,
+        "stamp_ns": 4_980_000_000,
+        "source_stamp_ns": 4_970_000_000,
+        "sequence": 4,
+    }
+    two_epoch_authorities = authority_records + [epoch_2_authority]
+    two_epoch_globals = existing_global_stamps | {
+        4_980_000_000, 5_000_000_000
+    }
+    ordered_epochs = timeline + [epoch_2_pre, epoch_2_ready]
+    assert validator.startup_transition_contract(
+        ordered_epochs, two_epoch_authorities, two_epoch_globals
+    )[0]
+    epoch_regression = [
+        timeline[0], epoch_2_pre, epoch_2_ready, timeline[1], timeline[2]
+    ]
+    assert not validator.startup_transition_contract(
+        epoch_regression, two_epoch_authorities, two_epoch_globals
+    )[0]
+
+    stale_pre_ready = copy.deepcopy(epoch_2_pre)
+    stale_pre_ready["values"].update({
+        key: value for key, value in timeline[-1]["values"].items()
+        if key.startswith("activation.")
+        and key not in {"activation.epoch", "activation.commit_count"}
+    })
+    assert not validator.startup_transition_contract(
+        timeline + [stale_pre_ready, epoch_2_ready],
+        two_epoch_authorities,
+        two_epoch_globals,
+    )[0]
 
     frozen_values = {
         **timeline[-1]["values"],
@@ -1567,7 +1950,11 @@ def test_startup_readiness_contract(validator, startup) -> None:
         "fusion.anchor.state": "FROZEN",
         "fusion.health.healthy": "false",
         "fusion.health.level": "1",
-        "fusion.health.recovery_state": "outage",
+        "fusion.health.authority_state": "soft_bad_hold",
+        "fusion.health.authority_sequence": "4",
+        "fusion.health.authority_reason": "gnss_soft_bad_within_grace",
+        "fusion.health.recovery_state": "tracking",
+        "fusion.health.last_fix_state": "bad",
         "fusion.health.reason": "fusion_level_not_ok",
         "anchor.target.x_m": "10.0",
         "anchor.target.y_m": "20.0",
@@ -1590,8 +1977,12 @@ def test_startup_readiness_contract(validator, startup) -> None:
             "values": frozen_values,
         },
     ]
+    authority_records = [
+        {"session_id": 10, "sequence": 3, "state": 1},
+        {"session_id": 10, "sequence": 4, "state": 2},
+    ]
     freeze_valid, groups, freeze_errors = validator.fusion_anchor_freeze_contract(
-        frozen_timeline
+        frozen_timeline, authority_records
     )
     assert freeze_valid, freeze_errors
     assert groups[-1]["samples"] == 2
@@ -1603,7 +1994,29 @@ def test_startup_readiness_contract(validator, startup) -> None:
             "anchor.applied.yaw_rad": "-1.1",
         },
     }
-    assert not validator.fusion_anchor_freeze_contract(broken_freeze)[0]
+    assert not validator.fusion_anchor_freeze_contract(
+        broken_freeze, authority_records
+    )[0]
+
+    # A short FULL edge between two sampled HOLD diagnostics starts a new
+    # freeze segment; cross-segment anchor changes must not be joined.
+    second_hold = {
+        **frozen_timeline[-1],
+        "stamp_ns": 6_000_000_000,
+        "values": {
+            **frozen_timeline[-1]["values"],
+            "fusion.health.authority_sequence": "6",
+            "anchor.target.x_m": "11.0",
+            "anchor.applied.x_m": "11.0",
+        },
+    }
+    split_authorities = authority_records + [
+        {"session_id": 10, "sequence": 5, "state": 1},
+        {"session_id": 10, "sequence": 6, "state": 2},
+    ]
+    assert validator.fusion_anchor_freeze_contract(
+        [frozen_timeline[-1], second_hold], split_authorities
+    )[0]
 
     no_reset_valid, no_reset_summary, no_reset_errors = (
         validator.fusion_rearm_contract(timeline)
@@ -1622,6 +2035,7 @@ def test_startup_readiness_contract(validator, startup) -> None:
         "fusion.health.rearm_saw_unhealthy": "false",
         "fusion.health.rearmed": "false",
         "fusion.health.rearm_reset_stamp_sec": "3.5",
+        "fusion.health.rearm.reset_stamp_ns": "3500000000",
         "fusion.health.healthy": "false",
         "fusion.health.status_stamp_sec": "nan",
         "fusion.health.age_sec": "nan",
@@ -1640,6 +2054,12 @@ def test_startup_readiness_contract(validator, startup) -> None:
         "values": {
             **reset_base,
             "fusion.health.rearm_saw_unhealthy": "true",
+            "fusion.health.rearm.unhealthy_evidence_valid": "true",
+            "fusion.health.rearm.unhealthy_session_id": "20",
+            "fusion.health.rearm.unhealthy_sequence": "1",
+            "fusion.health.rearm.unhealthy_stamp_ns": "4900000000",
+            "fusion.health.rearm.unhealthy_source_stamp_ns": "4800000000",
+            "fusion.health.rearm.unhealthy_received_stamp_ns": "4950000000",
             "fusion.health.status_stamp_sec": "4.9",
             "fusion.health.age_sec": "0.1",
             "fusion.health.level": "1",
@@ -1659,6 +2079,12 @@ def test_startup_readiness_contract(validator, startup) -> None:
             **explicit_unhealthy["values"],
             "fusion.health.rearm_required": "false",
             "fusion.health.rearmed": "true",
+            "fusion.health.rearm.healthy_evidence_valid": "true",
+            "fusion.health.rearm.healthy_session_id": "20",
+            "fusion.health.rearm.healthy_sequence": "2",
+            "fusion.health.rearm.healthy_stamp_ns": "5900000000",
+            "fusion.health.rearm.healthy_source_stamp_ns": "5800000000",
+            "fusion.health.rearm.healthy_received_stamp_ns": "5950000000",
             "fusion.health.status_stamp_sec": "5.9",
             "fusion.health.age_sec": "0.1",
             "fusion.health.level": "0",
@@ -1671,10 +2097,90 @@ def test_startup_readiness_contract(validator, startup) -> None:
             "fusion.health.reason": "strict_fusion_health_ok",
         },
     }
+    rearm_authorities = [
+        {
+            "record_ns": 4_950_000_000,
+            "session_id": 20,
+            "sequence": 1,
+            "stamp_ns": 4_900_000_000,
+            "stamp_canonical": True,
+            "source_stamp_ns": 4_800_000_000,
+            "source_stamp_canonical": True,
+            "frame_id": "map",
+            "state": 0,
+            "reason": "fusion_not_tracking:outage",
+            "recovery_state": "outage",
+            "anchor_valid": False,
+            "position_fused": False,
+            "yaw_fused": False,
+            "last_fix_state": 2,
+        },
+        {
+            "record_ns": 5_950_000_000,
+            "session_id": 20,
+            "sequence": 2,
+            "stamp_ns": 5_900_000_000,
+            "stamp_canonical": True,
+            "source_stamp_ns": 5_800_000_000,
+            "source_stamp_canonical": True,
+            "frame_id": "map",
+            "state": 1,
+            "reason": "strict_full_se2_authority_ok",
+            "recovery_state": "tracking",
+            "anchor_valid": True,
+            "position_fused": True,
+            "yaw_fused": True,
+            "last_fix_state": 1,
+        },
+    ]
     rearm_valid, rearm_summary, rearm_errors = validator.fusion_rearm_contract(
-        [reset_wait, explicit_unhealthy, strict_rearmed]
+        [reset_wait, explicit_unhealthy, strict_rearmed],
+        rearm_authorities,
+        {3_500_000_000},
     )
     assert rearm_valid, (rearm_summary, rearm_errors)
+    bad_frame_authorities = copy.deepcopy(rearm_authorities)
+    bad_frame_authorities[0]["frame_id"] = "wrong"
+    assert not validator.fusion_rearm_contract(
+        [strict_rearmed], bad_frame_authorities, {3_500_000_000}
+    )[0]
+    incomplete_rearm = validator.fusion_rearm_contract(
+        [reset_wait, explicit_unhealthy],
+        rearm_authorities,
+        {3_500_000_000},
+    )
+    assert not incomplete_rearm[0], incomplete_rearm
+    contradictory_flags = copy.deepcopy(explicit_unhealthy)
+    contradictory_flags["values"].update({
+        "fusion.health.rearm_required": "false",
+        "fusion.health.rearmed": "false",
+    })
+    assert not validator.fusion_rearm_contract(
+        [reset_wait, contradictory_flags],
+        rearm_authorities,
+        {3_500_000_000},
+    )[0]
+    next_reset = copy.deepcopy(reset_wait)
+    next_reset["stamp_ns"] = 7_000_000_000
+    next_reset["values"].update({
+        "local_correction.odom_session_resets": "2",
+        "fusion.health.rearm_reset_stamp_sec": "6.5",
+        "fusion.health.rearm.reset_stamp_ns": "6500000000",
+    })
+    retired_incomplete = validator.fusion_rearm_contract(
+        [reset_wait, explicit_unhealthy, next_reset],
+        rearm_authorities,
+        {3_500_000_000, 6_500_000_000},
+    )
+    assert not retired_incomplete[0]
+    assert any("retired before" in error for error in retired_incomplete[2])
+    hidden_edges_valid, hidden_edges_summary, hidden_edges_errors = (
+        validator.fusion_rearm_contract(
+            [strict_rearmed], rearm_authorities, {3_500_000_000}
+        )
+    )
+    assert hidden_edges_valid, (hidden_edges_summary, hidden_edges_errors)
+    assert hidden_edges_summary["completed_resets"] == 1
     stale_only = {
         **explicit_unhealthy,
         "values": {
@@ -1685,17 +2191,29 @@ def test_startup_readiness_contract(validator, startup) -> None:
             "fusion.health.reason": "fusion_diagnostics_stale",
         },
     }
-    assert not validator.fusion_rearm_contract([reset_wait, stale_only])[0]
+    assert not validator.fusion_rearm_contract(
+        [reset_wait, stale_only], rearm_authorities, {3_500_000_000}
+    )[0]
+    missing_typed_unhealthy = copy.deepcopy(explicit_unhealthy)
+    missing_typed_unhealthy["values"].update({
+        "fusion.health.rearm.unhealthy_session_id": "99",
+        "fusion.health.rearm.unhealthy_sequence": "99",
+    })
+    assert not validator.fusion_rearm_contract(
+        [reset_wait, missing_typed_unhealthy, strict_rearmed],
+        rearm_authorities,
+        {3_500_000_000},
+    )[0]
 
     activation_raw, next_raw = validator.activation_raw_successor(
         [1_000_000_000, 1_050_000_000, 1_100_000_000],
-        1_001_000_000,
-        20_000_000,
+        1_000_000_000,
+        0,
     )
     assert activation_raw == 1_000_000_000
     assert next_raw == 1_050_000_000
     assert startup.activation_raw_successor(
-        [1_000_000_000, 1_050_000_000], 1_001_000_000, 20_000_000
+        [1_000_000_000, 1_050_000_000], 1_000_000_000, 0
     ) == (1_000_000_000, 1_050_000_000)
 
 
@@ -1743,6 +2261,14 @@ def test_outage_yaw_guard_runtime_contract(validator) -> None:
             }
         )
         item["values"].update(updates)
+        if "outage_yaw_guard.active_reference_epoch" not in updates:
+            outage_count = int(
+                item["values"]["outage_yaw_guard.outage_count"]
+            )
+            item["values"]["outage_yaw_guard.active_reference_epoch"] = str(
+                0 if outage_count == 0 else 1
+            )
+        item["key_counts"] = {key: 1 for key in item["values"]}
         return item
 
     timeline = [
@@ -1967,6 +2493,56 @@ def test_outage_yaw_guard_runtime_contract(validator) -> None:
         }
     )
     assert not validator.outage_yaw_guard_contract(hidden_understated)[0]
+
+    cross_epoch = copy.deepcopy(hidden_understated)
+    cross_epoch[-1]["values"].update(
+        {
+            "outage_yaw_guard.trusted_variance_rad2": "0.008",
+            "outage_yaw_guard.active_reference_variance_rad2": "0.008",
+            "outage_yaw_guard.additional_variance_rad2": "0.008",
+            "outage_yaw_guard.active_reference_epoch": "2",
+        }
+    )
+    cross_epoch_valid, cross_epoch_summary, cross_epoch_errors = (
+        validator.outage_yaw_guard_contract(cross_epoch)
+    )
+    assert cross_epoch_valid, cross_epoch_errors
+    assert cross_epoch_summary["active_reference_epoch_accounting"] == {
+        "available": True,
+        "mixed_presence": False,
+        "unproven_intervals": 0,
+        "cross_epoch_intervals": 1,
+    }
+
+    legacy_understated = copy.deepcopy(hidden_understated)
+    for item in legacy_understated:
+        del item["values"]["outage_yaw_guard.active_reference_epoch"]
+        item["key_counts"].pop(
+            "outage_yaw_guard.active_reference_epoch", None
+        )
+    legacy_valid, legacy_summary, legacy_errors = (
+        validator.outage_yaw_guard_contract(legacy_understated)
+    )
+    assert legacy_valid, legacy_errors
+    assert legacy_summary["active_reference_epoch_accounting"] == {
+        "available": False,
+        "mixed_presence": False,
+        "unproven_intervals": 1,
+        "cross_epoch_intervals": 0,
+    }
+
+    mixed_epoch = copy.deepcopy(hidden_reoutage)
+    del mixed_epoch[0]["values"]["outage_yaw_guard.active_reference_epoch"]
+    mixed_epoch[0]["key_counts"].pop(
+        "outage_yaw_guard.active_reference_epoch", None
+    )
+    assert not validator.outage_yaw_guard_contract(mixed_epoch)[0]
+
+    impossible_epoch = copy.deepcopy(hidden_reoutage)
+    impossible_epoch[-1]["values"][
+        "outage_yaw_guard.active_reference_epoch"
+    ] = "3"
+    assert not validator.outage_yaw_guard_contract(impossible_epoch)[0]
     hidden_bad_counters = copy.deepcopy(hidden_reoutage)
     hidden_bad_counters[-1]["values"][
         "outage_yaw_guard.recovery_count"
@@ -2051,6 +2627,46 @@ def test_outage_yaw_guard_runtime_contract(validator) -> None:
     )
     assert hidden_valid, hidden_errors
     assert hidden_summary["release_samples"] == 0
+
+    # A 1 Hz diagnostic can observe OUTAGE_HOLD and then DISARMED even when a
+    # short, valid FULL authority recovery happened between the snapshots and
+    # the endpoint has already returned to HOLD.  The raw typed stream proves
+    # that hidden recovery; the recovery counter alone is insufficient.
+    hidden_typed_release = [
+        copy.deepcopy(timeline[3]), copy.deepcopy(hidden_release_complete)
+    ]
+    hidden_typed_release[0]["values"].update({
+        "fusion.health.authority_session_id": "10",
+        "fusion.health.authority_sequence": "10",
+    })
+    hidden_typed_release[1]["values"].update({
+        "fusion.health.healthy": "false",
+        "fusion.anchor.state": "FROZEN",
+        "fusion.health.authority_state": "soft_bad_hold",
+        "fusion.health.authority_session_id": "10",
+        "fusion.health.authority_sequence": "13",
+    })
+    hidden_authority = [
+        {"session_id": 10, "sequence": 10, "state": 2},
+        {"session_id": 10, "sequence": 11, "state": 1},
+        {"session_id": 10, "sequence": 12, "state": 1},
+        {"session_id": 10, "sequence": 13, "state": 2},
+    ]
+    typed_hidden_valid, typed_hidden_summary, typed_hidden_errors = (
+        validator.outage_yaw_guard_contract(
+            hidden_typed_release, hidden_authority
+        )
+    )
+    assert typed_hidden_valid, typed_hidden_errors
+    assert typed_hidden_summary[
+        "hidden_recovery_full_authority_intervals"
+    ] == 1
+    no_full_authority = [
+        {**event, "state": 2} for event in hidden_authority
+    ]
+    assert not validator.outage_yaw_guard_contract(
+        hidden_typed_release, no_full_authority
+    )[0]
 
     # Once the bounded release has completed and the stale reference has been
     # discarded, a later brief authority flap remains nominal and fail-closed.

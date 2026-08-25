@@ -3,8 +3,10 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include "pure_precision_global_localizer/existing_fusion_anchor_tracker.hpp"
+#include "pure_precision_global_localizer/pre_clock_event_buffer.hpp"
 
 namespace
 {
@@ -15,10 +17,15 @@ using pure_precision_global_localizer::FusionAnchorState;
 using pure_precision_global_localizer::ExistingFusionHealthFields;
 using pure_precision_global_localizer::FusionHealthEvaluation;
 using pure_precision_global_localizer::FusionRearmState;
+using pure_precision_global_localizer::PreClockEventBuffer;
+using pure_precision_global_localizer::PreClockReceiveAction;
+using pure_precision_global_localizer::PreClockReceiveGate;
 using pure_precision_global_localizer::Pose2;
 using pure_precision_global_localizer::compose;
 using pure_precision_global_localizer::derivePrecisionAnchor;
 using pure_precision_global_localizer::evaluateExistingFusionHealthFreshness;
+using pure_precision_global_localizer::evaluateFusionAuthorityOrder;
+using pure_precision_global_localizer::evaluateFusionAuthorityTiming;
 using pure_precision_global_localizer::evaluateStrictExistingFusionHealth;
 using pure_precision_global_localizer::applyExistingFusionRearmGate;
 using pure_precision_global_localizer::inverse;
@@ -94,15 +101,52 @@ void activate(
 int main()
 {
   {
+    PreClockReceiveGate receive_gate;
+    require(receive_gate.observe(-1) == PreClockReceiveAction::DEFER,
+      "a negative ROS receive stamp is deferred before clock initialization");
+    require(receive_gate.observe(0) == PreClockReceiveAction::DEFER,
+      "a zero ROS receive stamp is deferred at startup");
+    require(receive_gate.observe(1) == PreClockReceiveAction::PROCESS,
+      "the first positive ROS receive stamp releases startup events");
+    require(receive_gate.observedPositive(),
+      "positive-clock observation is latched");
+    require(receive_gate.observe(0) == PreClockReceiveAction::PROCESS,
+      "clock zero after initialization reaches the strict timing rejection gate");
+
+    PreClockEventBuffer<int> buffer(3U);
+    require(!buffer.defer(1).has_value(), "the first startup event is buffered");
+    require(!buffer.defer(2).has_value(), "the second startup event is buffered");
+    require(!buffer.defer(3).has_value(), "the bounded buffer accepts its capacity");
+    const auto evicted = buffer.defer(4);
+    require(evicted.has_value() && *evicted == 1,
+      "overflow explicitly returns the oldest event for fail-closed rejection");
+    std::vector<int> drained;
+    buffer.drain([&drained](int event) {drained.push_back(event);});
+    require(drained == std::vector<int>({2, 3, 4}),
+      "deferred authority events drain exactly once in DDS arrival order");
+    require(buffer.empty() && buffer.size() == 0U,
+      "draining leaves no hidden startup authority event");
+  }
+
+  {
     ExistingFusionHealthFields fields;
-    fields.level = 0;
+    fields.authority_state = 1;
     fields.recovery_state = "tracking";
     fields.anchor_valid = "true";
     fields.position_fused = "true";
     fields.yaw_fused = "true";
     fields.last_fix_state = "good";
     require(evaluateStrictExistingFusionHealth(fields).healthy,
-      "all six strict existing-fusion health conditions are required and sufficient");
+      "typed healthy authority and every full-SE(2) field are required and sufficient");
+    fields.authority_state = 2;
+    const auto soft_hold = evaluateStrictExistingFusionHealth(fields);
+    require(!soft_hold.healthy && soft_hold.reason == "fusion_soft_bad_hold",
+      "soft-bad hold freezes precision authority even while map fusion remains tracking");
+    fields.authority_state = 0;
+    const auto unhealthy = evaluateStrictExistingFusionHealth(fields);
+    require(!unhealthy.healthy && unhealthy.reason == "fusion_authority_unhealthy",
+      "typed unhealthy authority fails closed");
+    fields.authority_state = 1;
     fields.yaw_fused = "false";
     const auto position_only = evaluateStrictExistingFusionHealth(fields);
     require(!position_only.healthy && position_only.reason == "fusion_yaw_not_fused",
@@ -120,6 +164,109 @@ int main()
       true, "strict_fusion_health_ok", 100.0, 99.7, 100.0, 1.5, 0.25);
     require(!future.healthy && future.reason == "fusion_diagnostics_sample_age_gate",
       "excessively future diagnostic cannot authorize an older sample");
+
+    const auto authority_timing = evaluateFusionAuthorityTiming(
+      99.8, 100.0, 100.1, 1.5, 0.25);
+    require(authority_timing.valid,
+      "fresh source, publication, and receive stamps pass typed-authority timing");
+    const auto stale_source = evaluateFusionAuthorityTiming(
+      98.0, 100.0, 100.1, 1.5, 0.25);
+    require(!stale_source.valid &&
+      stale_source.reason == "fusion_authority_source_stamp_age_gate",
+      "a stale source event fails closed");
+    const auto stale_transport = evaluateFusionAuthorityTiming(
+      99.8, 100.0, 101.6, 1.5, 0.25);
+    require(!stale_transport.valid &&
+      stale_transport.reason == "fusion_authority_receive_age_gate",
+      "a typed event received too late fails closed");
+
+    const auto first_authority = evaluateFusionAuthorityOrder(
+      false, 0U, 0U, 0U, false, 10U, 1U, 100000000000U);
+    require(first_authority.accepted, "the first valid authority event is accepted");
+    const auto same_stamp_next_sequence = evaluateFusionAuthorityOrder(
+      true, 10U, 1U, 100000000000U, false, 10U, 2U, 100000000000U);
+    require(same_stamp_next_sequence.accepted,
+      "a later sequence preserves two transitions at the same ROS stamp");
+    const auto duplicate_sequence = evaluateFusionAuthorityOrder(
+      true, 10U, 2U, 100000000000U, false, 10U, 2U, 100100000000U);
+    require(!duplicate_sequence.accepted &&
+      duplicate_sequence.reason == "fusion_authority_sequence_not_increasing",
+      "duplicate or reordered authority sequence is rejected");
+    const auto same_session_backstep = evaluateFusionAuthorityOrder(
+      true, 10U, 2U, 100000000000U, false, 10U, 3U, 99900000000U);
+    require(!same_session_backstep.accepted &&
+      same_session_backstep.reason == "fusion_authority_stamp_backstep",
+      "a higher sequence cannot hide a same-session publication-stamp backstep");
+    const auto retired_session = evaluateFusionAuthorityOrder(
+      true, 11U, 4U, 101000000000U, true, 10U, 99U, 102000000000U);
+    require(!retired_session.accepted &&
+      retired_session.reason == "fusion_authority_retired_session_event",
+      "a retired producer session is rejected even with a newer timestamp");
+    const auto new_session_bad_stamp = evaluateFusionAuthorityOrder(
+      true, 10U, 2U, 100000000000U, false, 11U, 1U, 100000000000U);
+    require(!new_session_bad_stamp.accepted &&
+      new_session_bad_stamp.reason ==
+      "fusion_authority_new_session_stamp_not_increasing",
+      "a new producer session must advance the publication timestamp");
+
+    struct DeferredAuthority
+    {
+      std::uint64_t sequence;
+      double source_stamp_sec;
+      double publication_stamp_sec;
+      std::uint64_t publication_stamp_ns;
+    };
+    PreClockReceiveGate startup_gate;
+    PreClockEventBuffer<DeferredAuthority> pending_authorities(4U);
+    for (std::uint64_t sequence = 1U; sequence <= 3U; ++sequence) {
+      require(startup_gate.observe(0) == PreClockReceiveAction::DEFER,
+        "authority received before positive ROS time remains deferred");
+      require(!pending_authorities.defer(
+          DeferredAuthority{sequence, 99.8, 100.0, 100000000000U}).has_value(),
+        "valid startup authority fits in the bounded queue");
+    }
+    require(startup_gate.observe(100100000000LL) == PreClockReceiveAction::PROCESS,
+      "the first positive receive time opens deterministic queue draining");
+    bool have_ordered_authority = false;
+    std::uint64_t accepted_sequence = 0U;
+    std::uint64_t accepted_stamp_ns = 0U;
+    std::vector<std::uint64_t> accepted_sequences;
+    pending_authorities.drain(
+      [&](const DeferredAuthority & event) {
+        const auto timing = evaluateFusionAuthorityTiming(
+          event.source_stamp_sec, event.publication_stamp_sec, 100.1, 1.5, 0.25);
+        require(timing.valid,
+          "deferred authority is checked with the first defensible receive time");
+        const auto ordered = evaluateFusionAuthorityOrder(
+          have_ordered_authority, 10U, accepted_sequence, accepted_stamp_ns,
+          false, 10U, event.sequence, event.publication_stamp_ns);
+        require(ordered.accepted,
+          "same-stamp authority transitions retain FIFO sequence order");
+        have_ordered_authority = true;
+        accepted_sequence = event.sequence;
+        accepted_stamp_ns = event.publication_stamp_ns;
+        accepted_sequences.push_back(event.sequence);
+      });
+    require(accepted_sequences == std::vector<std::uint64_t>({1U, 2U, 3U}),
+      "deferred authority is timing- and order-gated exactly once in arrival order");
+
+    PreClockReceiveGate stale_startup_gate;
+    PreClockEventBuffer<DeferredAuthority> stale_pending(1U);
+    require(stale_startup_gate.observe(0) == PreClockReceiveAction::DEFER,
+      "stale startup fixture begins before ROS time");
+    require(!stale_pending.defer(
+        DeferredAuthority{1U, 99.8, 100.0, 100000000000U}).has_value(),
+      "stale fixture is queued without bypassing validation");
+    require(stale_startup_gate.observe(102000000000LL) == PreClockReceiveAction::PROCESS,
+      "a late positive clock still releases the queued fixture");
+    stale_pending.drain(
+      [](const DeferredAuthority & event) {
+        const auto timing = evaluateFusionAuthorityTiming(
+          event.source_stamp_sec, event.publication_stamp_sec, 102.0, 1.5, 0.25);
+        require(!timing.valid &&
+          timing.reason == "fusion_authority_receive_age_gate",
+          "queueing never exempts an authority event from the original age gate");
+      });
 
     FusionRearmState rearm{true, false, false};
     FusionHealthEvaluation healthy{true, "strict_fusion_health_ok", 0.0};
@@ -184,6 +331,10 @@ int main()
     require(!tracker.globalOutputReady(), "second independent candidate remains silent");
     const auto activation = tracker.observeCandidate(candidate(1.6, pc2_third));
     require(activation.startup_activated, "third candidate activates atomically");
+    require(activation.stable_candidate_count == 3U,
+      "activation update preserves the committed stability count");
+    requireNear(activation.candidate_yaw_delta_rad, 0.015, 1.0e-12,
+      "activation update preserves the committed fixed-reference yaw delta");
     require(tracker.globalOutputReady(), "PC2 startup becomes publishable");
     requirePoseNear(tracker.appliedAnchor(), pc2_third, 0.0, 0.0,
       "first applied PC2 anchor is exact");

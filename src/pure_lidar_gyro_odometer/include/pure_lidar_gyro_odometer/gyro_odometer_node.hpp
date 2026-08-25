@@ -31,6 +31,7 @@
 #include <pcl/point_types.h>
 
 #include "pure_lidar_gyro_odometer/se2_fixed_lag_smoother.hpp"
+#include "pure_lidar_gyro_odometer/stop_state_estimator.hpp"
 #include "pure_lidar_gyro_odometer/tracking_mode.hpp"
 #include "pure_lidar_gyro_odometer/yaw_rate_integrator.hpp"
 
@@ -122,13 +123,13 @@ private:
   void onPoints(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
 
   void onPublishTimer();
-  void updateStopState(const rclcpp::Time & nowt);
+  bool updateStopStateFromImu(const ImuSample & sample);
+  bool stoppedAtLocked(const rclcpp::Time & stamp) const;
   void publishDiagnostics(const rclcpp::Time & stamp, const std::string & level, const std::string & msg);
   void publishObservabilityDebug(
     const rclcpp::Time & stamp, const LidarOdomSample & sample, const std::string & guess_mode_used,
     const std::string & next_guess_mode);
 
-  bool computeAccVariance(const rclcpp::Time & nowt, double window_sec, double & out_var) const;
   bool computeImuDeltaYaw(const rclcpp::Time & t0, const rclcpp::Time & t1, double & out_dyaw) const;
   bool computeWheelDistance(const rclcpp::Time & t0, const rclcpp::Time & t1, double & out_dist) const;
   bool updateMiniSmootherLocked(const ScanFactor & factor);
@@ -393,10 +394,9 @@ private:
 
   std::string last_registration_source_{"none"};
 
-  // Stop state
-  bool is_stopped_{false};
-  bool has_stop_candidate_since_{false};
-  rclcpp::Time stop_candidate_since_;
+  // The stop FSM is advanced only by the strictly ordered IMU callback.
+  // LiDAR and timer callbacks use immutable event-time history queries.
+  stop::StopStateEstimator stop_state_estimator_;
 };
 
 }  // namespace pure_gyro_odometer

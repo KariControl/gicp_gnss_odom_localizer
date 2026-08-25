@@ -73,6 +73,8 @@ int main()
       "guard starts disarmed");
     require(std::isnan(guard.activeReferenceVariance()),
       "disarmed guard has no active outage-reference variance");
+    require(guard.activeReferenceEpoch() == 0U,
+      "guard starts before the first active-reference epoch");
     require(guard.observeTrustedReference(10.0, 0.20, 0.30, 0.01),
       "finite independently gated reference is accepted");
     require(guard.state() == OutageYawState::READY,
@@ -106,6 +108,8 @@ int main()
       "trusted uncertainty and deterministic slew lag are reported");
     requireNear(guard.activeReferenceVariance(), 0.01, 0.0,
       "outage entry snapshots trusted-reference variance");
+    require(guard.activeReferenceEpoch() == 1U,
+      "first READY-to-outage snapshot starts epoch one");
 
     const auto first_step = guard.advance(10.20, 0.22, 1.26, false);
     require(first_step.offset_advanced, "monotonic outage callback advances offset");
@@ -186,6 +190,44 @@ int main()
       "completed transparent release adds no variance");
     require(std::isnan(guard.activeReferenceVariance()),
       "completed release clears active outage-reference variance");
+    require(guard.activeReferenceEpoch() == 1U,
+      "completed release retains the cumulative snapshot epoch");
+
+    const auto next_episode = guard.advance(11.30, 0.25, 1.44, false);
+    require(next_episode.outage_started &&
+      next_episode.state == OutageYawState::OUTAGE_SLEW,
+      "authority loss after a completed release starts a new outage episode");
+    require(guard.activeReferenceEpoch() == 2U,
+      "new READY-to-outage snapshot advances the epoch");
+    requireNear(guard.activeReferenceVariance(), 0.008, 0.0,
+      "a new epoch may snapshot a lower independently gated variance");
+  }
+
+  {
+    OutageYawGuard guard(testConfig());
+    require(guard.observeTrustedReference(40.0, 0.0, 0.1, 0.01),
+      "same-stamp authority-edge test reference accepted");
+    const auto outage = guard.advance(40.1, 0.0, 0.5, false);
+    require(outage.outage_started && outage.state == OutageYawState::OUTAGE_SLEW,
+      "same-stamp authority-edge test enters outage");
+    const auto outage_step = guard.advance(40.2, 0.0, 0.5, false);
+    require(outage_step.offset_advanced &&
+      std::fabs(outage_step.applied_offset_rad) > 0.0,
+      "same-stamp authority-edge test first creates a visible offset");
+    const auto applied_step_count = guard.appliedStepCount();
+    const auto recovery = guard.advance(40.2, 0.0, 0.5, true);
+    require(recovery.recovery_started &&
+      recovery.state == OutageYawState::RECOVERY_RELEASE,
+      "a later healthy authority sequence at the same stamp starts release");
+    requireNear(recovery.applied_offset_rad, outage_step.applied_offset_rad, 0.0,
+      "same-stamp authority recovery cannot apply a numerical yaw step");
+    require(guard.appliedStepCount() == applied_step_count,
+      "same-stamp authority recovery cannot increment the numerical-step counter");
+    const auto duplicate_healthy = guard.advance(40.2, 0.0, 0.5, true);
+    require(!duplicate_healthy.recovery_started && !duplicate_healthy.offset_advanced &&
+      duplicate_healthy.state == OutageYawState::RECOVERY_RELEASE &&
+      guard.recoveryCount() == 1U && guard.appliedStepCount() == applied_step_count,
+      "repeating the healthy endpoint cannot step or double-count recovery");
   }
 
   {
@@ -252,6 +294,8 @@ int main()
       "outage re-entry cannot jump the current visible yaw");
     requireNear(guard.activeReferenceVariance(), 0.02, 0.0,
       "lower-variance re-entry preserves the conservative prior snapshot");
+    require(guard.outageCount() == 2U && guard.activeReferenceEpoch() == 1U,
+      "release re-entry counts an outage edge without starting a new epoch");
     const double reentry_residual = wrapAngle(
       reentry.target_offset_rad - reentry.applied_offset_rad);
     requireNear(
@@ -269,6 +313,8 @@ int main()
       "session reset clears active outage-reference variance");
     requireNear(guard.additionalVariance(), 0.0, 0.0,
       "session reset clears additional yaw variance");
+    require(guard.activeReferenceEpoch() == 1U,
+      "session reset cannot make the cumulative epoch counter regress");
   }
 
   {

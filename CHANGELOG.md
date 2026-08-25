@@ -5,16 +5,17 @@
 ### Added
 
 - Added a canonical evaluation index with separate LiDAR/IMU-only,
-  LiDAR/IMU/GNSS, and Autoware LSim result pages, including explicit alignment,
-  artifact, CPU-measurement, and RViz-video publication requirements.
+  LiDAR/IMU/GNSS, and Autoware localization-interface result pages, including
+  explicit alignment, artifact, CPU-measurement, and RViz-video publication
+  requirements.
 - Added sensor- and recording-scoped LiDAR/IMU evaluation profiles, separated
   into canonical `accepted` inputs and retained `experimental` inputs.
 - Added shared Hesai 32-Line + IMU + RTK GNSS evaluation overrides and
   descriptive private recording manifests under
   `config/evaluation/lidar_imu_gnss`; component parameter defaults remain in
   their owning packages.
-- Added the `hesai-rosbag23` Autoware Logging Simulation profile for the private
-  Hesai 32-Line + IMU + RTK GNSS recordings, including calibrated
+- Added the `hesai-rosbag23` Autoware localization-interface profile for the
+  private Hesai 32-Line + IMU + RTK GNSS recordings, including calibrated
   static transforms, XT parameters, packaged NMEA projection provenance, a
   100 Hz simulation clock, input-topic allowlisting, and English operating
   guidance.
@@ -32,6 +33,10 @@
 - Added a configurable visual-only Lexus Z offset. The Hesai ROSBAG2/3 default
   of `-1.66 m` is a rounded ground-plane rendering fit and does not change TF,
   point-cloud data, localization output, or sensor calibration.
+- Added opt-in `--rqt-robot-monitor` support to the host evaluation runners and
+  Docker wrapper. The isolated LiDAR/IMU path starts diagnostic aggregation only
+  when requested, and precision diagnostics are grouped under dedicated
+  `submap_matcher` and `precision_global_localizer` branches.
 - Added an opt-in guarded XY-only GNSS recovery mode for a stopped
   single-antenna vehicle that regains RTK position while yaw remains
   unobservable.
@@ -55,6 +60,10 @@
   bounded release; validation checks the state-specific residual formulas and
   rejects missing, duplicated, non-finite, negative, cleared, or refreshed-
   during-release values.
+- Added a typed fusion-authority stream with session/sequence identity and a
+  bounded, non-authoritative startup FIFO for the simulated-time interval before
+  the consumer observes a positive clock. FIFO overflow latches fail-closed,
+  and a real-node integration test covers deferred acceptance and overflow.
 
 ### Changed
 
@@ -89,12 +98,13 @@
   `run_hesai_localization_bag.sh`. Its primary selector is now
   `--localization-mode baseline|precision`; the former `--tracking-mode`
   values remain warning-emitting argument aliases only.
-- Autoware lSIM now waits for recorder discovery and the first valid
-  kinematic-state message, records GNSS/deskew/fusion diagnostics, preserves
-  the selected sensor profile when switching tracking mode, and restores
-  output ownership to the host user.
-- RViz lSIM uses a localization-specific display profile for the deskewed
-  point cloud, generated trajectory, custom localization-status Display,
+- The Autoware localization-interface runner now waits for recorder discovery
+  and the first valid kinematic-state message, records GNSS/deskew/fusion
+  diagnostics, preserves the selected sensor profile when switching tracking
+  mode, and restores output ownership to the host user.
+- The localization-interface RViz configuration uses a localization-specific
+  display profile for the deskewed point cloud, generated trajectory, custom
+  localization-status Display,
   covariance ellipse, live `map -> base_link` state, and vehicle axes; the RViz and presentation
   nodes must remain alive through replay completion. RViz's direct diagnostics
   subscription is a runtime gate. Live-only visualization topics are excluded
@@ -124,12 +134,16 @@
   the generic fusion and launch defaults remain disabled.
 - LiDAR/IMU evaluation configuration now uses `config/evaluation/lidar_imu`
   rather than encoding the reference provider in the directory name.
-- Native Hesai and Autoware LSim runners now use the packaged NMEA runtime
-  parameters with an empty evaluation override. Provenance checks require their
-  projector, datum, origin, and scale to match `map_projector_info.yaml`.
-- Published Autoware LSim evidence now reports the current-default-projection
-  Course 2 headless interface and runtime checks. Additional private recordings
-  remain internal regression inputs.
+- Native Hesai and Autoware localization-interface runners now use the packaged
+  NMEA runtime parameters with an empty evaluation override. Provenance checks
+  require their projector, datum, origin, and scale to match
+  `map_projector_info.yaml`.
+- Published Autoware localization-interface evidence now reports the
+  current-default-projection Course 2 headless interface and runtime checks.
+  Additional private recordings remain internal regression inputs.
+- Stop detection now advances only on strictly increasing IMU events. A fresh
+  causal wheel or LiDAR speed estimate is ANDed with the IMU quiet gate; when no
+  speed estimate exists, the specified IMU-only fallback remains active.
 
 ### Migration
 
@@ -148,20 +162,24 @@
 ### Fixed
 
 - Removed the evaluation-only site-centred NMEA-origin substitution from the
-  Hesai runners and restored the packaged default projection. A new full-rate
-  Course 2 run verifies the runtime-parameter-to-map-metadata match and empty
-  override. With the accepted orientation-only yaw guard and retained yaw-
-  reference covariance, it passes 53/53 accuracy hard gates, 20/20 startup
-  yaw-safety checks, 28/28 runtime checks, 17/17 non-intrusion checks, and its
-  publication-provenance suites. Additional private recordings are retained
-  for internal validation without publishing their identities or results.
+  Hesai runners and restored the packaged default projection. The adopted
+  2026-08-25 Course 2 result verifies the runtime-parameter-to-map-metadata
+  match and empty override with `gyro_bias.initial_bg_rad_s=-0.00210` (`rad/s`),
+  adaptive gyro bias and the smoother enabled, ZUPT/NHC disabled, and typed
+  fusion authority active. It passes 55/55 GLIM A/B hard gates over 8,477 local
+  and 7,805 global exact common samples. Its fusion-outage RMSE window is
+  121.500028 s; the distinct RTK-Q4 gap is 117.252446 s, followed by finite
+  global localization 4.147737 s after Q4 return. Additional private recordings
+  remain internal validation inputs without publishing their identities or
+  source data.
 - Fixed the Autoware overlay image to use colcon's global `--log-base` syntax
   and a merged install tree, and made ROS setup sourcing safe with strict shell
   mode enabled.
 - Empty optional twist topics are no longer emitted as malformed ROS launch
   arguments.
-- The lSIM RViz PointCloud2 display now uses Jazzy's explicit best-effort,
-  volatile QoS schema so the deskewed SensorDataQoS cloud is rendered.
+- The localization-interface RViz PointCloud2 display now uses Jazzy's explicit
+  best-effort, volatile QoS schema so the deskewed SensorDataQoS cloud is
+  rendered.
 
 ## 0.3.0-rc6 - 2026-08-08
 
@@ -184,8 +202,8 @@
 
 - CPU-only Autoware Jazzy Docker image pinned to
   `ghcr.io/autowarefoundation/autoware:universe-devel-jazzy-1.9.0`.
-- Docker Compose profiles for headless LSim and optional RViz software
-  rendering.
+- Docker Compose profiles for headless Autoware localization-interface
+  evaluation and optional RViz software rendering.
 - `run_autoware_lsim_docker.sh`, which builds the overlay, launches the
   localization replacement, replays a bag, automatically publishes an initial
   map anchor without GNSS, records test/reference outputs, and shuts down
@@ -194,8 +212,8 @@
 
 ### Changed
 
-- Autoware LSim is now documented as a Docker stage; native rosbag-only testing
-  remains the first validation stage.
+- The Autoware localization-interface evaluation is now documented as a Docker
+  stage; native rosbag-only testing remains the first validation stage.
 - RViz is disabled by default for CPU-only/headless timing evaluation.
 
 ## 0.3.0-rc4 - 2026-08-08
@@ -203,7 +221,9 @@
 ### Added
 
 - Added `pure_autoware_localization_adapter`, which converts fused `map -> base_link` odometry to Autoware's `/localization/kinematic_state`, pose-with-covariance, acceleration, and direct TF interfaces using standard ROS messages.
-- Added `autoware_lsim_localization.launch.py` for localization-only Autoware logging simulation with Autoware map/localization, perception, planning, control, system, and API modules disabled.
+- Added `autoware_lsim_localization.launch.py` for localization-only Autoware
+  integration with Autoware map/localization, perception, planning, control,
+  system, and API modules disabled.
 - Added `use_map_odom_fusion`, `use_imu_deskew`, input-topic, fused-output, and fusion-TF launch arguments so standalone bag replay and Autoware integration use the same estimator configuration.
 - Added `script/play_localization_bag.sh` to normalize bag input topics, preserve sensor static TF by default, and isolate recorded localization outputs under `/reference/...`.
 - Added a staged standalone-to-Autoware evaluation guide and a ROS-independent acceleration-estimator test.
@@ -213,7 +233,9 @@
 - Existing `pure_*` package names, estimator C++ namespaces, custom GNSS message type, estimator topics, frames, and YAML keys remain unchanged.
 - `pure_autoware_localization_adapter` is additive and has no compile-time dependency on Autoware message packages.
 - The Autoware launch resolves `autoware_launch` only when that launch file is invoked; standalone builds and bag tests do not require an Autoware workspace.
-- This is a localization-only Logging Simulation integration. Full planning/control use still requires map/routing, initialization/status integration, vehicle interfaces, and separate validation.
+- This is a localization-interface-only integration. Full planning/control use
+  still requires map/routing, initialization/status integration, vehicle
+  interfaces, and separate validation.
 
 ## 0.3.0-rc3 - 2026-08-08
 

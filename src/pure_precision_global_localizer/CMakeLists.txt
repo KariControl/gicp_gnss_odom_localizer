@@ -69,6 +69,7 @@ install(FILES README.md DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   enable_testing()
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
   add_executable(test_precision_anchor_estimator
     test/test_precision_anchor_estimator.cpp)
@@ -101,6 +102,17 @@ if(BUILD_TESTING)
     ${PROJECT_NAME}_core Eigen3::Eigen)
   add_test(NAME test_outage_yaw_guard
     COMMAND test_outage_yaw_guard)
+
+  add_test(
+    NAME test_pre_clock_authority_integration
+    COMMAND
+      ${Python3_EXECUTABLE} -B
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/test_pre_clock_authority_integration.py
+      $<TARGET_FILE:${PROJECT_NAME}_node>)
+  set_tests_properties(test_pre_clock_authority_integration PROPERTIES
+    ENVIRONMENT
+      "PYTHONUNBUFFERED=1;ROS_DOMAIN_ID=197;ROS_LOG_DIR=${CMAKE_CURRENT_BINARY_DIR}/ros_test_logs"
+    TIMEOUT 30)
 endif()
 
 ament_export_include_directories(include)

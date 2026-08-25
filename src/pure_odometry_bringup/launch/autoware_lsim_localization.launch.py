@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Localization-only Autoware logging-simulation integration.
+"""Localization-only Autoware localization-interface integration.
 
 Autoware's standard localization, map, perception, planning, control, system and API
 components are disabled. The GICP/GNSS stack publishes the Autoware localization
@@ -158,7 +158,7 @@ def generate_launch_description():
             "gnss_fix_velocity_topic": gnss_fix_velocity_topic,
             "fused_odom_topic": fused_odom_topic,
             # The adapter publishes map -> base_link directly. Avoid a second,
-            # incomplete map -> odom TF chain in localization-only LSim.
+            # incomplete map -> odom TF chain in this integration launch.
             "fusion_publish_tf": "false",
             "log_level": log_level,
         }.items(),

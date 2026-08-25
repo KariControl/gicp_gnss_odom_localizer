@@ -13,7 +13,7 @@ as another result summary.
   metrics.
 - `hesai_32line_imu_rtk_gnss_course_2`: Hesai Course 2 local/global XY and yaw
   error plots plus normalized metrics.
-- `autoware_lsim_hesai_course_2`: Autoware Logging Simulation evidence and the
+- `autoware_lsim_hesai_course_2`: Autoware localization-interface evidence and the
   representative RViz media.
 - `manifest.json`: hashes and publication contracts for committed artifacts and
   their pinned local sources.
@@ -21,7 +21,7 @@ as another result summary.
 Use the public result pages for interpretation:
 [LiDAR/IMU-only](../lidar_imu.md),
 [LiDAR/IMU/GNSS](../lidar_imu_gnss.md), and
-[Autoware Logging Simulation](../autoware_lsim.md).
+[Autoware localization-interface evaluation](../autoware_lsim.md).
 
 ## Publication policy
 
@@ -34,6 +34,11 @@ Use the public result pages for interpretation:
 - The Hesai directory intentionally has no trajectory plot. Its fail-closed
   publication contract permits only the reviewed local/global XY and yaw error
   plots and normalized metrics.
+- The Hesai accuracy directory is pinned to the adopted 2026-08-25 Course 2
+  run. Its source profile used `gyro_bias.initial_bg_rad_s=-0.00210` (`rad/s`),
+  adaptive gyro bias and the smoother enabled, ZUPT/NHC disabled, and typed
+  fusion authority active. Replacing it requires another reviewed source
+  contract and regenerated assets.
 - Hesai assets must retain the packaged NMEA projection contract: Transverse
   Mercator, WGS84, origin `35.681236, 139.767125`, scale `0.9996`, matching
   `map_projector_info.yaml`, with no evaluation-origin override. Alignment and

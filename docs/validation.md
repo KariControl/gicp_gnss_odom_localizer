@@ -115,7 +115,7 @@ maintained at the following canonical locations:
 |---|---|---|
 | Velodyne 32-Line and Livox MID-360 LiDAR/IMU-only localization | [LiDAR/IMU-only evaluation](evaluation/lidar_imu.md) | [Velodyne metrics](evaluation/assets/velodyne_32line_external_imu/metrics.json), [MID-360 metrics](evaluation/assets/livox_mid360_internal_imu/metrics.json) |
 | Hesai 32-Line LiDAR/IMU/GNSS localization | [LiDAR/IMU/GNSS evaluation](evaluation/lidar_imu_gnss.md) | [Hesai metrics](evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/metrics.json) |
-| Autoware localization-interface integration | [Autoware Logging Simulation](evaluation/autoware_lsim.md) | [Autoware metrics](evaluation/assets/autoware_lsim_hesai_course_2/metrics.json) |
+| Autoware localization-interface integration | [Autoware localization-interface evaluation](evaluation/autoware_lsim.md) | [Autoware metrics](evaluation/assets/autoware_lsim_hesai_course_2/metrics.json) |
 
 The [evaluation index](evaluation/README.md) is the status overview. Asset
 provenance and hashes are defined by the [asset policy](evaluation/assets/README.md)

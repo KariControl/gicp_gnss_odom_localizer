@@ -5,6 +5,9 @@ precision_global_localizer:
     submap_correction_topic: /localization/submap_correction
     gnss_input_topic: /localization/gnss_fusion_input
     existing_global_odom_topic: /localization/ekf_odom
+    fusion_authority_topic: /localization/gnss_map_odom_fusion_authority
+    # Compatibility-only diagnostic inputs. Global authority is decided from
+    # the typed, event-driven fusion_authority_topic above.
     fusion_diagnostics_topic: /diagnostics
     precision_local_odom_topic: /localization/precision_local_odom
     precision_global_odom_topic: /localization/precision_global_odom
@@ -17,9 +20,8 @@ precision_global_localizer:
     sync.max_extrapolation_sec: 0.12
     sync.max_pending_sec: 2.0
 
-    # The only authoritative global-anchor source. A candidate is accepted
-    # only while the named existing-fusion DiagnosticStatus passes every
-    # strict full-SE(2) health field.
+    # Deprecated compatibility identifier; it is no longer used as a machine
+    # authority signal.
     fusion_health.status_name: localization/gnss_map_odom_fusion
     fusion_health.max_age_sec: 1.5
     fusion_health.max_future_skew_sec: 0.25

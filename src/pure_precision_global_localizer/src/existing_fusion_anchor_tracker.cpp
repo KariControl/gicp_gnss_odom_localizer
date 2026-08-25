@@ -55,8 +55,10 @@ FusionHealthEvaluation evaluateStrictExistingFusionHealth(
   const ExistingFusionHealthFields & fields)
 {
   FusionHealthEvaluation result;
-  if (fields.level != 0) {
-    result.reason = "fusion_level_not_ok";
+  if (fields.authority_state == 2) {
+    result.reason = "fusion_soft_bad_hold";
+  } else if (fields.authority_state != 1) {
+    result.reason = "fusion_authority_unhealthy";
   } else if (fields.recovery_state != "tracking") {
     result.reason = "fusion_not_tracking";
   } else if (fields.anchor_valid != "true") {
@@ -104,6 +106,76 @@ FusionHealthEvaluation evaluateExistingFusionHealthFreshness(
   } else {
     result.healthy = true;
     result.reason = "strict_fusion_health_ok";
+  }
+  return result;
+}
+
+FusionAuthorityTimingEvaluation evaluateFusionAuthorityTiming(
+  double source_stamp_sec,
+  double publish_stamp_sec,
+  double received_stamp_sec,
+  double max_age_sec,
+  double max_future_skew_sec)
+{
+  FusionAuthorityTimingEvaluation result;
+  if (!std::isfinite(source_stamp_sec) || source_stamp_sec <= 0.0 ||
+    !std::isfinite(publish_stamp_sec) || publish_stamp_sec <= 0.0 ||
+    !std::isfinite(received_stamp_sec) || received_stamp_sec <= 0.0 ||
+    !finitePositive(max_age_sec) || !std::isfinite(max_future_skew_sec) ||
+    max_future_skew_sec < 0.0)
+  {
+    result.reason = "fusion_authority_invalid_time";
+    return result;
+  }
+  result.source_age_sec = publish_stamp_sec - source_stamp_sec;
+  result.transport_age_sec = received_stamp_sec - publish_stamp_sec;
+  if (result.source_age_sec < -max_future_skew_sec ||
+    result.source_age_sec > max_age_sec)
+  {
+    result.reason = "fusion_authority_source_stamp_age_gate";
+  } else if (result.transport_age_sec < -max_future_skew_sec ||
+    result.transport_age_sec > max_age_sec)
+  {
+    result.reason = "fusion_authority_receive_age_gate";
+  } else {
+    result.valid = true;
+    result.reason = "fusion_authority_timing_ok";
+  }
+  return result;
+}
+
+FusionAuthorityOrderEvaluation evaluateFusionAuthorityOrder(
+  bool previous_received,
+  std::uint64_t previous_session_id,
+  std::uint64_t previous_sequence,
+  std::uint64_t previous_stamp_ns,
+  bool session_retired,
+  std::uint64_t session_id,
+  std::uint64_t sequence,
+  std::uint64_t stamp_ns)
+{
+  FusionAuthorityOrderEvaluation result;
+  if (session_id == 0U || sequence == 0U || stamp_ns == 0U) {
+    result.reason = "fusion_authority_invalid_order_fields";
+  } else if (session_retired) {
+    result.reason = "fusion_authority_retired_session_event";
+  } else if (!previous_received) {
+    result.accepted = true;
+    result.reason = "fusion_authority_first_event";
+  } else if (session_id == previous_session_id && sequence <= previous_sequence) {
+    result.reason = "fusion_authority_sequence_not_increasing";
+  } else if (session_id == previous_session_id &&
+    (previous_stamp_ns == 0U || stamp_ns < previous_stamp_ns))
+  {
+    result.reason = "fusion_authority_stamp_backstep";
+  } else if (session_id != previous_session_id &&
+    (previous_stamp_ns == 0U || stamp_ns <= previous_stamp_ns))
+  {
+    result.reason = "fusion_authority_new_session_stamp_not_increasing";
+  } else {
+    result.accepted = true;
+    result.reason = session_id == previous_session_id ?
+      "fusion_authority_sequence_ok" : "fusion_authority_new_session";
   }
   return result;
 }

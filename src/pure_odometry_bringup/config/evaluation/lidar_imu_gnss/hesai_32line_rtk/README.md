@@ -5,6 +5,13 @@ manifests for Hesai 32-Line + IMU + RTK GNSS evaluation. Course 2 is the
 published example; additional manifests remain internal validation inputs and
 are intentionally not described here.
 
+The committed public accuracy artifact is the adopted 2026-08-25 Course 2 run.
+Its effective odometer profile used
+`gyro_bias.initial_bg_rad_s=-0.00210` (`rad/s`), adaptive gyro-bias estimation and
+the fixed-lag smoother enabled, and ZUPT/NHC disabled. The global path used the
+typed fusion-authority startup contract. All 55/55 GLIM A/B hard gates passed;
+the result remains specific to the documented recording and effective files.
+
 The rosbag files are private and are not distributed with this repository. The
 dataset manifests provide descriptive identities, local default paths, topic
 contracts, reference metadata, and audited static transforms; they contain no
