@@ -47,11 +47,14 @@ COPY --chown=aw:aw tools/analyze_autoware_lsim_output.py \
   /opt/gicp_gnss_odom_localizer/bin/analyze_autoware_lsim_output.py
 COPY --chown=aw:aw docker/autoware_lsim/container_entrypoint.sh \
   /opt/gicp_gnss_odom_localizer/bin/run_autoware_lsim.sh
+COPY --chown=aw:aw docker/autoware_lsim/run_localization_contract_test.sh \
+  /opt/gicp_gnss_odom_localizer/bin/run_localization_contract_test.sh
 
 RUN chmod 0755 \
       /opt/gicp_gnss_odom_localizer/bin/play_localization_bag.sh \
       /opt/gicp_gnss_odom_localizer/bin/analyze_autoware_lsim_output.py \
-      /opt/gicp_gnss_odom_localizer/bin/run_autoware_lsim.sh && \
+      /opt/gicp_gnss_odom_localizer/bin/run_autoware_lsim.sh \
+      /opt/gicp_gnss_odom_localizer/bin/run_localization_contract_test.sh && \
     mkdir -p /bags /output && \
     chown -R aw:aw /bags /output /opt/gicp_gnss_odom_localizer
 

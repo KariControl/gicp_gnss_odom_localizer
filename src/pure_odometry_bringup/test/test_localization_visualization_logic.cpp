@@ -35,7 +35,7 @@ TEST(LocalizationVisualizationLogic, InterfaceRequiresFreshLiveDiagnostic)
   using pure_odometry_bringup::combineInterfaceWithOutput;
   EXPECT_EQ(classifyInterface(nullptr, false), InterfaceVisualState::WAITING);
   auto active = makeStatus(
-    "Autoware localization interface active",
+    "localization interface adapter active",
     diagnostic_msgs::msg::DiagnosticStatus::OK);
   EXPECT_EQ(classifyInterface(&active, true), InterfaceVisualState::ACTIVE);
   EXPECT_EQ(classifyInterface(&active, false), InterfaceVisualState::STALE);

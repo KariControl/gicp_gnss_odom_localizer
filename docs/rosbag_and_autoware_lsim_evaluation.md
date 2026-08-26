@@ -4,7 +4,8 @@
 > [docs/evaluation](evaluation/README.md). This page defines the reusable
 > execution workflow; dated result summaries live under that evaluation index.
 
-This workflow deliberately uses the same estimator configuration in two stages:
+This workflow deliberately uses the same estimator configuration for a
+standalone prerequisite and Stage A integration:
 
 1. validate the localization stack by itself against a recorded bag;
 2. keep the estimator unchanged and connect its fused output to Autoware's
@@ -33,7 +34,7 @@ Do not replay a recorded localization TF and publish the test localizer's TF on
 the same names. The supplied replay helper isolates recorded outputs under
 `/reference/...`.
 
-## 2. Stage A: standalone rosbag test
+## 2. Prerequisite: standalone rosbag test
 
 Build and source the workspace:
 
@@ -148,7 +149,7 @@ The fused output is:
 Test normal tracking, GNSS loss, FLOAT/no-fix, delayed fixes, one isolated
 outlier, stationary return, moving return, and repeated short outages.
 
-## 3. Stage B: replace Autoware localization in Docker
+## 3. Stage A: Autoware localization-interface integration in Docker
 
 The Autoware stage is containerized. The host needs Docker Engine and the
 Docker Compose v2 plugin, but it does **not** need ROS 2, Autoware, CUDA, or a
@@ -162,6 +163,24 @@ ghcr.io/autowarefoundation/autoware:universe-devel-jazzy-1.9.0
 The container starts the same `autoware_lsim_localization.launch.py` used by the
 native workflow. Autoware's standard map/localization, perception, planning,
 control, system, API, and sensor drivers remain disabled.
+
+### Deterministic interface and diagnostic contract
+
+Before using a recording, exercise the version-selected contract:
+
+```bash
+./script/run_autoware_localization_contract_docker.sh
+```
+
+It launches the production adapter and the actual Autoware 1.9.0
+`pose_instability_detector` and `localization_error_monitor` nodes. Synthetic
+normal, pose-fault, covariance-fault, and recovery phases verify adapter
+messages, stamps and frames, agreement of `map -> base_link` with the input
+pose, absence of a competing dynamic `base_link` parent, Autoware diagnostic
+identities/keys, and `OK -> ERROR -> OK` behavior. The launch assigns that TF
+edge to the adapter; a bag cannot identify duplicate publishers of the same
+edge. This is a deterministic interface contract, not a recording-level
+accuracy test.
 
 ### 3.1 One-command headless run
 
@@ -177,12 +196,14 @@ From the repository root:
 The wrapper performs the following sequence:
 
 1. builds a local Docker image using the pinned no-CUDA Autoware image;
-2. launches localization-only Autoware plus this estimator and adapter;
-3. waits until `/localization/kinematic_state` has a publisher;
+2. launches localization-only Autoware plus this estimator, adapter, and the
+   two localization monitor nodes;
+3. waits until `/localization/kinematic_state` and
+   `/localization/twist_with_covariance` have publishers;
 4. starts output recording;
 5. replays the input bag with recorded localization moved to `/reference/...`;
-6. when GNSS is disabled, waits for the first LiDAR odometry sample and
-   publishes the configured `/initialpose` automatically;
+6. when GNSS is disabled, waits for a positive `/clock` and a nonzero-stamped
+   local odometry sample, then publishes the configured `/initialpose`;
 7. stops the recorder and launch cleanly after playback finishes.
 
 The default result root is:
@@ -363,11 +384,12 @@ network tuning. Use this profile on a trusted local development machine.
 
 ## 4. Autoware-facing outputs
 
-`pure_autoware_localization_adapter` converts the fused odometry into:
+`pure_localization_interface_adapter` converts the fused odometry into:
 
 ```text
 /localization/kinematic_state                         nav_msgs/msg/Odometry
 /localization/pose_estimator/pose_with_covariance     geometry_msgs/msg/PoseWithCovarianceStamped
+/localization/twist_with_covariance                    geometry_msgs/msg/TwistWithCovarianceStamped
 /localization/acceleration                            geometry_msgs/msg/AccelWithCovarianceStamped
 map -> base_link                                      TF
 ```
@@ -378,9 +400,27 @@ measurement. The adapter resets the derivative on the first sample, time
 reversal, or a large timestamp gap and publishes a high covariance for that
 reset sample.
 
-The fusion node's own TF output is disabled in this launch so that there is no
-second `map -> odom` chain competing with the adapter's direct
-`map -> base_link` TF.
+Both gyro-odometer `odom -> base_link` TF and fusion `map -> odom` TF output are
+disabled in this launch. Its launch configuration assigns the direct
+`map -> base_link` TF to the adapter. Runtime validation requires exactly one
+adapter `/tf` endpoint and rejects any competing dynamic `base_link` parent.
+The container, standalone, and
+standalone-with-NMEA launches instead enable gyro-odometer publication of
+`odom -> base_link`; the evaluation-oriented `lidar_imu_only` launch does not
+enable it by default.
+
+The Docker run launches the real Autoware 1.9.0
+`pose_instability_detector`, which compares kinematic state with the separately
+published twist-with-covariance, and `localization_error_monitor`, which checks
+the kinematic-state covariance ellipse. Pose and twist originate in the same
+fused odometry, so the comparison has a common-mode limitation and is not an
+independent accuracy check. Neither monitor detects input dropout.
+
+Treat diagnostic levels from a real bag as characterization, not as an
+acceptance gate, unless covariance has been independently calibrated to the
+monitor assumptions. The current default planar position variance of
+`0.25 m^2` gives `sigma = 0.5 m` and a default three-sigma ellipse of `1.5 m`,
+which already exceeds the Autoware 1.9.0 lateral error threshold of `0.30 m`.
 
 ## 5. Inspect recorded outputs
 
@@ -395,6 +435,7 @@ By default the Docker runner records:
 /localization/ekf_odom
 /localization/kinematic_state
 /localization/pose_estimator/pose_with_covariance
+/localization/twist_with_covariance
 /localization/acceleration
 /reference/tf
 /reference/tf_static
@@ -423,7 +464,9 @@ For scan-to-scan and scan-to-submap runs compare at least:
 This configuration does not launch a point-cloud map loader, Lanelet2 map,
 Autoware NDT localization, perception, planning, or control. It therefore tests:
 
-- compatibility with Autoware localization topics and TF;
+- compatibility with Autoware localization topics and single-owner TF;
+- deterministic normal/fault/recovery responses from the two pinned Autoware
+  localization monitors;
 - behavior during rosbag replay with simulated time;
 - coexistence with selected vehicle/sensor descriptions;
 - estimator accuracy and timing on the same bag.
@@ -431,3 +474,6 @@ Autoware NDT localization, perception, planning, or control. It therefore tests:
 It does not prove closed-loop driving readiness. Enabling planning/control later
 requires the relevant vector map, routing context, localization initialization
 status/API integration, vehicle interface, and independent safety validation.
+The two included monitors also do not establish input availability or
+independent localization correctness: they do not detect dropout, and the
+pose-instability detector receives pose and twist derived from the same source.

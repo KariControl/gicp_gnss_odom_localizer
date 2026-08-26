@@ -4,6 +4,28 @@
 
 ### Added
 
+- Added a GitHub Actions clean-build job for Ubuntu 24.04 and ROS 2 Jazzy. It
+  recursively checks out `small_gicp`, installs dependencies with rosdep,
+  performs a Release build from an empty workspace, and runs every registered
+  package test through colcon.
+- Added a deterministic Docker contract against the pinned Autoware 1.9.0
+  `pose_instability_detector` and `localization_error_monitor`. It verifies
+  adapter messages, TF ownership, diagnostic schema, and synthetic
+  normal/error/recovery transitions without requiring a rosbag.
+- Added an Autoware-facing `TwistWithCovarianceStamped` adapter output that
+  preserves the fused odometry stamp, child frame, twist, and covariance for
+  the pose-instability detector.
+- Added configurable gyro-odometer `odom -> base_link` TF publication and its
+  regression coverage. Standard odometry launches enable it, while the
+  Autoware profile disables gyro/fusion TF and assigns sole direct
+  `map -> base_link` ownership to the adapter.
+- Added a Jazzy runtime TF-ownership matrix that launches the supported
+  container, standalone, main GNSS, NMEA-wrapper, LiDAR/IMU-only, and
+  precision-overlay profiles in
+  isolated ROS domains. It checks exact `/tf` endpoint counts, effective owner
+  parameters, emitted edges, disabled owners, and rejection of two publishers
+  configured for the same dynamic edge. The Autoware Docker contract and
+  production replay now retain live-graph evidence before and after replay.
 - Added a canonical evaluation index with separate LiDAR/IMU-only,
   LiDAR/IMU/GNSS, and Autoware localization-interface result pages, including
   explicit alignment, artifact, CPU-measurement, and RViz-video publication
@@ -67,6 +89,17 @@
 
 ### Changed
 
+- Made non-GNSS Docker replay wait for a positive simulation clock and a
+  nonzero-stamped local-odometry sample before publishing the automatic initial
+  pose. This prevents fusion initialization from being rejected at simulated
+  time zero. Recorded adapter outputs, including twist-with-covariance, are
+  isolated below `/reference` before the live pipeline starts so that a bag
+  cannot impersonate the interface under test.
+- Renamed the unreleased `pure_autoware_localization_adapter` package to the
+  vendor-neutral `pure_localization_interface_adapter`. Its executable, C++
+  namespace, ROS node name, and diagnostic identity were renamed consistently;
+  topics, parameters, message types, and optional Autoware integration behavior
+  are unchanged.
 - Restored the original MID-360 internal-IMU recording as the published
   LiDAR/IMU-only result and selected tuned scan-to-scan and rolling
   scan-to-submap profiles. Over 294.099 s, rolling scan-to-submap reduced
@@ -147,6 +180,13 @@
 
 ### Migration
 
+- Replace `pure_autoware_localization_adapter` with
+  `pure_localization_interface_adapter`,
+  `autoware_localization_adapter_node` with
+  `localization_interface_adapter_node`, and the ROS node name
+  `/autoware_localization_adapter` with `/localization_interface_adapter` in
+  external launch files and monitoring rules. The old package was never part of
+  the existing `v1.0.0` tag, so no compatibility shim is provided.
 - Update external automation to invoke `script/run_hesai_localization_bag.sh`;
   the old script path has been removed.
 - Replace runner arguments `--tracking-mode scan_to_scan` and

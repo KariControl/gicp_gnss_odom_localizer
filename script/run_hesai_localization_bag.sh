@@ -318,7 +318,7 @@ if [[ "$localization_mode" == "precision" ]]; then
   PRECISION_GLOBAL_OVERRIDE_PARAM="$PRECISION_BRINGUP_SHARE/config/empty_params.yaml"
 fi
 if [[ "$lsim_interface_test" == true ]]; then
-  LSIM_ADAPTER_PARAM="$(ros2 pkg prefix pure_autoware_localization_adapter)/share/pure_autoware_localization_adapter/param/param.yaml"
+  LSIM_ADAPTER_PARAM="$(ros2 pkg prefix pure_localization_interface_adapter)/share/pure_localization_interface_adapter/param/param.yaml"
 fi
 # Keep the projection defined by pure_nmea_gnss_conversion/param/param.yaml.
 # The launch interface accepts a second parameter file, so pass a no-op file
@@ -614,8 +614,8 @@ copy_effective_config dataset_manifest "$DATASET_MANIFEST" dataset_manifest.yaml
 copy_effective_config diagnostic_aggregator "$DIAGNOSTIC_AGGREGATOR_PARAM" \
   diagnostic_aggregator.yaml
 if [[ -n "$LSIM_ADAPTER_PARAM" ]]; then
-  copy_effective_config autoware_adapter_base "$LSIM_ADAPTER_PARAM" \
-    autoware_adapter_param.yaml
+  copy_effective_config localization_interface_adapter_base "$LSIM_ADAPTER_PARAM" \
+    localization_interface_adapter_param.yaml
 fi
 if [[ -n "$PRECISION_PROFILE_MANIFEST" ]]; then
   copy_effective_config precision_profile_manifest "$PRECISION_PROFILE_MANIFEST" \
@@ -914,7 +914,7 @@ fi
 if [[ "$lsim_interface_test" == true ]] &&
   ! wait_for_topic /localization/kinematic_state 60
 then
-  fail "Autoware localization adapter did not become ready; see $output/launch.log"
+  fail "Localization interface adapter did not become ready; see $output/launch.log"
 fi
 log "localization publishers are ready"
 

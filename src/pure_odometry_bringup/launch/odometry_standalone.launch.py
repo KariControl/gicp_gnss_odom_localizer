@@ -51,6 +51,7 @@ def generate_launch_description():
     deskewed_points_topic = LaunchConfiguration("deskewed_points_topic")
     imu_input_topic = LaunchConfiguration("imu_input_topic")
     twist_input_topic = LaunchConfiguration("twist_input_topic")
+    odom_publish_tf = LaunchConfiguration("odom_publish_tf")
     fused_odom_topic = LaunchConfiguration("fused_odom_topic")
     fused_pose_topic = LaunchConfiguration("fused_pose_topic")
     fusion_publish_tf = LaunchConfiguration("fusion_publish_tf")
@@ -122,6 +123,7 @@ def generate_launch_description():
                 "use_sim_time": use_sim_time,
                 "points_topic": selected_points_topic,
                 "imu_topic": imu_input_topic,
+                "publish_tf": odom_publish_tf,
             },
         ],
         arguments=["--ros-args", "--log-level", log_level],
@@ -222,6 +224,11 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("imu_input_topic", default_value="/imu"),
             DeclareLaunchArgument("twist_input_topic", default_value=""),
+            DeclareLaunchArgument(
+                "odom_publish_tf",
+                default_value="true",
+                description="Publish the odom -> base_link transform from the odometer.",
+            ),
             DeclareLaunchArgument("fused_odom_topic", default_value="/localization/ekf_odom"),
             DeclareLaunchArgument("fused_pose_topic", default_value="/localization/ekf_pose"),
             DeclareLaunchArgument("fusion_publish_tf", default_value="true"),

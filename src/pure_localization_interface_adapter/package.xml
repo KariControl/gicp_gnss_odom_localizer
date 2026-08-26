@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>pure_autoware_localization_adapter</name>
+  <name>pure_localization_interface_adapter</name>
   <version>0.3.0</version>
-  <description>Standard-message adapter from fused odometry to Autoware localization topics and map-to-base TF.</description>
+  <description>Standard-message adapter from fused odometry to configurable localization topics and map-to-base TF.</description>
   <maintainer email="118587431+KariControl@users.noreply.github.com">KariControl</maintainer>
   <license>Apache-2.0</license>
 

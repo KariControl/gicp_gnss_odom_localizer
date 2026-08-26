@@ -40,7 +40,7 @@ build_and_run test_observability_policy \
   src/pure_lidar_gyro_odometer/include \
   src/pure_lidar_gyro_odometer/test/test_observability_policy.cpp
 build_and_run test_acceleration_estimator \
-  src/pure_autoware_localization_adapter/include \
-  src/pure_autoware_localization_adapter/test/test_acceleration_estimator.cpp
+  src/pure_localization_interface_adapter/include \
+  src/pure_localization_interface_adapter/test/test_acceleration_estimator.cpp
 
 echo "Reference tests PASS"

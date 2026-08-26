@@ -138,8 +138,8 @@ def check_stable_package_identity() -> None:
             ("pure_lidar_gyro_odometer", "0.3.0"),
         Path("src/pure_odometry_bringup/package.xml"):
             ("pure_odometry_bringup", "0.3.0"),
-        Path("src/pure_autoware_localization_adapter/package.xml"):
-            ("pure_autoware_localization_adapter", "0.3.0"),
+        Path("src/pure_localization_interface_adapter/package.xml"):
+            ("pure_localization_interface_adapter", "0.3.0"),
         Path("src/pure_lidar_msgs/package.xml"): ("pure_lidar_msgs", "0.1.0"),
         Path("src/pure_lidar_submap_matcher/package.xml"):
             ("pure_lidar_submap_matcher", "0.1.0"),
@@ -336,17 +336,19 @@ def check_required_semantics() -> None:
 
     adapter = (
         ROOT
-        / "src/pure_autoware_localization_adapter/src/autoware_localization_adapter_node.cpp"
+        / "src/pure_localization_interface_adapter/src/localization_interface_adapter_node.cpp"
     ).read_text(encoding="utf-8")
     for token in (
         "/localization/kinematic_state",
+        "/localization/twist_with_covariance",
         "/localization/acceleration",
         "/localization/pose_estimator/pose_with_covariance",
+        "makeTwistWithCovarianceStamped",
         "sendTransform",
         "AccelerationEstimator",
     ):
         if token not in adapter:
-            fail(f"Autoware localization adapter path missing: {token}")
+            fail(f"Localization interface adapter path missing: {token}")
 
     lsim_launch = (
         ROOT / "src/pure_odometry_bringup/launch/autoware_lsim_localization.launch.py"
@@ -368,7 +370,7 @@ def check_required_semantics() -> None:
                 f"{expected_assignment}"
             )
     for token in (
-        "pure_autoware_localization_adapter",
+        "pure_localization_interface_adapter",
         "use_map_odom_fusion",
         "autoware.launch.xml",
         "hesai_rosbag23",
@@ -378,6 +380,9 @@ def check_required_semantics() -> None:
         "nmea_gnss_override_param",
         "gnss_fusion_override_param",
         "fusion_xy_only_recovery",
+        "autoware_pose_instability_detector",
+        "autoware_localization_error_monitor",
+        '"odom_publish_tf": "false"',
     ):
         if token not in lsim_launch:
             fail(f"Autoware integration launch path missing: {token}")
@@ -399,7 +404,7 @@ def check_required_semantics() -> None:
 
     for token in ("duplicate_stamp_drop_count", "out_of_order_stamp"):
         if token not in adapter:
-            fail(f"Autoware adapter timestamp handling missing: {token}")
+            fail(f"Localization interface adapter timestamp handling missing: {token}")
 
     bringup_package = (ROOT / "src/pure_odometry_bringup/package.xml").read_text(
         encoding="utf-8"
@@ -435,8 +440,8 @@ def check_parameter_files_match_nodes() -> None:
          ROOT / "src/pure_imu_undistortion/param"),
         (ROOT / "src/pure_lidar_gyro_odometer/src/gyro_odometer_node.cpp",
          ROOT / "src/pure_lidar_gyro_odometer/param"),
-        (ROOT / "src/pure_autoware_localization_adapter/src/autoware_localization_adapter_node.cpp",
-         ROOT / "src/pure_autoware_localization_adapter/param"),
+        (ROOT / "src/pure_localization_interface_adapter/src/localization_interface_adapter_node.cpp",
+         ROOT / "src/pure_localization_interface_adapter/param"),
     )
     declaration = re.compile(
         r'declare_parameter(?:\s*<.*?>)?\s*\(\s*"([^"]+)"', re.DOTALL
@@ -466,7 +471,7 @@ def check_safe_defaults() -> None:
     nmea = parameter_map(ROOT / "src/pure_nmea_gnss_conversion/param/param.yaml")
     fusion = parameter_map(ROOT / "src/pure_gnss_map_odom_fusion/param/param.yaml")
     adapter = parameter_map(
-        ROOT / "src/pure_autoware_localization_adapter/param/param.yaml"
+        ROOT / "src/pure_localization_interface_adapter/param/param.yaml"
     )
     expected_false = {
         "allow_linear_time_fallback": imu,
@@ -477,6 +482,7 @@ def check_safe_defaults() -> None:
         "wheel_speed.low_speed.enable": lidar,
         "wheel_speed.scale_estimation.enable": lidar,
         "wheel_speed.observability_assist.enable": lidar,
+        "publish_tf": lidar,
         "lidar_odom.observability.debug_pub.enable": lidar,
         "out_filtered_odom.enable": lidar,
         "lidar_odom.smoother.zupt.enable": lidar,
@@ -500,10 +506,11 @@ def check_safe_defaults() -> None:
         "require_expected_frames",
         "publish_tf",
         "publish_pose",
+        "publish_twist",
         "publish_acceleration",
     ):
         if adapter.get(key) is not True:
-            fail(f"Autoware adapter safe/default interface must remain enabled: {key}")
+            fail(f"Localization interface adapter safe/default interface must remain enabled: {key}")
 
 
 def check_nmea_projection_contract() -> None:

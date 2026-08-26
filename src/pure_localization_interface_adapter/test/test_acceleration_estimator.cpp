@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "pure_autoware_localization_adapter/acceleration_estimator.hpp"
+#include "pure_localization_interface_adapter/acceleration_estimator.hpp"
 
 #include <cmath>
 #include <cstdlib>
@@ -7,9 +7,9 @@
 #include <stdexcept>
 #include <string>
 
-using pure_autoware_localization_adapter::AccelerationEstimator;
-using pure_autoware_localization_adapter::AccelerationEstimatorConfig;
-using pure_autoware_localization_adapter::TwistSample;
+using pure_localization_interface_adapter::AccelerationEstimator;
+using pure_localization_interface_adapter::AccelerationEstimatorConfig;
+using pure_localization_interface_adapter::TwistSample;
 
 namespace
 {

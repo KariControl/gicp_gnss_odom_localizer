@@ -133,6 +133,13 @@ add_remap() {
   local source="$1"
   local destination="$2"
   if [[ -n "$source" && "$source" != "$destination" ]]; then
+    # Explicit sensor/input mappings are added before output isolation. Keep
+    # the first mapping for a source so a recorded Autoware output selected as
+    # an input (notably twist-with-covariance) cannot be redirected twice.
+    local existing prefix="${source}:="
+    for existing in "${remaps[@]}"; do
+      [[ "$existing" == "$prefix"* ]] && return
+    done
     remaps+=("${source}:=${destination}")
   fi
 }
@@ -160,6 +167,7 @@ if [[ "$keep_recorded_localization" != true ]]; then
     /localization/global_pose_with_covariance
     /localization/gnss_confidence
     /localization/kinematic_state
+    /localization/twist_with_covariance
     /localization/acceleration
     /localization/pose_estimator/pose_with_covariance
     /diagnostics

@@ -31,6 +31,7 @@ def generate_launch_description():
 
     use_gnss = LaunchConfiguration("use_gnss")
     use_sim_time = LaunchConfiguration("use_sim_time")
+    odom_publish_tf = LaunchConfiguration("odom_publish_tf")
     log_level = LaunchConfiguration("log_level")
 
     gnss_primary_gga_topic = LaunchConfiguration("gnss_primary_gga_topic")
@@ -61,7 +62,10 @@ def generate_launch_description():
         executable="pure_lidar_gyro_odometer_node",
         name="gyro_odometer",
         output="screen",
-        parameters=[odom_param, {"use_sim_time": use_sim_time}],
+        parameters=[
+            odom_param,
+            {"use_sim_time": use_sim_time, "publish_tf": odom_publish_tf},
+        ],
         arguments=["--ros-args", "--log-level", log_level],
     )
 
@@ -141,6 +145,11 @@ def generate_launch_description():
             "imu_corrected_topic", default_value="/localization/imu_corrected"
         ),
         DeclareLaunchArgument("stopped_topic", default_value="/localization/is_stopped"),
+        DeclareLaunchArgument(
+            "odom_publish_tf",
+            default_value="true",
+            description="Publish the odom -> base_link transform from the odometer.",
+        ),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument("log_level", default_value="info"),
         imu_undistorter,

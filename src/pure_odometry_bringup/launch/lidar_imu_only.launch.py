@@ -39,6 +39,7 @@ def generate_launch_description():
     points_input_topic = LaunchConfiguration("points_input_topic")
     deskewed_points_topic = LaunchConfiguration("deskewed_points_topic")
     imu_input_topic = LaunchConfiguration("imu_input_topic")
+    odom_publish_tf = LaunchConfiguration("odom_publish_tf")
     imu_param = LaunchConfiguration("imu_param")
     odom_param = LaunchConfiguration("odom_param")
     odom_override_param = LaunchConfiguration("odom_override_param")
@@ -77,6 +78,7 @@ def generate_launch_description():
                 "use_sim_time": use_sim_time,
                 "points_topic": deskewed_points_topic,
                 "imu_topic": imu_input_topic,
+                "publish_tf": odom_publish_tf,
             },
         ],
         extra_arguments=common_extra_arguments,
@@ -94,6 +96,7 @@ def generate_launch_description():
                 "use_sim_time": use_sim_time,
                 "points_topic": points_input_topic,
                 "imu_topic": imu_input_topic,
+                "publish_tf": odom_publish_tf,
             },
         ],
         extra_arguments=common_extra_arguments,
@@ -142,6 +145,14 @@ def generate_launch_description():
                 default_value="/localization/points_undistorted",
             ),
             DeclareLaunchArgument("imu_input_topic", default_value="/imu"),
+            DeclareLaunchArgument(
+                "odom_publish_tf",
+                default_value="false",
+                description=(
+                    "Publish odom -> base_link for consumers that require TF. "
+                    "Disabled by default to keep this isolated evaluation profile output-only."
+                ),
+            ),
             DeclareLaunchArgument("imu_param", default_value=default_imu_param),
             DeclareLaunchArgument("odom_param", default_value=default_odom_param),
             DeclareLaunchArgument(

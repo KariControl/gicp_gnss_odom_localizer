@@ -6,7 +6,7 @@
 #include <cmath>
 #include <cstddef>
 
-namespace pure_autoware_localization_adapter
+namespace pure_localization_interface_adapter
 {
 
 struct TwistSample
@@ -150,4 +150,4 @@ private:
   std::array<double, 3> filtered_angular_{{0.0, 0.0, 0.0}};
 };
 
-}  // namespace pure_autoware_localization_adapter
+}  // namespace pure_localization_interface_adapter

@@ -129,7 +129,19 @@ NMEA_GNSS_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_nmea_gnss_conversion/param
 NMEA_PROJECTOR_METADATA="${GICP_GNSS_ODOM_INSTALL}/share/pure_nmea_gnss_conversion/config/map_projector_info.yaml"
 GNSS_FUSION_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_gnss_map_odom_fusion/param/param.yaml"
 DIAGNOSTIC_AGGREGATOR_PARAM="$BRINGUP_SHARE/config/diagnostic_aggregator.yaml"
-AUTOWARE_ADAPTER_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_autoware_localization_adapter/param/param.yaml"
+LOCALIZATION_INTERFACE_ADAPTER_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_localization_interface_adapter/param/param.yaml"
+if ! POSE_INSTABILITY_DETECTOR_SHARE="$(
+  ros2 pkg prefix --share autoware_pose_instability_detector 2>/dev/null
+)"; then
+  fail "autoware_pose_instability_detector is unavailable in the selected Autoware image"
+fi
+if ! LOCALIZATION_ERROR_MONITOR_SHARE="$(
+  ros2 pkg prefix --share autoware_localization_error_monitor 2>/dev/null
+)"; then
+  fail "autoware_localization_error_monitor is unavailable in the selected Autoware image"
+fi
+POSE_INSTABILITY_DETECTOR_PARAM="$POSE_INSTABILITY_DETECTOR_SHARE/config/pose_instability_detector.param.yaml"
+LOCALIZATION_ERROR_MONITOR_PARAM="$LOCALIZATION_ERROR_MONITOR_SHARE/config/localization_error_monitor.param.yaml"
 ODOM_OVERRIDE_PARAM="$EMPTY_PARAM"
 PRECISION_MATCHER_OVERRIDE_PARAM="$PRECISION_BRINGUP_SHARE/config/empty_params.yaml"
 PRECISION_GLOBAL_OVERRIDE_PARAM="$PRECISION_BRINGUP_SHARE/config/empty_params.yaml"
@@ -174,7 +186,8 @@ for parameter_file in \
   "$NMEA_GNSS_PARAM" "$NMEA_PROJECTOR_METADATA" \
   "$NMEA_GNSS_OVERRIDE_PARAM" "$GNSS_FUSION_PARAM" \
   "$GNSS_FUSION_OVERRIDE_PARAM" "$DIAGNOSTIC_AGGREGATOR_PARAM" \
-  "$AUTOWARE_ADAPTER_PARAM"
+  "$LOCALIZATION_INTERFACE_ADAPTER_PARAM" \
+  "$POSE_INSTABILITY_DETECTOR_PARAM" "$LOCALIZATION_ERROR_MONITOR_PARAM"
 do
   [[ -f "$parameter_file" ]] || fail "parameter file does not exist: $parameter_file"
 done
@@ -325,7 +338,9 @@ write_manifest() {
     printf 'GNSS_FUSION_PARAM=%q\n' "$GNSS_FUSION_PARAM"
     printf 'GNSS_FUSION_OVERRIDE_PARAM=%q\n' "$GNSS_FUSION_OVERRIDE_PARAM"
     printf 'DIAGNOSTIC_AGGREGATOR_PARAM=%q\n' "$DIAGNOSTIC_AGGREGATOR_PARAM"
-    printf 'AUTOWARE_ADAPTER_PARAM=%q\n' "$AUTOWARE_ADAPTER_PARAM"
+    printf 'LOCALIZATION_INTERFACE_ADAPTER_PARAM=%q\n' "$LOCALIZATION_INTERFACE_ADAPTER_PARAM"
+    printf 'POSE_INSTABILITY_DETECTOR_PARAM=%q\n' "$POSE_INSTABILITY_DETECTOR_PARAM"
+    printf 'LOCALIZATION_ERROR_MONITOR_PARAM=%q\n' "$LOCALIZATION_ERROR_MONITOR_PARAM"
     printf 'PRECISION_MATCHER_OVERRIDE_PARAM=%q\n' "$PRECISION_MATCHER_OVERRIDE_PARAM"
     printf 'PRECISION_GLOBAL_OVERRIDE_PARAM=%q\n' "$PRECISION_GLOBAL_OVERRIDE_PARAM"
     printf 'USE_GNSS=%q\n' "$USE_GNSS"
@@ -355,6 +370,10 @@ write_manifest() {
     printf 'autoware_image=%s\n' "${AUTOWARE_IMAGE:-unknown}"
     printf 'autoware_launch_prefix=%s\n' "$(ros2 pkg prefix autoware_launch)"
     printf 'autoware_launch_version=%s\n' "$(ros2 pkg xml --tag version autoware_launch)"
+    printf 'autoware_pose_instability_detector_version=%s\n' \
+      "$(ros2 pkg xml --tag version autoware_pose_instability_detector)"
+    printf 'autoware_localization_error_monitor_version=%s\n' \
+      "$(ros2 pkg xml --tag version autoware_localization_error_monitor)"
     printf 'ros_distro=%s\n' "${ROS_DISTRO:-jazzy}"
     if [[ "$RVIZ_SAMPLE_VEHICLE" == true ]]; then
       printf 'sample_vehicle_description_version=%s\n' \
@@ -399,7 +418,9 @@ nmea_override	$NMEA_GNSS_OVERRIDE_PARAM	nmea_override_param.yaml
 gnss_fusion_base	$GNSS_FUSION_PARAM	gnss_fusion_param.yaml
 gnss_fusion_override	$GNSS_FUSION_OVERRIDE_PARAM	gnss_fusion_override_param.yaml
 diagnostic_aggregator	$DIAGNOSTIC_AGGREGATOR_PARAM	diagnostic_aggregator.yaml
-autoware_adapter_base	$AUTOWARE_ADAPTER_PARAM	autoware_adapter_param.yaml
+localization_interface_adapter_base	$LOCALIZATION_INTERFACE_ADAPTER_PARAM	localization_interface_adapter_param.yaml
+autoware_pose_instability_detector	$POSE_INSTABILITY_DETECTOR_PARAM	autoware_pose_instability_detector.param.yaml
+autoware_localization_error_monitor	$LOCALIZATION_ERROR_MONITOR_PARAM	autoware_localization_error_monitor.param.yaml
 rviz_config	$RVIZ_CONFIG	rviz_config.rviz
 EOF
 
@@ -499,7 +520,9 @@ check_required_nodes() {
     /pure_odometry_container
     /gyro_odometer
     /gnss_map_odom_fusion
-    /autoware_localization_adapter
+    /localization_interface_adapter
+    /pose_instability_detector
+    /localization_error_monitor
   )
   if [[ "$USE_IMU_DESKEW" == true ]]; then
     required+=(/imu_undistorter)
@@ -634,6 +657,10 @@ copy_effective_configurations
 launch_command=(
   ros2 launch pure_odometry_bringup autoware_lsim_localization.launch.py
   launch_autoware:=true
+  launch_localizer:=true
+  launch_localization_monitors:=true
+  pose_instability_detector_param:="$POSE_INSTABILITY_DETECTOR_PARAM"
+  localization_error_monitor_param:="$LOCALIZATION_ERROR_MONITOR_PARAM"
   vehicle_model:="$VEHICLE_MODEL"
   sensor_model:="$SENSOR_MODEL"
   launch_vehicle:="$LAUNCH_VEHICLE"
@@ -700,6 +727,9 @@ fi
 if ! wait_for_topic /localization/kinematic_state; then
   fail "Autoware/localizer launch did not create /localization/kinematic_state; see $run_directory/launch.log"
 fi
+if ! wait_for_topic /localization/twist_with_covariance; then
+  fail "interface adapter did not create /localization/twist_with_covariance; see $run_directory/launch.log"
+fi
 if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
   if ! wait_for_topic /localization/submap_scan "$launch_pid"; then
     fail "exact-key snapshot publisher did not start; see $run_directory/launch.log"
@@ -727,6 +757,30 @@ fi
 if ! wait_for_required_nodes; then
   fail "required Autoware/localizer node(s) did not start: $missing_required_nodes"
 fi
+
+check_tf_ownership() {
+  local phase="$1"
+  local ownership_json="$2"
+  local ownership_log="$3"
+  if ! timeout 20 ros2 run pure_odometry_bringup tf_ownership_probe.py \
+    --owner \
+    /localization_interface_adapter,map_frame,map,base_frame,base_link \
+    --disabled-owner /gyro_odometer \
+    --disabled-owner /gnss_map_odom_fusion \
+    --skip-edge-samples \
+    --timeout 10 \
+    --output "$ownership_json" \
+    > "$ownership_log" 2>&1
+  then
+    sed -n '1,320p' "$ownership_log" >&2 || true
+    fail "dynamic TF ownership contract failed $phase; see $ownership_log"
+  fi
+  log "dynamic TF ownership is unique $phase: adapter map->base_link; gyro/fusion disabled."
+}
+
+tf_ownership_json="$run_directory/tf_ownership.json"
+tf_ownership_log="$run_directory/tf_ownership.log"
+check_tf_ownership "before replay" "$tf_ownership_json" "$tf_ownership_log"
 log "Autoware localization interface is ready."
 
 if [[ "$RECORD_OUTPUT" == true ]]; then
@@ -747,6 +801,7 @@ if [[ "$RECORD_OUTPUT" == true ]]; then
     /localization/global_pose_with_covariance
     /localization/gnss_confidence
     /localization/kinematic_state
+    /localization/twist_with_covariance
     /localization/pose_estimator/pose_with_covariance
     /localization/acceleration
     /reference/tf
@@ -755,6 +810,7 @@ if [[ "$RECORD_OUTPUT" == true ]]; then
     /reference/localization/gyro_lidar_odom
     /reference/localization/ekf_odom
     /reference/localization/kinematic_state
+    /reference/localization/twist_with_covariance
     /reference/localization/pose_estimator/pose_with_covariance
   )
   if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
@@ -816,12 +872,58 @@ stdbuf -oL -eL "${play_command[@]}" \
   2>&1 &
 bag_pid=$!
 
+has_nonzero_ros_stamp() {
+  local snapshot="$1"
+  awk '
+    ($1 == "sec:" || $1 == "nanosec:") && ($2 + 0) > 0 { found = 1 }
+    END { exit !found }
+  ' "$snapshot"
+}
+
+wait_for_nonzero_topic_sample() {
+  local topic="$1"
+  local snapshot="$2"
+  local attempt_count
+  attempt_count="$(awk -v wait_sec="$INITIALPOSE_DATA_WAIT_SEC" '
+    BEGIN {
+      count = int((wait_sec + 2.999) / 3.0)
+      if (count < 1) count = 1
+      print count
+    }
+  ')"
+  local attempt
+  for ((attempt = 0; attempt < attempt_count; ++attempt)); do
+    if [[ -n "${bag_pid:-}" ]] && ! kill -0 "$bag_pid" 2>/dev/null; then
+      return 1
+    fi
+    if timeout 3 ros2 topic echo --once "$topic" > "$snapshot" 2>&1 &&
+      has_nonzero_ros_stamp "$snapshot"
+    then
+      return 0
+    fi
+  done
+  return 1
+}
+
 if [[ "$USE_GNSS" != true && "$AUTO_INITIAL_POSE" == true ]]; then
-  if timeout "$INITIALPOSE_DATA_WAIT_SEC" \
-    ros2 topic echo --once /localization/gyro_lidar_odom > /dev/null 2>&1; then
+  first_clock_snapshot="$run_directory/first_clock.yaml"
+  first_local_odom_snapshot="$run_directory/first_nonzero_local_odom.yaml"
+  clock_ready=false
+  odom_ready=false
+  if wait_for_nonzero_topic_sample /clock "$first_clock_snapshot"; then
+    clock_ready=true
+  fi
+  if [[ "$clock_ready" == true ]]; then
+    if wait_for_nonzero_topic_sample \
+      /localization/gyro_lidar_odom "$first_local_odom_snapshot"
+    then
+      odom_ready=true
+    fi
+  fi
+  if [[ "$clock_ready" == true && "$odom_ready" == true ]]; then
     publish_initial_pose
   else
-    warn "no LiDAR odometry arrived before the initial-pose timeout; fused Autoware output may remain unavailable"
+    warn "no nonzero simulation clock/local odometry arrived before the initial-pose timeout; fused Autoware output may remain unavailable"
   fi
 fi
 
@@ -966,6 +1068,14 @@ if [[ "$RVIZ_SAMPLE_VEHICLE" == true && "$required_nodes_were_alive" == true ]];
     required_nodes_were_alive="false"
     missing_required_nodes="localization covariance marker snapshot was incomplete or contained HUD text"
   fi
+fi
+if [[ "$launch_was_alive" == true && "$required_nodes_were_alive" == true ]]; then
+  tf_ownership_completion_json="$run_directory/tf_ownership_completion.json"
+  tf_ownership_completion_log="$run_directory/tf_ownership_completion.log"
+  check_tf_ownership \
+    "at replay completion" \
+    "$tf_ownership_completion_json" \
+    "$tf_ownership_completion_log"
 fi
 stop_process "$record_pid" INT
 record_pid=""

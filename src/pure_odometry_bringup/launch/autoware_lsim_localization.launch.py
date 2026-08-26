@@ -3,7 +3,7 @@
 
 Autoware's standard localization, map, perception, planning, control, system and API
 components are disabled. The GICP/GNSS stack publishes the Autoware localization
-runtime topics through pure_autoware_localization_adapter.
+runtime topics through pure_localization_interface_adapter.
 """
 
 import os
@@ -30,7 +30,7 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     bringup_share = get_package_share_directory("pure_odometry_bringup")
-    adapter_share = get_package_share_directory("pure_autoware_localization_adapter")
+    adapter_share = get_package_share_directory("pure_localization_interface_adapter")
 
     default_empty_map_path = os.path.join(
         bringup_share, "config", "autoware_lsim", "empty_map"
@@ -56,6 +56,8 @@ def generate_launch_description():
     )
 
     launch_autoware = LaunchConfiguration("launch_autoware")
+    launch_localizer = LaunchConfiguration("launch_localizer")
+    use_sim_time = LaunchConfiguration("use_sim_time")
     vehicle_model = LaunchConfiguration("vehicle_model")
     sensor_model = LaunchConfiguration("sensor_model")
     autoware_map_path = LaunchConfiguration("autoware_map_path")
@@ -97,6 +99,19 @@ def generate_launch_description():
     gnss_fix_velocity_topic = LaunchConfiguration("gnss_fix_velocity_topic")
     fused_odom_topic = LaunchConfiguration("fused_odom_topic")
     adapter_param = LaunchConfiguration("adapter_param")
+    kinematic_state_topic = LaunchConfiguration("kinematic_state_topic")
+    twist_with_covariance_topic = LaunchConfiguration(
+        "twist_with_covariance_topic"
+    )
+    launch_localization_monitors = LaunchConfiguration(
+        "launch_localization_monitors"
+    )
+    pose_instability_detector_param = LaunchConfiguration(
+        "pose_instability_detector_param"
+    )
+    localization_error_monitor_param = LaunchConfiguration(
+        "localization_error_monitor_param"
+    )
     log_level = LaunchConfiguration("log_level")
 
     autoware = IncludeLaunchDescription(
@@ -122,7 +137,7 @@ def generate_launch_description():
             "launch_planning": "false",
             "launch_control": "false",
             "launch_api": "false",
-            "use_sim_time": "true",
+            "use_sim_time": use_sim_time,
             "system_run_mode": "logging_simulation",
             # The standard Autoware RViz profile expects the full sensing and
             # localization stacks.  This launch owns a profile that displays
@@ -136,8 +151,9 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(bringup_share, "launch", "odometry_container.launch.py")
         ),
+        condition=IfCondition(launch_localizer),
         launch_arguments={
-            "use_sim_time": "true",
+            "use_sim_time": use_sim_time,
             "use_gnss": use_gnss,
             "use_map_odom_fusion": "true",
             "use_imu_deskew": use_imu_deskew,
@@ -157,6 +173,9 @@ def generate_launch_description():
             "gnss_secondary_gga_topic": gnss_secondary_gga_topic,
             "gnss_fix_velocity_topic": gnss_fix_velocity_topic,
             "fused_odom_topic": fused_odom_topic,
+            # This profile deliberately owns only the direct map -> base_link
+            # transform published by the interface adapter below.
+            "odom_publish_tf": "false",
             # The adapter publishes map -> base_link directly. Avoid a second,
             # incomplete map -> odom TF chain in this integration launch.
             "fusion_publish_tf": "false",
@@ -165,18 +184,51 @@ def generate_launch_description():
     )
 
     adapter = Node(
-        package="pure_autoware_localization_adapter",
-        executable="autoware_localization_adapter_node",
-        name="autoware_localization_adapter",
+        package="pure_localization_interface_adapter",
+        executable="localization_interface_adapter_node",
+        name="localization_interface_adapter",
         output="screen",
         parameters=[
             adapter_param,
             {
-                "use_sim_time": True,
+                "use_sim_time": use_sim_time,
                 "input_odom_topic": fused_odom_topic,
+                "kinematic_state_topic": kinematic_state_topic,
+                "twist_topic": twist_with_covariance_topic,
                 "publish_tf": True,
             },
         ],
+        arguments=["--ros-args", "--log-level", log_level],
+    )
+
+    # These are the actual Autoware 1.9.0 localization health monitors.  The
+    # pose-instability detector compares odometry motion with the accompanying
+    # adapter twist stream integrated separately, while the error monitor
+    # evaluates the odometry covariance ellipse.  Pose and twist still share
+    # one upstream estimate, so this is a consistency check, not independent
+    # ground-truth validation.
+    pose_instability_detector = Node(
+        condition=IfCondition(launch_localization_monitors),
+        package="autoware_pose_instability_detector",
+        executable="autoware_pose_instability_detector_node",
+        name="pose_instability_detector",
+        output="screen",
+        parameters=[pose_instability_detector_param, {"use_sim_time": use_sim_time}],
+        remappings=[
+            ("~/input/odometry", kinematic_state_topic),
+            ("~/input/twist", twist_with_covariance_topic),
+        ],
+        arguments=["--ros-args", "--log-level", log_level],
+    )
+
+    localization_error_monitor = Node(
+        condition=IfCondition(launch_localization_monitors),
+        package="autoware_localization_error_monitor",
+        executable="autoware_localization_error_monitor_node",
+        name="localization_error_monitor",
+        output="screen",
+        parameters=[localization_error_monitor_param, {"use_sim_time": use_sim_time}],
+        remappings=[("input/odom", kinematic_state_topic)],
         arguments=["--ros-args", "--log-level", log_level],
     )
 
@@ -186,7 +238,7 @@ def generate_launch_description():
         executable="rviz2",
         name="rviz2",
         output="screen",
-        parameters=[{"use_sim_time": True}],
+        parameters=[{"use_sim_time": use_sim_time}],
         arguments=["-d", rviz_config],
     )
 
@@ -228,7 +280,7 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "use_sim_time": True,
+                "use_sim_time": use_sim_time,
                 "robot_description": sample_vehicle_description,
             }
         ],
@@ -250,7 +302,7 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "use_sim_time": True,
+                "use_sim_time": use_sim_time,
                 "covariance_z_offset_m": ParameterValue(
                     localization_visualization_covariance_z_offset_m,
                     value_type=float,
@@ -305,6 +357,8 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("launch_autoware", default_value="true"),
+            DeclareLaunchArgument("launch_localizer", default_value="true"),
+            DeclareLaunchArgument("use_sim_time", default_value="true"),
             DeclareLaunchArgument("vehicle_model", default_value="sample_vehicle"),
             DeclareLaunchArgument("sensor_model", default_value="sample_sensor_kit"),
             DeclareLaunchArgument("autoware_map_path", default_value=default_empty_map_path),
@@ -408,6 +462,45 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("fused_odom_topic", default_value="/localization/ekf_odom"),
             DeclareLaunchArgument("adapter_param", default_value=default_adapter_param),
+            DeclareLaunchArgument(
+                "kinematic_state_topic",
+                default_value="/localization/kinematic_state",
+            ),
+            DeclareLaunchArgument(
+                "twist_with_covariance_topic",
+                default_value="/localization/twist_with_covariance",
+            ),
+            DeclareLaunchArgument(
+                "launch_localization_monitors",
+                default_value="false",
+                description=(
+                    "Launch Autoware pose-instability and localization-error "
+                    "monitors against the adapter outputs. Requires the optional "
+                    "Autoware packages; the Docker profile enables it explicitly."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "pose_instability_detector_param",
+                default_value=PathJoinSubstitution(
+                    [
+                        FindPackageShare("autoware_pose_instability_detector"),
+                        "config",
+                        "pose_instability_detector.param.yaml",
+                    ]
+                ),
+                condition=IfCondition(launch_localization_monitors),
+            ),
+            DeclareLaunchArgument(
+                "localization_error_monitor_param",
+                default_value=PathJoinSubstitution(
+                    [
+                        FindPackageShare("autoware_localization_error_monitor"),
+                        "config",
+                        "localization_error_monitor.param.yaml",
+                    ]
+                ),
+                condition=IfCondition(launch_localization_monitors),
+            ),
             DeclareLaunchArgument("log_level", default_value="info"),
             autoware,
             rviz,
@@ -416,5 +509,7 @@ def generate_launch_description():
             *hesai_static_transforms,
             localizer,
             adapter,
+            pose_instability_detector,
+            localization_error_monitor,
         ]
     )

@@ -25,8 +25,9 @@ standard profiles also do not require wheel speed or a CUDA-capable GPU**.
 - **General ROS 2 integration:** consume the odometry topics and TF directly in
   a robot, navigation, mapping, or automated-driving stack.
 - **Optional Autoware example:** use the separate adapter to translate the same
-  estimator outputs into Autoware pose, kinematic-state, acceleration, and TF
-  interfaces. The core estimators do not depend on Autoware.
+  estimator outputs into Autoware pose, kinematic-state,
+  twist-with-covariance, acceleration, and TF interfaces. The core estimators
+  do not depend on Autoware.
 - **CPU-only operation:** the estimator has no CUDA dependency; CPU-only
   operation has also been demonstrated.
 
@@ -151,6 +152,28 @@ workspace.
 The retained `autoware_lsim` filenames and command names are project-local
 compatibility identifiers, not names of an official Autoware component or
 workflow.
+
+Before replaying a recording, the version-selected Autoware 1.9.0 interface and
+diagnostic contract can be exercised without a bag:
+
+```bash
+./script/run_autoware_localization_contract_docker.sh
+```
+
+This deterministic test launches the real Autoware
+`pose_instability_detector` and `localization_error_monitor`, checks all adapter
+outputs, requires exactly one runtime `/tf` publisher endpoint owned by the
+adapter for `map -> base_link`, confirms that no competing dynamic `base_link`
+parent is observed, and drives both monitors through normal, injected-fault,
+and recovery phases. The Jazzy package tests additionally launch the container,
+standalone, main GNSS, NMEA-wrapper, LiDAR-IMU-only, and precision-overlay
+profiles in isolated ROS domains. They check the exact `/tf` endpoint multiset,
+each owner's effective `publish_tf` and frame parameters, and the globally
+emitted dynamic-edge set. Jazzy's Python API cannot attribute an individual TF
+sample to its endpoint GID, and a bag alone cannot identify two publishers that
+emit the same TF edge. This is
+an interface and diagnostic-response test; it does not launch planning or
+control, assess localization accuracy, or detect input dropout.
 
 A minimal run is:
 
@@ -347,7 +370,7 @@ packages are components and interfaces installed from the same repository.
 |---|---|
 | `pure_odometry_bringup` | Primary launch, configuration, and RViz entry point for the LiDAR–IMU–GNSS localization stack. |
 | `pure_precision_bringup` | Launch and configuration entry point for the optional isolated scan-to-submap overlay. |
-| `pure_autoware_localization_adapter` | Converts fused odometry into Autoware-facing kinematic-state, pose, acceleration, and `map -> base_link` interfaces. |
+| `pure_localization_interface_adapter` | Converts fused odometry into configurable kinematic-state, pose, twist-with-covariance, acceleration, and `map -> base_link` interfaces; the optional Autoware workflow consumes these outputs. |
 | `pure_imu_undistortion` | Validates point timing and deskews LiDAR scans from IMU motion, with optional translation compensation. |
 | `pure_lidar_gyro_odometer` | Produces scan-to-scan planar LiDAR–IMU odometry with fixed-lag SE(2) smoothing. |
 | `pure_nmea_gnss_conversion` | Converts NMEA GGA and optional heading observations into explicit GNSS fusion inputs. |
@@ -365,14 +388,20 @@ it is not a first-party package in this project.
 | Use case | Operating system | ROS 2 | Autoware | Status and scope |
 |---|---|---|---|---|
 | Standalone localization | Ubuntu 24.04 | Jazzy | Not required | Primary source-build and rosbag-replay target. |
-| Optional Autoware integration | Ubuntu 24.04 | Jazzy | 1.9.0 | Localization-interface-only replay validated in the supplied CPU-only Docker workflow. |
+| Optional Autoware integration | Ubuntu 24.04 | Jazzy | 1.9.0 | Stage A localization-interface and diagnostic-monitor integration in the supplied CPU-only Docker workflow. |
 | Other combinations | — | — | — | Not currently claimed; they may work but have not been validated by this project. |
 
-The standalone estimator path does not require Autoware. The Autoware 1.9.0
-result covers localization-facing topics, TF, simulation time, and GNSS-outage
-recovery only. It does not establish full-stack integration, closed-loop driving,
-planning/control readiness, or safety certification. CPU-only execution was
-demonstrated, but CPU utilization and memory usage were not measured.
+The standalone estimator path does not require Autoware. Stage A has separate
+pieces of evidence: the deterministic contract covers localization-facing
+topics, TF consistency, and the two real localization monitors; the current
+public synthetic replay covers the live localizer path and simulation time but
+does not use GNSS. The published private Course 2 result is a historical
+2026-08-12 pre-Stage-A run that covers simulation time and GNSS-outage recovery,
+but not the new twist stream or monitor contract. No single run currently
+combines all three scopes. None establishes full-stack integration, closed-loop
+driving, planning/control readiness, or safety certification. CPU-only
+execution was demonstrated, but CPU utilization and memory usage were not
+measured.
 
 ## Sensor-to-output flow
 
@@ -399,6 +428,12 @@ standard ROS 2 odometry/TF outputs
 The scan-to-submap branch publishes separate outputs and no TF. Full frame,
 component, and failure-isolation details are in
 [Architecture](docs/architecture.md).
+
+The container, standalone, and standalone-with-NMEA launches assign
+`odom -> base_link` to the gyro odometer. The evaluation-oriented
+`lidar_imu_only` launch leaves it disabled by default. The Autoware profile also
+disables gyro-odometer and fusion TF publication; its launch configuration
+assigns the direct `map -> base_link` transform to the adapter.
 
 ## Validation
 

@@ -24,24 +24,39 @@ from rosidl_runtime_py.utilities import get_message
 
 
 KINEMATIC_TOPIC = "/localization/kinematic_state"
+TWIST_TOPIC = "/localization/twist_with_covariance"
 POSE_TOPIC = "/localization/pose_estimator/pose_with_covariance"
 ACCEL_TOPIC = "/localization/acceleration"
 CLOCK_TOPIC = "/clock"
 TF_TOPIC = "/tf"
 TF_STATIC_TOPIC = "/tf_static"
 DIAGNOSTICS_TOPIC = "/diagnostics"
+DIAGNOSTICS_AGG_TOPIC = "/diagnostics_agg"
 
-ADAPTER_DIAGNOSTIC = "localization/gicp_gnss_autoware_adapter"
+ADAPTER_DIAGNOSTIC = "localization/localization_interface_adapter"
+POSE_INSTABILITY_DIAGNOSTIC = "localization: pose_instability_detector"
+LOCALIZATION_ERROR_DIAGNOSTIC = (
+    "localization_error_monitor: ellipse_error_status"
+)
 GNSS_DIAGNOSTIC = "localization/gnss_map_odom_fusion"
 DESKEW_DIAGNOSTIC = "localization/imu_undistortion"
 TRACKING_DIAGNOSTIC = "localization/gyro_odometer"
+AGGREGATED_MONITOR_DIAGNOSTICS = {
+    "/pose_instability_detector/localization: pose_instability_detector",
+    (
+        "/localization_error_monitor/"
+        "localization_error_monitor: ellipse_error_status"
+    ),
+}
 
 BASE_REQUIRED_TOPICS = {
     CLOCK_TOPIC: "rosgraph_msgs/msg/Clock",
     TF_TOPIC: "tf2_msgs/msg/TFMessage",
     TF_STATIC_TOPIC: "tf2_msgs/msg/TFMessage",
     DIAGNOSTICS_TOPIC: "diagnostic_msgs/msg/DiagnosticArray",
+    DIAGNOSTICS_AGG_TOPIC: "diagnostic_msgs/msg/DiagnosticArray",
     KINEMATIC_TOPIC: "nav_msgs/msg/Odometry",
+    TWIST_TOPIC: "geometry_msgs/msg/TwistWithCovarianceStamped",
     POSE_TOPIC: "geometry_msgs/msg/PoseWithCovarianceStamped",
     ACCEL_TOPIC: "geometry_msgs/msg/AccelWithCovarianceStamped",
 }
@@ -55,7 +70,6 @@ HESAI_REQUIRED_TOPICS = {
 
 HESAI_OPTIONAL_TOPICS = {
     "/localization/points_undistorted": "sensor_msgs/msg/PointCloud2",
-    "/diagnostics_agg": "diagnostic_msgs/msg/DiagnosticArray",
     "/localization/gnss_odometry": "nav_msgs/msg/Odometry",
 }
 
@@ -132,6 +146,19 @@ class PoseRecord:
 
 
 @dataclass(frozen=True)
+class KinematicRecord(PoseRecord):
+    twist: tuple[float, ...]
+    twist_covariance: tuple[float, ...]
+
+
+@dataclass(frozen=True)
+class TwistRecord:
+    stamp_ns: int
+    twist: tuple[float, ...]
+    covariance: tuple[float, ...]
+
+
+@dataclass(frozen=True)
 class TransformRecord:
     stamp_ns: int
     translation: tuple[float, float, float]
@@ -167,6 +194,9 @@ class DiagnosticSnapshot:
 @dataclass
 class DiagnosticAudit:
     counts: Counter[str] = field(default_factory=Counter)
+    levels: defaultdict[str, Counter[int]] = field(
+        default_factory=lambda: defaultdict(Counter)
+    )
     last: dict[str, DiagnosticSnapshot] = field(default_factory=dict)
     deskew_fields: Counter[str] = field(default_factory=Counter)
     deskew_fallbacks: Counter[str] = field(default_factory=Counter)
@@ -190,6 +220,7 @@ class DiagnosticAudit:
                 values=values,
             )
             self.counts[name] += 1
+            self.levels[name][snapshot.level] += 1
             self.last[name] = snapshot
 
             if name == DESKEW_DIAGNOSTIC:
@@ -236,14 +267,17 @@ class BagAudit:
     total_messages: int = 0
     clock: StampedAudit = field(default_factory=StampedAudit)
     state: StampedAudit = field(default_factory=StampedAudit)
+    twist: StampedAudit = field(default_factory=StampedAudit)
     pose: StampedAudit = field(default_factory=StampedAudit)
     acceleration: StampedAudit = field(default_factory=StampedAudit)
     map_base_tf: StampedAudit = field(default_factory=StampedAudit)
+    dynamic_base_parents: Counter[str] = field(default_factory=Counter)
     static_transforms: defaultdict[tuple[str, str], list[TransformRecord]] = field(
         default_factory=lambda: defaultdict(list)
     )
     last_header_stamps: dict[str, int] = field(default_factory=dict)
     diagnostics: DiagnosticAudit = field(default_factory=DiagnosticAudit)
+    aggregated_diagnostic_names: Counter[str] = field(default_factory=Counter)
     deserialize_problems: Problems = field(default_factory=Problems)
 
 
@@ -372,11 +406,34 @@ def consume_kinematic(message: Any, audit: StampedAudit) -> None:
     audit_covariance(message.pose.covariance, stamp_ns, audit.problems, "pose")
     audit_covariance(message.twist.covariance, stamp_ns, audit.problems, "twist")
     audit.records.append(
-        PoseRecord(
+        KinematicRecord(
             stamp_ns,
             position,
             orientation,
             tuple(float(x) for x in message.pose.covariance),
+            twist,
+            tuple(float(x) for x in message.twist.covariance),
+        )
+    )
+
+
+def consume_twist(message: Any, audit: StampedAudit) -> None:
+    stamp_ns = stamp_to_ns(message.header.stamp)
+    audit.add_stamp(stamp_ns)
+    if message.header.frame_id != "base_link":
+        audit.problems.add(
+            "unexpected_frame",
+            f"stamp={format_stamp(stamp_ns)}, frame={message.header.frame_id!r}",
+        )
+    values = twist_values(message.twist.twist)
+    if not all(math.isfinite(value) for value in values):
+        audit.problems.add("non_finite_twist", format_stamp(stamp_ns))
+    audit_covariance(message.twist.covariance, stamp_ns, audit.problems, "twist")
+    audit.records.append(
+        TwistRecord(
+            stamp_ns,
+            values,
+            tuple(float(x) for x in message.twist.covariance),
         )
     )
 
@@ -441,17 +498,24 @@ def transform_values(transform: Any) -> tuple[tuple[float, ...], tuple[float, ..
     return translation, rotation
 
 
-def consume_tf(message: Any, audit: StampedAudit) -> None:
+def consume_tf(message: Any, audit: BagAudit) -> None:
     for transform in message.transforms:
-        if transform.header.frame_id != "map" or transform.child_frame_id != "base_link":
+        if transform.child_frame_id != "base_link":
+            continue
+        audit.dynamic_base_parents[str(transform.header.frame_id)] += 1
+        if transform.header.frame_id != "map":
             continue
         stamp_ns = stamp_to_ns(transform.header.stamp)
-        audit.add_stamp(stamp_ns)
+        audit.map_base_tf.add_stamp(stamp_ns)
         translation, rotation = transform_values(transform.transform)
         if not all(math.isfinite(value) for value in translation + rotation):
-            audit.problems.add("non_finite_transform", format_stamp(stamp_ns))
-        audit_quaternion(rotation, stamp_ns, audit.problems, "transform")
-        audit.records.append(TransformRecord(stamp_ns, translation, rotation))
+            audit.map_base_tf.problems.add("non_finite_transform", format_stamp(stamp_ns))
+        audit_quaternion(
+            rotation, stamp_ns, audit.map_base_tf.problems, "transform"
+        )
+        audit.map_base_tf.records.append(
+            TransformRecord(stamp_ns, translation, rotation)
+        )
 
 
 def consume_static_tf(message: Any, audit: BagAudit) -> None:
@@ -588,7 +652,11 @@ def check_interface(audit: BagAudit, profile: str, report: Report) -> None:
             "kinematic state contract", "not evaluated because no state message was readable"
         )
 
-    for name, stream in (("pose", audit.pose), ("acceleration", audit.acceleration)):
+    for name, stream in (
+        ("twist", audit.twist),
+        ("pose", audit.pose),
+        ("acceleration", audit.acceleration),
+    ):
         if stream.problems:
             report.failed(f"{name} message contract", stream.problems.describe())
         elif stream.stamps:
@@ -609,8 +677,24 @@ def check_interface(audit: BagAudit, profile: str, report: Report) -> None:
     else:
         report.failed("map->base_link TF contract", "no map->base_link transform in /tf")
 
+    if set(audit.dynamic_base_parents) == {"map"}:
+        report.passed(
+            "dynamic base_link TF ownership",
+            f"only map -> base_link ({audit.dynamic_base_parents['map']} transforms)",
+        )
+    else:
+        observed = ", ".join(
+            f"{parent}->base_link={count}"
+            for parent, count in sorted(audit.dynamic_base_parents.items())
+        ) or "none"
+        report.failed(
+            "dynamic base_link TF ownership",
+            f"expected only map -> base_link; observed {observed}",
+        )
+
     state_stamps = audit.state.stamps
     aligned = {
+        "twist": audit.twist.stamps,
         "pose": audit.pose.stamps,
         "acceleration": audit.acceleration.stamps,
         "map->base_link TF": audit.map_base_tf.stamps,
@@ -628,7 +712,30 @@ def check_interface(audit: BagAudit, profile: str, report: Report) -> None:
         count = len(state_stamps)
         report.passed(
             "adapter count/stamp alignment",
-            f"state=pose=acceleration=map->base_link TF={count}; stamps match exactly",
+            f"state=twist=pose=acceleration=map->base_link TF={count}; stamps match exactly",
+        )
+
+    twist_value_problems = Problems()
+    if audit.twist.stamps == state_stamps:
+        for state_record, twist_record in zip(
+            audit.state.records, audit.twist.records, strict=True
+        ):
+            if not close_sequence(state_record.twist, twist_record.twist):
+                twist_value_problems.add(
+                    "value_mismatch", format_stamp(state_record.stamp_ns)
+                )
+            if not close_sequence(
+                state_record.twist_covariance, twist_record.covariance
+            ):
+                twist_value_problems.add(
+                    "covariance_mismatch", format_stamp(state_record.stamp_ns)
+                )
+    if twist_value_problems:
+        report.failed("twist/state value alignment", twist_value_problems.describe())
+    elif audit.twist.stamps == state_stamps and state_stamps:
+        report.passed(
+            "twist/state value alignment",
+            "base-frame twist and covariance match every state",
         )
 
     pose_value_problems = Problems()
@@ -836,6 +943,88 @@ def check_adapter_diagnostic(audit: BagAudit, report: Report) -> None:
             f"rejected_count=0, last_rejection_reason=none "
             f"({audit.diagnostics.counts[ADAPTER_DIAGNOSTIC]} samples)",
         )
+
+
+def check_autoware_monitor_diagnostics(audit: BagAudit, report: Report) -> None:
+    required_keys = {
+        POSE_INSTABILITY_DIAGNOSTIC: {
+            "diff_position_x:validation_enabled",
+            "diff_position_x:threshold",
+            "diff_position_x:value",
+            "diff_position_x:status",
+            "diff_angle_z:validation_enabled",
+            "diff_angle_z:threshold",
+            "diff_angle_z:value",
+            "diff_angle_z:status",
+        },
+        LOCALIZATION_ERROR_DIAGNOSTIC: {
+            "localization_error_ellipse",
+            "localization_error_ellipse_lateral_direction",
+        },
+    }
+    level_names = {0: "OK", 1: "WARN", 2: "ERROR", 3: "STALE"}
+    for name, keys in required_keys.items():
+        snapshot = audit.diagnostics.last.get(name)
+        if snapshot is None:
+            report.failed("Autoware monitor diagnostic", f"{name}: missing")
+            continue
+        missing_keys = sorted(keys - set(snapshot.values))
+        if missing_keys:
+            report.failed(
+                "Autoware monitor diagnostic schema",
+                f"{name}: missing {', '.join(missing_keys)}",
+            )
+        else:
+            report.passed(
+                "Autoware monitor diagnostic schema",
+                f"{name}: latest schema present; "
+                f"{audit.diagnostics.counts[name]} samples observed",
+            )
+
+        distribution = audit.diagnostics.levels[name]
+        unknown_levels = sorted(set(distribution) - set(level_names))
+        if unknown_levels:
+            report.failed(
+                "Autoware monitor diagnostic level",
+                f"{name}: unsupported levels {unknown_levels}",
+            )
+        formatted = ", ".join(
+            f"{level_names.get(level, str(level))}={count}"
+            for level, count in sorted(distribution.items())
+        )
+        # Real-bag levels are characterization, not a wiring acceptance gate:
+        # the upstream thresholds may not match this estimator's covariance
+        # calibration, and the pose/twist streams share a common source.
+        report.info("Autoware monitor level distribution", f"{name}: {formatted}")
+
+        if audit.state.stamps:
+            age_sec = (audit.state.stamps[-1] - snapshot.header_stamp_ns) * 1.0e-9
+            if abs(age_sec) <= 1.0:
+                report.passed(
+                    "Autoware monitor end recency",
+                    f"{name}: {age_sec:.6f} s behind the final state",
+                )
+            else:
+                report.failed(
+                    "Autoware monitor end recency",
+                    f"{name}: {age_sec:.6f} s behind the final state",
+                )
+
+
+def check_aggregated_monitor_diagnostics(audit: BagAudit, report: Report) -> None:
+    observed = set(audit.aggregated_diagnostic_names)
+    missing = sorted(AGGREGATED_MONITOR_DIAGNOSTICS - observed)
+    if missing:
+        report.failed(
+            "aggregated Autoware monitor diagnostics",
+            "missing grouped leaves: " + ", ".join(missing),
+        )
+        return
+    details = ", ".join(
+        f"{name}={audit.aggregated_diagnostic_names[name]}"
+        for name in sorted(AGGREGATED_MONITOR_DIAGNOSTICS)
+    )
+    report.passed("aggregated Autoware monitor diagnostics", details)
 
 
 def check_gnss_diagnostic(audit: BagAudit, profile: str, report: Report) -> None:
@@ -1108,11 +1297,13 @@ def message_classes(topic_types: dict[str, str]) -> dict[str, type[Any]]:
     expected = {
         CLOCK_TOPIC: BASE_REQUIRED_TOPICS[CLOCK_TOPIC],
         KINEMATIC_TOPIC: BASE_REQUIRED_TOPICS[KINEMATIC_TOPIC],
+        TWIST_TOPIC: BASE_REQUIRED_TOPICS[TWIST_TOPIC],
         POSE_TOPIC: BASE_REQUIRED_TOPICS[POSE_TOPIC],
         ACCEL_TOPIC: BASE_REQUIRED_TOPICS[ACCEL_TOPIC],
         TF_TOPIC: BASE_REQUIRED_TOPICS[TF_TOPIC],
         TF_STATIC_TOPIC: BASE_REQUIRED_TOPICS[TF_STATIC_TOPIC],
         DIAGNOSTICS_TOPIC: BASE_REQUIRED_TOPICS[DIAGNOSTICS_TOPIC],
+        DIAGNOSTICS_AGG_TOPIC: BASE_REQUIRED_TOPICS[DIAGNOSTICS_AGG_TOPIC],
     }
     expected.update(HESAI_REQUIRED_TOPICS)
     classes = {}
@@ -1127,10 +1318,14 @@ def read_bag(reader: rosbag2_py.SequentialReader, classes: dict[str, type[Any]])
     consumers = {
         CLOCK_TOPIC: lambda message: consume_clock(message, audit.clock),
         KINEMATIC_TOPIC: lambda message: consume_kinematic(message, audit.state),
+        TWIST_TOPIC: lambda message: consume_twist(message, audit.twist),
         POSE_TOPIC: lambda message: consume_pose(message, audit.pose),
         ACCEL_TOPIC: lambda message: consume_acceleration(message, audit.acceleration),
-        TF_TOPIC: lambda message: consume_tf(message, audit.map_base_tf),
+        TF_TOPIC: lambda message: consume_tf(message, audit),
         TF_STATIC_TOPIC: lambda message: consume_static_tf(message, audit),
+        DIAGNOSTICS_AGG_TOPIC: lambda message: audit.aggregated_diagnostic_names.update(
+            str(status.name) for status in message.status
+        ),
     }
     for topic in HESAI_REQUIRED_TOPICS:
         consumers[topic] = (
@@ -1239,6 +1434,8 @@ def run(bag_argument: str, profile: str, tracking_mode: str) -> int:
         check_hesai_static_transforms(audit, report)
         check_hesai_end_recency(audit, report)
     check_adapter_diagnostic(audit, report)
+    check_autoware_monitor_diagnostics(audit, report)
+    check_aggregated_monitor_diagnostics(audit, report)
     check_gnss_diagnostic(audit, profile, report)
     check_deskew_diagnostic(audit, profile, report)
     check_tracking_diagnostic(audit, profile, tracking_mode, report)

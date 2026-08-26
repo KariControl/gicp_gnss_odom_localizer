@@ -20,6 +20,8 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>tf2_msgs</exec_depend>
   <exec_depend>rclcpp_components</exec_depend>
   <exec_depend>diagnostic_aggregator</exec_depend>
   <exec_depend>libqt5-core</exec_depend>
@@ -33,8 +35,9 @@
   <exec_depend>pure_lidar_gyro_odometer</exec_depend>
   <exec_depend>pure_nmea_gnss_conversion</exec_depend>
   <exec_depend>pure_gnss_map_odom_fusion</exec_depend>
-  <exec_depend>pure_autoware_localization_adapter</exec_depend>
+  <exec_depend>pure_localization_interface_adapter</exec_depend>
   <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>pure_precision_bringup</test_depend>
   <test_depend>ros2bag</test_depend>
   <test_depend>rosbag2_py</test_depend>
   <test_depend>rosbag2_storage_mcap</test_depend>

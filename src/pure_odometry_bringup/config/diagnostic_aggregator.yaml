@@ -29,7 +29,15 @@ diagnostic_aggregator:
         type: diagnostic_aggregator/GenericAnalyzer
         path: gnss_map_odom_fusion
         startswith: ["localization/gnss_map_odom_fusion", "localization/map_odom_fusion"]
-      autoware_localization_adapter:
+      localization_interface_adapter:
         type: diagnostic_aggregator/GenericAnalyzer
-        path: autoware_localization_adapter
-        startswith: ["localization/gicp_gnss_autoware_adapter"]
+        path: localization_interface_adapter
+        startswith: ["localization/localization_interface_adapter"]
+      pose_instability_detector:
+        type: diagnostic_aggregator/GenericAnalyzer
+        path: pose_instability_detector
+        startswith: ["localization: pose_instability_detector"]
+      localization_error_monitor:
+        type: diagnostic_aggregator/GenericAnalyzer
+        path: localization_error_monitor
+        startswith: ["localization_error_monitor: ellipse_error_status"]

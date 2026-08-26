@@ -111,6 +111,13 @@ if(BUILD_TESTING)
   ament_target_dependencies(test_callback_groups rclcpp)
   add_test(NAME test_callback_groups COMMAND test_callback_groups)
 
+  add_executable(test_tf_publication test/test_tf_publication.cpp)
+  target_include_directories(test_tf_publication PRIVATE include)
+  target_compile_features(test_tf_publication PRIVATE cxx_std_17)
+  target_link_libraries(test_tf_publication ${PROJECT_NAME})
+  ament_target_dependencies(test_tf_publication rclcpp nav_msgs tf2_ros)
+  add_test(NAME test_tf_publication COMMAND test_tf_publication)
+
   add_executable(test_tracking_mode test/test_tracking_mode.cpp)
   target_include_directories(test_tracking_mode PRIVATE include)
   target_compile_features(test_tracking_mode PRIVATE cxx_std_17)

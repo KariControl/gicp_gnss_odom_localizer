@@ -23,6 +23,7 @@
 #include <small_gicp/pcl/pcl_registration.hpp>
 
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 
 #include <tf2/LinearMath/Transform.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
@@ -312,6 +313,7 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
   // Frames
   base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
   odom_frame_ = declare_parameter<std::string>("odom_frame", "odom");
+  publish_tf_ = declare_parameter<bool>("publish_tf", false);
 
   // Topics
   imu_topic_ = declare_parameter<std::string>("imu_topic", "/imu");
@@ -561,6 +563,9 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & options)
 
   // Publishers
   pub_odom_raw_ = create_publisher<nav_msgs::msg::Odometry>(out_odom_topic_, 10);
+  if (publish_tf_) {
+    transform_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+  }
   if (accepted_scan_odom_enable_) {
     pub_accepted_scan_odom_ =
       create_publisher<nav_msgs::msg::Odometry>(accepted_scan_odom_topic_, 10);
@@ -2222,6 +2227,16 @@ void GyroOdometerNode::onPublishTimer()
 
   fillOdom(odom_raw, odom_x, odom_y, odom_yaw, raw_twist_x, raw_twist_y, raw_twist_yaw, has_raw_twist);
   pub_odom_raw_->publish(odom_raw);
+  if (transform_broadcaster_) {
+    geometry_msgs::msg::TransformStamped transform;
+    transform.header = odom_raw.header;
+    transform.child_frame_id = odom_raw.child_frame_id;
+    transform.transform.translation.x = odom_raw.pose.pose.position.x;
+    transform.transform.translation.y = odom_raw.pose.pose.position.y;
+    transform.transform.translation.z = odom_raw.pose.pose.position.z;
+    transform.transform.rotation = odom_raw.pose.pose.orientation;
+    transform_broadcaster_->sendTransform(transform);
+  }
   if (pub_deskew_twist_) {
     geometry_msgs::msg::TwistStamped twist;
     twist.header.stamp = nowt;
@@ -2288,6 +2303,9 @@ void GyroOdometerNode::onPublishTimer()
     add("odom_cov_xy_total", std::to_string(odom_cov_xy_total));
     add("odom_cov_yaw_total", std::to_string(odom_cov_yaw_total));
     add("raw_odom_topic", out_odom_topic_);
+    add("publish_tf", boolString(publish_tf_));
+    add("odom_frame", odom_frame_);
+    add("base_frame", base_frame_);
     add("accepted_scan_odom_enabled", boolString(accepted_scan_odom_enable_));
     add(
       "accepted_scan_odom_topic",

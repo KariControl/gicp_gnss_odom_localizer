@@ -1,0 +1,97 @@
+name: ROS 2 Jazzy CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jazzy-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clean-build-and-test:
+    name: Ubuntu 24.04 / ROS 2 Jazzy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Set up ROS development tools
+        uses: ros-tooling/setup-ros@0.7.19
+
+      - name: Verify recursive submodule checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule status --recursive
+          test -f src/small_gicp/package.xml
+
+      - name: Install ROS 2 Jazzy and package dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ros-jazzy-ros-base
+          rosdep update --rosdistro jazzy
+          rosdep install \
+            --from-paths src \
+            --ignore-src \
+            --rosdistro jazzy \
+            --yes
+
+      - name: Run repository and ROS-independent checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/check_repository.py
+          ./tools/run_reference_tests.sh
+          python3 tools/reference_checks.py
+          python3 tools/check_launch_construction.py
+          python3 tools/check_docker_configuration.py
+
+      - name: Build all packages from a clean workspace
+        shell: bash
+        run: |
+          set -eo pipefail
+          source /opt/ros/jazzy/setup.bash
+          test ! -e build
+          test ! -e install
+          test ! -e log
+          colcon build \
+            --event-handlers console_cohesion+ \
+            --cmake-args \
+              -DCMAKE_BUILD_TYPE=Release \
+            --ament-cmake-args \
+              -DBUILD_TESTING=ON
+
+      - name: Run all registered package tests
+        shell: bash
+        run: |
+          set -eo pipefail
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          test_rc=0
+          colcon test \
+            --event-handlers console_direct+ \
+            --return-code-on-test-failure || test_rc=$?
+          result_rc=0
+          colcon test-result --verbose || result_rc=$?
+          if ((test_rc != 0 || result_rc != 0)); then
+            exit 1
+          fi

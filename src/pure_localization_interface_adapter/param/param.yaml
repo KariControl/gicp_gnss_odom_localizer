@@ -2,6 +2,7 @@
   ros__parameters:
     input_odom_topic: /localization/ekf_odom
     kinematic_state_topic: /localization/kinematic_state
+    twist_topic: /localization/twist_with_covariance
     acceleration_topic: /localization/acceleration
     pose_topic: /localization/pose_estimator/pose_with_covariance
     map_frame: map
@@ -9,6 +10,7 @@
     require_expected_frames: true
     publish_tf: true
     publish_pose: true
+    publish_twist: true
     publish_acceleration: true
     publish_reset_acceleration: true
     publish_diagnostics: true

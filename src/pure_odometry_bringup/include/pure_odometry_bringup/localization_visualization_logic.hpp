@@ -117,7 +117,7 @@ inline InterfaceVisualState classifyInterface(
     return InterfaceVisualState::STALE;
   }
   if (status->level == diagnostic_msgs::msg::DiagnosticStatus::OK &&
-    status->message == "Autoware localization interface active")
+    status->message == "localization interface adapter active")
   {
     return InterfaceVisualState::ACTIVE;
   }

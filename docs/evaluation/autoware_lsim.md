@@ -1,9 +1,17 @@
 # Autoware Localization-Interface Evaluation
 
+> **Historical pre-Stage-A result:** this page records the 2026-08-12 output
+> schema. It predates the separate twist-with-covariance stream, the two real
+> Autoware monitor diagnostics, and the adapter rename introduced by Stage A.
+> It remains evidence for the stated simulation-time, full-rate replay, and
+> GNSS-recovery checks only. Re-run the private source bag with the current
+> runner before claiming the current Stage A schema and this GNSS scenario in
+> one execution.
+
 ## Conclusion
 
 On 2026-08-12, the private Hesai Course 2 recording was replayed end to end at
-1.0x with the current packaged default NMEA projection and Autoware 1.9.0 in a
+1.0x with the packaged default NMEA projection and Autoware 1.9.0 in a
 localization-interface-only configuration. The headless output-bag validation
 passed with no failures and one bounded-step warning.
 
@@ -28,7 +36,7 @@ identities, measurements, and artifacts are not part of the public evaluation.
 A representative visualization-only RViz poster and replay are published. They
 are not additional accuracy, CPU, or passing-run evidence.
 
-## Current headless test conditions
+## 2026-08-12 pre-Stage-A headless test conditions
 
 | Property | Value |
 |---|---|
@@ -47,7 +55,7 @@ are not additional accuracy, CPU, or passing-run evidence.
 This is an integration test, not a scan-to-scan versus isolated scan-to-submap
 A/B test.
 
-## Current default-projection headless result
+## 2026-08-12 pre-Stage-A default-projection headless result
 
 | Dataset | Analyzed messages | Kinematic states | Evaluated span | Effective output rate | Maximum XY step | Automated validation |
 |---|---:|---:|---:|---:|---:|---|

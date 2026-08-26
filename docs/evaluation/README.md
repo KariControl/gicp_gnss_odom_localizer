@@ -12,7 +12,7 @@ alignment, metric, runtime, and timing rules.
 | Velodyne 32-Line + External IMU | [LiDAR/IMU-only evaluation](lidar_imu.md) | Scan-to-scan and isolated scan-to-submap odometry | Limited to the valid recording prefix |
 | Livox MID-360 + Internal IMU | [LiDAR/IMU-only evaluation](lidar_imu.md) | Tuned scan-to-scan and isolated rolling scan-to-submap odometry | Accepted for the documented recording-specific profile |
 | Hesai 32-Line + IMU + RTK GNSS — Course 2 | [LiDAR/IMU/GNSS evaluation](lidar_imu_gnss.md) | Local scan-to-scan/scan-to-submap and guarded global GNSS localization | Current 2026-08-25 profile adopted; 55/55 GLIM A/B hard gates passed |
-| Autoware localization-interface integration with Hesai + IMU + RTK GNSS | [Autoware localization-interface evaluation](autoware_lsim.md) | Headless localization-interface, runtime-completion, and GNSS-recovery validation | Passed with the packaged default projection |
+| Autoware localization-interface integration with Hesai + IMU + RTK GNSS | [Autoware localization-interface evaluation](autoware_lsim.md) | Historical pre-Stage-A headless interface, runtime-completion, and GNSS-recovery validation | 2026-08-12 result passed with the packaged default projection; current Stage A schema requires replay |
 
 The source recordings are private and are not distributed in this repository.
 Dataset labels describe only the sensor configuration and course; private bag

@@ -20,7 +20,9 @@ inputs are stored in the repository.
 | Launch construction | Construct the supported launch files and arguments | `tools/check_launch_construction.py` |
 | Docker configuration | Validate Compose files, wrapper contracts, and pinned Autoware integration | `tools/check_docker_configuration.py` |
 | ROS build and package tests | Compile the workspace and run package-level tests | `colcon build`, `colcon test`, and `colcon test-result` |
+| Runtime TF ownership matrix | Launch supported profiles in isolated ROS domains and check the endpoint multiset, owner parameters, and emitted edge set | `pure_odometry_bringup/test_tf_ownership_profiles` through `colcon test` |
 | Public synthetic rosbag | Validate the committed PointCloud2/IMU/TF input and exercise the local-odometry path | `tools/check_synthetic_output_pointcloud2.py` and `script/run_synthetic_lidar_imu_smoke.sh` |
+| Autoware interface contract | Exercise adapter outputs, TF ownership, and real Autoware 1.9.0 monitor normal/fault/recovery behavior | `script/run_autoware_localization_contract_docker.sh` |
 | Recording-level evaluation | Validate accuracy, timestamps, non-intrusion, GNSS behavior, and runtime on controlled recordings | [Evaluation methodology](evaluation/methodology.md) |
 | Documentation publication | Check links, stable assets, privacy, and publication boundaries | Repository and asset checks plus the checklist below |
 
@@ -40,9 +42,63 @@ git diff --check
 
 These checks do not replace a ROS build or recording replay.
 
+## Autoware localization-interface contract
+
+Run the deterministic contract using the Autoware 1.9.0 CPU-only image tag:
+
+```bash
+./script/run_autoware_localization_contract_docker.sh
+```
+
+It verifies kinematic-state, pose, twist-with-covariance, acceleration and
+direct `map -> base_link` TF behavior, requires exactly one adapter `/tf`
+publisher endpoint, checks that no competing dynamic `base_link` parent
+appears, and checks normal/error/recovery transitions from
+the real Autoware `pose_instability_detector` and
+`localization_error_monitor` nodes.
+This gate validates the message/TF/diagnostic contract only. It does not run
+planning/control, measure localization accuracy, test topic dropout, or make
+the pose-instability detector independent: its pose and twist inputs are both
+derived from the fused odometry.
+
+The default evidence directory is
+`docker_output/autoware_localization_contract_<UTC timestamp>/` and contains
+`result.json`, `tf_ownership.json`, launch/probe/ownership logs, and runner
+status. The result embeds the ownership evidence and records the resolved image
+ID and monitor package versions; CI retains the directory as an artifact for 30
+days. The image release tag is version-selected, while its resolved image ID
+supplies the immutable identity for a particular run.
+The same CI job then reuses the built image for the committed public synthetic
+bag and production localizer launch. That replay covers simulated time,
+automatic initialization, TF endpoint ownership both before and after replay,
+TF isolation, adapter alignment, and monitor availability. It retains
+`tf_ownership.json` and `tf_ownership_completion.json`; it is still a functional
+integration test without independent ground truth, not an accuracy result.
+
+For real bags, record and report monitor-level distributions as
+characterization rather than pass/fail criteria until covariance is calibrated
+against an independent reference. In particular, a default planar variance of
+`0.25 m^2` becomes a `1.5 m` three-sigma ellipse, which exceeds the pinned
+monitor's `0.30 m` lateral error threshold.
+
+The analyzer is fail-closed against the current Stage A output schema. A bag
+recorded by an earlier revision lacks the separate twist stream, monitor
+diagnostics, and renamed adapter identity and therefore fails the current
+schema check. Replay the source bag with the current runner before comparing
+integration results; the failure alone does not invalidate previously reported
+trajectory metrics.
+
 ## ROS 2 build and package tests
 
 ROS 2 Jazzy on Ubuntu 24.04 is the primary target.
+
+The `ROS 2 Jazzy CI` workflow runs on pushes and pull requests targeting
+`main` or `develop`, and can also be started manually. Each job uses a fresh
+Ubuntu 24.04 runner, recursively checks out the pinned `small_gicp` submodule,
+installs dependencies through rosdep, verifies that no `build`, `install`, or
+`log` tree exists, performs a Release build, and runs every package test
+registered with colcon. It intentionally does not restore build products from
+a cache.
 
 ```bash
 source /opt/ros/jazzy/setup.bash
@@ -52,6 +108,16 @@ source install/setup.bash
 colcon test --event-handlers console_direct+
 colcon test-result --verbose
 ```
+
+`pure_odometry_bringup` includes a runtime TF ownership matrix. It covers
+container and standalone local/fused profiles, the main container GNSS path and
+the NMEA-wrapper profile,
+`lidar_imu_only` with TF disabled and enabled, both composable deskew branches,
+and the precision overlay. For every profile it checks the exact `/tf` endpoint
+multiset, each owner's effective `publish_tf` and frame parameters, and the
+emitted dynamic edge set. A negative test starts two publishers configured for
+the same `map -> base_link` edge, verifies that both processes and endpoints are
+present, and requires the ownership probe to reject that graph.
 
 After changing installed YAML or launch files in a symlink build, rebuild the
 affected package. Do not remove unrelated build products or user artifacts.

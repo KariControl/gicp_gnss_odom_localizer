@@ -1,14 +1,14 @@
 # Docker-Based Autoware Localization-Interface Evaluation
 
-This profile runs the localization-only Autoware integration and rosbag replay
-inside one CPU-only Docker container. The host needs Docker Engine and the
-Docker Compose v2 plugin, but it does not need ROS 2 or Autoware installed.
+This profile runs the Stage A localization-interface integration and rosbag
+replay inside one CPU-only Docker container. The host needs Docker Engine and
+the Docker Compose v2 plugin, but it does not need ROS 2 or Autoware installed.
 
 The retained `autoware_lsim` paths and command names are project-local
 compatibility identifiers, not names of an official Autoware component or
 workflow.
 
-The image is built on the pinned no-CUDA development image:
+The image is built from the Autoware 1.9.0 no-CUDA development-image tag:
 
 ```text
 ghcr.io/autowarefoundation/autoware:universe-devel-jazzy-1.9.0
@@ -31,11 +31,66 @@ From the repository root:
 
 The wrapper builds the overlay image, starts the localization-only Autoware
 launch, replays the bag with conflicting recorded localization topics isolated
-under `/reference`, publishes a zero map anchor after the first LiDAR odometry
-sample when GNSS is disabled, records evaluation outputs, and shuts everything
-down when playback ends.
+under `/reference`, waits for a positive `/clock` and a nonzero-stamped local
+odometry sample before publishing a zero map anchor when GNSS is disabled,
+records evaluation outputs, and shuts everything down when playback ends.
+
+The Docker launch uses the real Autoware 1.9.0
+`autoware_pose_instability_detector` and
+`autoware_localization_error_monitor` packages. It also records the adapter's
+`/localization/twist_with_covariance` output used by the pose-instability
+detector.
 
 Results are written below `docker_output/` unless `--output` is supplied.
+
+## Deterministic interface and diagnostic contract
+
+Run the version-selected contract before a recording-specific evaluation:
+
+```bash
+./script/run_autoware_localization_contract_docker.sh
+```
+
+The test launches the production adapter plus the two actual Autoware 1.9.0
+monitor nodes, injects deterministic fused odometry, and verifies:
+
+- presence and declared frames for every adapter output, preservation of the
+  tested pose/twist/covariance fields, finite derived acceleration, and the
+  tested TF stamp and pose fields;
+- that `/localization_interface_adapter` owns exactly one runtime `/tf`
+  publisher endpoint configured for `map -> base_link`, the emitted TF matches
+  the input pose, and no competing dynamic `base_link` parent is observed;
+- `pose_instability_detector` transitions `OK -> ERROR -> OK` for a pose jump;
+- `localization_error_monitor` transitions `OK -> ERROR -> OK` for an injected
+  covariance fault, including its expected diagnostic keys.
+
+This is a synthetic contract test, not a localization-accuracy benchmark. It
+does not launch Autoware planning/control or prove closed-loop readiness. The
+pose and twist supplied to the instability detector share one fused-odometry
+source, so common-mode estimator errors can remain invisible. Neither of these
+two Autoware monitors detects topic dropout.
+
+The exact diagnostic identities checked by the contract are
+`localization: pose_instability_detector` and
+`localization_error_monitor: ellipse_error_status`.
+
+By default, evidence is retained under
+`docker_output/autoware_localization_contract_<UTC timestamp>/`: `result.json`,
+`tf_ownership.json`, `launch.log`, `probe.log`, `tf_ownership.log`, and
+`runner_status.txt`. The result embeds the ownership evidence and records the
+resolved local image ID and both monitor package versions. CI uploads the same
+directory as an artifact for 30 days. The CI job then reuses that image to run
+the committed public synthetic bag through the production localizer launch,
+including simulated time, automatic initialization, TF endpoint ownership both
+before and after replay, TF policy, adapter, and both monitors. The production
+run retains `tf_ownership.json` and `tf_ownership_completion.json`.
+
+The current analyzer expects the Stage A recording schema. Output bags created
+before Stage A do not contain the separate twist output, the two monitor
+diagnostics, or the renamed adapter identity, so rechecking such historical
+bags with the current analyzer fails by design. Regenerate the output bag with
+the current runner; do not interpret that schema failure as a change in the
+historical trajectory metrics.
 
 ## Private Hesai evaluation profile
 
@@ -107,6 +162,27 @@ to `/reference/tf`. Use `--tf-policy isolate-all --launch-vehicle` only when the
 selected Autoware vehicle and sensor models exactly match the recorded sensor
 installation. The `hesai-rosbag23` profile is the other supported
 `isolate-all` case because it publishes its own calibrated static transforms.
+
+The container, standalone, and standalone-with-NMEA launches enable the gyro
+odometer's `odom -> base_link` TF; the evaluation-oriented `lidar_imu_only`
+launch leaves it disabled by default. In this Autoware profile, gyro-odometer
+and fusion TF publication are both disabled, and the launch assigns the direct
+`map -> base_link` transform to the adapter. Before replay starts, the runner
+queries the live ROS graph and effective node parameters: the adapter must own
+the only `/tf` endpoint, while gyro odometer and fusion must both report
+`publish_tf=false`.
+
+## Interpreting Autoware monitor results
+
+The deterministic normal/fault/recovery contract is a pass/fail gate. Monitor
+levels observed during a real bag are characterization, not a localization
+accuracy acceptance criterion: their thresholds require covariance semantics
+and calibration that match Autoware's assumptions. For example, the current
+default planar position variance of `0.25 m^2` has `sigma = 0.5 m`; with the
+monitor's default scale of three, its `3 sigma` ellipse is `1.5 m`, already far
+above the Autoware 1.9.0 lateral error threshold of `0.30 m`. Do not tune the
+published covariance or monitor thresholds merely to make the diagnostic
+green; establish an independent covariance-calibration method first.
 
 ## GUI diagnostics and RViz without a discrete GPU
 

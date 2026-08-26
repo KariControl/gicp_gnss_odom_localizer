@@ -21,6 +21,7 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/transform_listener.h>
 
 #include <Eigen/Core>
@@ -139,6 +140,7 @@ private:
   // -------- Parameters --------
   std::string base_frame_;
   std::string odom_frame_;
+  bool publish_tf_{false};
 
   std::string imu_topic_;
   std::string wheel_speed_topic_;
@@ -364,6 +366,7 @@ private:
 
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+  std::unique_ptr<tf2_ros::TransformBroadcaster> transform_broadcaster_;
 
   // Integrated odom pose. It is updated only by accepted LiDAR/factor-graph steps.
   double odom_x_{0.0};

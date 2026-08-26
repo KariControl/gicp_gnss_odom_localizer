@@ -484,7 +484,7 @@ def check_container_runner() -> None:
         "set +u",
         "play_localization_bag.sh",
         "ros2 bag record",
-        "ros2 topic echo --once /localization/gyro_lidar_odom",
+        "/localization/gyro_lidar_odom",
         "ros2 topic pub --once /initialpose",
         "param_xt_lidar_imu_only.yaml",
         'NMEA_GNSS_OVERRIDE_PARAM="$EMPTY_PARAM"',
@@ -495,7 +495,17 @@ def check_container_runner() -> None:
         "--clock-frequency",
         "autoware_lsim_output_recorder",
         "first_kinematic_state.yaml",
+        "first_clock.yaml",
+        "first_nonzero_local_odom.yaml",
+        "has_nonzero_ros_stamp",
+        "wait_for_nonzero_topic_sample",
         "analyze_autoware_lsim_output.py",
+        "autoware_pose_instability_detector",
+        "autoware_localization_error_monitor",
+        "launch_localization_monitors:=true",
+        "/pose_instability_detector",
+        "/localization_error_monitor",
+        "/localization/twist_with_covariance",
         "precision_overlay.launch.py",
         "submap_snapshot_override.yaml",
         "--tracking-mode scan_to_scan",
@@ -912,12 +922,156 @@ def check_host_wrapper() -> None:
             fail("sample body Z offset must fail closed without the sample body")
 
 
+def check_localization_contract() -> None:
+    files_and_tokens = {
+        ROOT
+        / "src/pure_odometry_bringup/scripts/autoware_localization_contract_test.py": (
+            "localization: pose_instability_detector",
+            "localization_error_monitor: ellipse_error_status",
+            "diff_position_x:status",
+            "localization_error_ellipse_lateral_direction",
+            "selected_diagnostic_evidence",
+            "observed_transitions",
+            'parser.add_argument(\n        "--output"',
+        ),
+        ROOT / "src/pure_odometry_bringup/scripts/tf_ownership_probe.py": (
+            'get_publishers_info_by_topic("/tf")',
+            '"publish_tf"',
+            '"--disabled-owner"',
+            '"--skip-edge-samples"',
+            "each dynamic TF edge must have one owner",
+        ),
+        ROOT / "docker/autoware_lsim/run_localization_contract_test.sh": (
+            "result.json",
+            "launch.log",
+            "probe.log",
+            "runner_status.txt",
+            "launch_alive_after_probe",
+            "POSE_INSTABILITY_DETECTOR_VERSION",
+            "LOCALIZATION_ERROR_MONITOR_VERSION",
+            "launch_localization_monitors:=true",
+            "tf_ownership.json",
+            "tf_ownership_probe.py",
+            "/localization_interface_adapter,map_frame,map,base_frame,base_link",
+        ),
+        ROOT / "script/run_autoware_localization_contract_docker.sh": (
+            "--output-dir",
+            "docker image inspect",
+            'CONTRACT_OUTPUT_DIR=/output',
+            '--volume "$output_dir:/output"',
+        ),
+        ROOT / ".github/workflows/autoware-localization-contract.yaml": (
+            "Autoware Localization Contract",
+            "run_autoware_localization_contract_docker.sh",
+            "run_autoware_lsim_docker.sh",
+            "data/synthetic_output_pointcloud2",
+            "stage_a_public_synthetic",
+            "src/**",
+            "if: always()",
+            "actions/upload-artifact@",
+        ),
+        ROOT / "tools/analyze_autoware_lsim_output.py": (
+            'DIAGNOSTICS_AGG_TOPIC = "/diagnostics_agg"',
+            "AGGREGATED_MONITOR_DIAGNOSTICS",
+            "check_aggregated_monitor_diagnostics",
+        ),
+    }
+    for path, required_tokens in files_and_tokens.items():
+        if not path.is_file():
+            fail(f"localization contract file missing: {path.relative_to(ROOT)}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        for token in required_tokens:
+            if token not in text:
+                fail(
+                    "localization contract required behavior missing from "
+                    f"{path.relative_to(ROOT)}: {token}"
+                )
+
+    for path in (
+        ROOT / "src/pure_odometry_bringup/scripts/autoware_localization_contract_test.py",
+        ROOT / "src/pure_odometry_bringup/scripts/tf_ownership_probe.py",
+        ROOT / "docker/autoware_lsim/run_localization_contract_test.sh",
+        ROOT / "script/run_autoware_localization_contract_docker.sh",
+    ):
+        if path.is_file() and not os.access(path, os.X_OK):
+            fail(f"localization contract script is not executable: {path.relative_to(ROOT)}")
+
+    dockerfile = (ROOT / "docker/autoware_lsim/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    if "run_localization_contract_test.sh" not in dockerfile:
+        fail("Dockerfile does not install the localization contract runner")
+
+    launch = (
+        ROOT / "src/pure_odometry_bringup/launch/autoware_lsim_localization.launch.py"
+    ).read_text(encoding="utf-8")
+    for token in (
+        "autoware_pose_instability_detector",
+        "autoware_localization_error_monitor",
+        "/localization/twist_with_covariance",
+        '"odom_publish_tf": "false"',
+    ):
+        if token not in launch:
+            fail(f"Autoware localization contract launch behavior missing: {token}")
+
+    replay = (ROOT / "script/play_localization_bag.sh").read_text(encoding="utf-8")
+    replay_outputs_start = replay.find("recorded_outputs=(")
+    replay_outputs_end = replay.find(")", replay_outputs_start)
+    replay_outputs = replay[replay_outputs_start:replay_outputs_end]
+    if "/localization/twist_with_covariance" not in replay_outputs:
+        fail("recorded adapter twist is not isolated below /reference during replay")
+
+    with tempfile.TemporaryDirectory(prefix="localization_twist_replay_check_") as directory:
+        bag = Path(directory) / "bag"
+        bag.mkdir()
+        replay_result = subprocess.run(
+            [
+                str(ROOT / "script/play_localization_bag.sh"),
+                "--bag",
+                str(bag),
+                "--twist",
+                "/localization/twist_with_covariance",
+                "--dry-run",
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        twist_remap = (
+            "/localization/twist_with_covariance:=/localization/input_twist"
+        )
+        if replay_result.returncode != 0:
+            fail("recorded twist input replay dry run failed")
+        elif replay_result.stdout.count(
+            "/localization/twist_with_covariance:="
+        ) != 1 or twist_remap not in replay_result.stdout:
+            fail("recorded twist input must have one unambiguous input remap")
+
+    container = (ROOT / "docker/autoware_lsim/container_entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
+    if "/reference/localization/twist_with_covariance" not in container:
+        fail("Docker output recorder omits the isolated reference twist topic")
+    for token in (
+        "tf_ownership_probe.py",
+        "tf_ownership_completion.json",
+        "--disabled-owner /gyro_odometer",
+        "--disabled-owner /gnss_map_odom_fusion",
+        "/localization_interface_adapter,map_frame,map,base_frame,base_link",
+    ):
+        if token not in container:
+            fail(f"Docker runtime TF ownership contract missing: {token}")
+
+
 def main() -> int:
     check_compose()
     check_dockerfile()
     check_rviz_config()
     check_container_runner()
     check_host_wrapper()
+    check_localization_contract()
     if ERRORS:
         print("Docker configuration checks FAILED", file=sys.stderr)
         for error in ERRORS:

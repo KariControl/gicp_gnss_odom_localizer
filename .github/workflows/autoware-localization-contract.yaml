@@ -1,0 +1,87 @@
+name: Autoware Localization Contract
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - .github/workflows/autoware-localization-contract.yaml
+      - .gitmodules
+      - docker/autoware_lsim/**
+      - data/synthetic_output_pointcloud2/**
+      - script/play_localization_bag.sh
+      - script/run_autoware_localization_contract_docker.sh
+      - script/run_autoware_lsim_docker.sh
+      - src/**
+      - tools/analyze_autoware_lsim_output.py
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - .github/workflows/autoware-localization-contract.yaml
+      - .gitmodules
+      - docker/autoware_lsim/**
+      - data/synthetic_output_pointcloud2/**
+      - script/play_localization_bag.sh
+      - script/run_autoware_localization_contract_docker.sh
+      - script/run_autoware_lsim_docker.sh
+      - src/**
+      - tools/analyze_autoware_lsim_output.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autoware-contract-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  localization-contract:
+    name: Autoware 1.9.0 / ROS 2 Jazzy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Run deterministic localization-monitor contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="${RUNNER_TEMP}/autoware-localization-contract"
+          mkdir -p "$artifact_dir"
+          bash script/run_autoware_localization_contract_docker.sh \
+            --build-jobs 2 \
+            --output-dir "$artifact_dir" \
+            2>&1 | tee "$artifact_dir/ci.log"
+
+      - name: Replay the public synthetic bag through the production launch
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="${RUNNER_TEMP}/autoware-localization-contract"
+          bash script/run_autoware_lsim_docker.sh \
+            --bag data/synthetic_output_pointcloud2 \
+            --points /pandar_points_ex \
+            --imu /sensor/imu/data_raw \
+            --output "$artifact_dir/public-synthetic-replay" \
+            --run-name stage_a_public_synthetic \
+            --no-build \
+            2>&1 | tee "$artifact_dir/public-synthetic-replay.log"
+
+      - name: Upload contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autoware-localization-contract
+          path: ${{ runner.temp }}/autoware-localization-contract
+          if-no-files-found: error
+          retention-days: 30

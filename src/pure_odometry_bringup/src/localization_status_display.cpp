@@ -32,7 +32,7 @@ namespace pure_odometry_bringup
 {
 namespace
 {
-constexpr auto kAdapterDiagnosticName = "localization/gicp_gnss_autoware_adapter";
+constexpr auto kAdapterDiagnosticName = "localization/localization_interface_adapter";
 constexpr auto kRegistrationDiagnosticName = "localization/gyro_odometer";
 constexpr auto kFusionDiagnosticName = "localization/gnss_map_odom_fusion";
 constexpr double kRadiansToDegrees = 57.295779513082320876;

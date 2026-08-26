@@ -2,6 +2,7 @@
   ros__parameters:
     base_frame: base_link
     odom_frame: odom
+    publish_tf: false
     imu_topic: /imu
     wheel_speed_topic: /vehicle/twist
     reference_pose_topic: ''

@@ -23,11 +23,12 @@ site or map projection and publish calibrated static transforms from
 origin or extrinsic must not be reused for another site or sensor installation
 without validation.
 
-`pure_lidar_gyro_odometer` publishes `odom -> base_link`.
+The standard `odometry_container.launch.py` and
+`odometry_standalone.launch.py` profiles enable
+`pure_lidar_gyro_odometer` as the `odom -> base_link` publisher.
 `pure_gnss_map_odom_fusion` estimates and optionally publishes `map -> odom`.
-The two nodes must not both publish the same transform. The scan-to-submap
-branch publishes no TF, so it cannot compete with the production transform
-tree.
+Each dynamic transform has one configured owner. The scan-to-submap branch
+publishes no TF, so it cannot compete with the production transform tree.
 
 ## Data flow
 
@@ -64,7 +65,7 @@ pure_odometry_container  (one Linux process, multithreaded executor)
 The NMEA conversion node, GNSS map-to-odom fusion node, and diagnostic
 aggregator are ordinary `launch_ros.actions.Node` actions and therefore run as
 separate Linux processes. In the Autoware integration launch,
-`pure_autoware_localization_adapter` is another separate process, and Autoware
+`pure_localization_interface_adapter` is another separate process, and Autoware
 starts its own processes/containers. All of them may run inside the same Docker
 container, but a Docker container is not the same thing as a ROS 2 component
 container.
@@ -152,7 +153,7 @@ scaling, and diagnostics.
 
 ## Autoware localization-interface integration
 
-The optional `pure_autoware_localization_adapter` is outside the estimator core.
+The optional `pure_localization_interface_adapter` is outside the estimator core.
 It consumes fused `map -> base_link` odometry and republishes standard Autoware
 localization-facing topics:
 
@@ -160,19 +161,36 @@ localization-facing topics:
 /localization/ekf_odom
         |
         v
-pure_autoware_localization_adapter
+pure_localization_interface_adapter
         |-- /localization/kinematic_state
         |-- /localization/pose_estimator/pose_with_covariance
+        |-- /localization/twist_with_covariance
         |-- /localization/acceleration
         `-- map -> base_link TF
 ```
 
-In the localization-only Autoware integration launch,
-`pure_gnss_map_odom_fusion` keeps publishing
-the fused odometry message but its `map -> odom` TF output is disabled. The
-adapter is the only tested global TF publisher and sends a direct
-`map -> base_link` transform. Without GNSS, `/initialpose` creates the initial
-map anchor after local odometry has started.
+In the localization-only Autoware integration launch, the gyro odometer and
+`pure_gnss_map_odom_fusion` keep publishing their odometry messages, but both TF
+outputs are disabled. The launch assigns the direct `map -> base_link`
+transform to the adapter. Without GNSS, `/initialpose` creates the initial map
+anchor only after a positive simulation clock and nonzero-stamped local
+odometry have been observed.
+
+The pinned Docker profile also launches the real Autoware 1.9.0
+`pose_instability_detector` against kinematic state and
+twist-with-covariance, and `localization_error_monitor` against kinematic state.
+The deterministic contract test verifies adapter message/frame/stamp copying,
+TF edge consistency, the adapter's unique runtime `/tf` endpoint, absence of a
+competing `base_link` parent, diagnostic names and keys, and
+normal/error/recovery transitions. The Jazzy package tests separately launch
+the supported profile matrix and compare exact endpoint counts, owner frame
+parameters, emitted edges, and deliberately disabled owners. A recorded TF
+stream alone cannot identify duplicate publishers of the same
+`map -> base_link` edge; that identity check therefore uses the live ROS graph.
+The pose and twist inputs are both derived from the same fused odometry, so the
+pose-instability comparison is not independent and cannot expose every
+common-mode estimator error. Neither monitor checks topic dropout; availability
+monitoring remains a separate integration requirement.
 
 Autoware map/localization, perception, planning, control, system, and API modules
 are disabled in this profile. The adapter is therefore an integration boundary,
