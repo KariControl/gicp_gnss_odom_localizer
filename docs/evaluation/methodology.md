@@ -84,15 +84,15 @@ A publishable CPU/RSS A/B measurement must fix the following conditions:
 
 ## Evidence publication rules
 
-- Tables are checked against curated machine-readable metrics.
+- Tables are reviewed against curated machine-readable metrics.
 - Figure titles or captions identify sensor configuration, course, output, and
   alignment method.
 - Main pages show only trajectories needed to support the conclusion; error
   plots and metrics are linked.
 - Exploratory profiles, smoke tests, obsolete alignments, and superseded runs
   are excluded from headline tables.
-- Published manifests record source-run provenance, configuration hashes,
-  generation method, and asset SHA-256 values without exposing private bag
-  paths.
+- Published metrics record the configuration and validation fields needed to
+  interpret each result. The asset manifest records the byte size and SHA-256
+  digest of each committed plot and metrics file.
 - Source rosbags and complete generated output directories are not distributed
   on GitHub.

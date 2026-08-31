@@ -55,7 +55,7 @@ Detailed curated evidence:
 
 - [XY error](assets/velodyne_32line_external_imu/xy_error.png)
 - [Yaw error](assets/velodyne_32line_external_imu/yaw_error.png)
-- [Machine-readable metrics and provenance](assets/velodyne_32line_external_imu/metrics.json)
+- [Machine-readable metrics and validation summary](assets/velodyne_32line_external_imu/metrics.json)
 
 ### Full-recording robustness warning
 
@@ -105,12 +105,10 @@ odometry contract, and all formal A/B hard checks passed.
 
 ### Parameter search and selected profile
 
-The storage-bounded workflow replayed 48 preregistered candidates serially in
-nine stages: LiDAR filtering, scan-to-scan VGICP, scan acceptance, gyro-bias
-policy, smoother, stop detection, snapshot cadence, submap geometry, and
-correction gating. Candidate bags were pruned only after durable metrics and
-deletion receipts were written; the final workspace occupies about 1.2 GiB.
-The source recording and reference were not modified.
+The parameter search covered LiDAR filtering, scan-to-scan VGICP, scan
+acceptance, gyro-bias policy, smoothing, stop detection, snapshot cadence,
+submap geometry, and correction gating. Candidate selection did not modify the
+source recording or reference.
 
 | Area | Selected values |
 |---|---|
@@ -155,7 +153,7 @@ Detailed curated evidence:
 - [Tuned scan-to-scan and rolling scan-to-submap trajectory](assets/livox_mid360_internal_imu/trajectory.png)
 - [XY error](assets/livox_mid360_internal_imu/xy_error.png)
 - [Yaw error](assets/livox_mid360_internal_imu/yaw_error.png)
-- [Machine-readable metrics and provenance](assets/livox_mid360_internal_imu/metrics.json)
+- [Machine-readable metrics and validation summary](assets/livox_mid360_internal_imu/metrics.json)
 
 ## Runtime and unmeasured CPU load
 

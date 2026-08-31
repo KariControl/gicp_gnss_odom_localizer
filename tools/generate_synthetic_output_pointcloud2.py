@@ -2,10 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Generate the public, fully procedural LiDAR/IMU smoke-test rosbag.
 
-The generator intentionally has no input-bag option.  It reproduces only the
-documented PointCloud2 field layout and rounded message rates of the private
-``output_pointcloud2`` recording.  Every coordinate, motion sample, intensity,
-and timestamp is generated analytically by this file.
+The generator intentionally has no input-bag option. It uses the documented
+Pandar-style PointCloud2 layout and nominal message rates. Every coordinate,
+motion sample, intensity, and timestamp is generated analytically by this file.
 """
 
 from __future__ import annotations

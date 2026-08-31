@@ -1,8 +1,8 @@
 # Docker-Based Autoware Localization-Interface Evaluation
 
-This profile runs the Stage A localization-interface integration and rosbag
-replay inside one CPU-only Docker container. The host needs Docker Engine and
-the Docker Compose v2 plugin, but it does not need ROS 2 or Autoware installed.
+This profile runs the localization-interface integration and rosbag replay
+inside one CPU-only Docker container. The host needs Docker Engine and the
+Docker Compose v2 plugin, but it does not need ROS 2 or Autoware installed.
 
 The retained `autoware_lsim` paths and command names are project-local
 compatibility identifiers, not names of an official Autoware component or
@@ -42,6 +42,18 @@ The Docker launch uses the real Autoware 1.9.0
 detector.
 
 Results are written below `docker_output/` unless `--output` is supplied.
+
+## Sensor profiles
+
+`--profile generic` uses the topic arguments shown above and preserves the
+bag's static sensor transforms by default.
+
+`--profile hesai-rosbag23` is a compatibility example for a Hesai XT-style
+PointCloud2, external IMU, and NMEA stream. It supplies example topic mappings,
+sensor transforms, and XT parameters, and uses the packaged NMEA projection
+without an evaluation-origin override. Inspect and replace every calibration
+and topic mapping before using it with another sensor rig. Do not combine this
+profile with `--launch-vehicle` or `--already-deskewed`.
 
 ## Deterministic interface and diagnostic contract
 
@@ -85,39 +97,12 @@ including simulated time, automatic initialization, TF endpoint ownership both
 before and after replay, TF policy, adapter, and both monitors. The production
 run retains `tf_ownership.json` and `tf_ownership_completion.json`.
 
-The current analyzer expects the Stage A recording schema. Output bags created
-before Stage A do not contain the separate twist output, the two monitor
+The current analyzer expects the current recording schema. Older output bags
+do not contain the separate twist output, the two monitor
 diagnostics, or the renamed adapter identity, so rechecking such historical
 bags with the current analyzer fails by design. Regenerate the output bag with
 the current runner; do not interpret that schema failure as a change in the
 historical trajectory metrics.
-
-## Private Hesai evaluation profile
-
-The `hesai-rosbag23` profile is used for private Hesai 32-Line + IMU + RTK GNSS
-evaluation recordings. The recordings are not distributed on GitHub. The
-profile supplies three calibrated sensor transforms, the source topics, Hesai
-XT parameters, and GNSS. NMEA conversion uses the packaged runtime projection,
-which is provenance-checked against the packaged `map_projector_info.yaml`; the
-profile applies no evaluation-origin override. Do not combine it with
-`--launch-vehicle` or `--already-deskewed`.
-
-```bash
-ROS_DOMAIN_ID=83 ./script/run_autoware_lsim_docker.sh \
-  --bag <hesai_course_2_bag> \
-  --profile hesai-rosbag23 \
-  --run-name hesai_course_2_autoware_interface \
-  --no-build
-```
-
-The profile replays only PointCloud2, IMU, and NMEA, generates `/clock` at
-100 Hz, waits for recorder discovery, and records estimator diagnostics and
-the Autoware localization interface. The recorded bag is acceptance-checked
-automatically and the report is saved as `validation.log`. See the
-[reusable evaluation workflow](../../docs/rosbag_and_autoware_lsim_evaluation.md)
-for preflight checks and execution details, and the
-[curated evaluation results](../../docs/evaluation/autoware_lsim.md) for measured
-outcomes and limitations.
 
 ## Isolated precision overlay
 
@@ -160,8 +145,8 @@ The default is:
 This keeps the bag's `/tf_static` sensor extrinsics and moves its dynamic `/tf`
 to `/reference/tf`. Use `--tf-policy isolate-all --launch-vehicle` only when the
 selected Autoware vehicle and sensor models exactly match the recorded sensor
-installation. The `hesai-rosbag23` profile is the other supported
-`isolate-all` case because it publishes its own calibrated static transforms.
+installation. A sensor profile that publishes its own verified static
+transforms may also use `isolate-all`.
 
 The container, standalone, and standalone-with-NMEA launches enable the gyro
 odometer's `odom -> base_link` TF; the evaluation-oriented `lidar_imu_only`
@@ -254,33 +239,12 @@ Display is implemented in `pure_odometry_bringup` using standard ROS 2, RViz,
 pluginlib, and Qt dependencies. It introduces no compile-time Autoware package
 dependency and is loaded only by the opt-in presentation profile.
 
-For this Hesai profile, `base_link` is deliberately colocated with the LiDAR
-frame. Robust ground-plane fits evaluated at the Lexus wheel-contact locations
-gave median Z values of `-1.6641 m` for ROSBAG2 and `-1.6565 m` for ROSBAG3. The
-mesh's lowest point is approximately `+0.00394 m` relative to its body frame, so
-the visual-only Lexus body uses a rounded `-1.66 m` default Z offset:
-
-```bash
-./script/run_autoware_lsim_docker.sh ... \
-  --rviz \
-  --rviz-sample-vehicle \
-  --rviz-sample-vehicle-z-offset -1.66
-```
-
-Adjust the value after measuring the ground plane for another recording. The
-accepted range is `-3.0` to `1.0 m`. This offset moves only the rendered mesh; it
-does not alter `base_link`, calibrated sensor TFs, the point cloud, or estimator
-output. It is an RViz ground-alignment estimate, not a vehicle dimension or
-sensor-height calibration.
-
-The Lexus body is illustrative only: it is not the recorded vehicle geometry,
-`base_link` convention, or sensor calibration. The recording is believed to
-have been captured with a roof-mounted LiDAR on a Yaris, so neither the Lexus
-shape nor the `-1.66 m` visual alignment should be presented as a measured
-vehicle model. Do not combine
-`--rviz-sample-vehicle` with `--launch-vehicle`. The mesh remains in the pinned
-Autoware image and is not copied into this repository; the upstream
-`sample_vehicle_description` package is Apache 2.0 licensed.
+Set `--rviz-sample-vehicle-z-offset` only after checking the deployment's
+frame convention and ground plane. The accepted range is `-3.0` to `1.0 m`;
+the value moves only the rendered mesh and covariance marker. The sample body
+is illustrative and must not be presented as measured vehicle geometry or
+sensor calibration. Do not combine `--rviz-sample-vehicle` with
+`--launch-vehicle`.
 
 When either GUI is requested, the wrapper adds `compose.rviz.yaml`, mounts the
 X11 socket, and sets `LIBGL_ALWAYS_SOFTWARE=1`. A localization-specific RViz

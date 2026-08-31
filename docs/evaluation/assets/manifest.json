@@ -1,421 +1,75 @@
 {
-  "content_policy": "Curated plots, normalized JSON, and the single pinned RViz WebM only; no bags, raw logs, or sample CSV files.",
-  "datasets": [
+  "schema_version": 2,
+  "files": [
     {
-      "dataset": "autoware_lsim_hesai_course_2",
-      "files": [
-        {
-          "bytes": 4191,
-          "path": "autoware_lsim_hesai_course_2/metrics.json",
-          "sha256": "d99e036cc59c2f52e8b43b299a285bce61722c1d03a56d684945a0057468355f"
-        },
-        {
-          "bytes": 186525,
-          "path": "autoware_lsim_hesai_course_2/rviz_poster.png",
-          "sha256": "2d944f70f3b352ef0014e94428fb96ac89b107cbfe3171ac581ab394be5aaea2"
-        },
-        {
-          "bytes": 62245501,
-          "path": "autoware_lsim_hesai_course_2/rviz_replay.webm",
-          "sha256": "c8762b5a264f49b14240eea01760c955c98e45596000a00b6ae6bd21fe2739e3"
-        }
-      ],
-      "provenance": {
-        "current_default_projection_headless": {
-          "current_default_projection_equivalent": true,
-          "evidence_scope": [
-            "interface",
-            "runtime"
-          ],
-          "source_run_id": "default_projection_course_2_20260812"
-        },
-        "representative_rviz_poster": {
-          "accuracy_evaluated": false,
-          "embedded_metadata_removed": true,
-          "passing_run_evidence": false,
-          "visualization_only": true
-        },
-        "representative_rviz_replay": {
-          "accuracy_evaluated": false,
-          "audio_present": false,
-          "capture_timestamp_published": false,
-          "container": "WebM",
-          "declared_frame_rate_hz": null,
-          "duration_sec": 75.250293115,
-          "embedded_capture_datetime_removed": true,
-          "frame_count": 2138,
-          "passing_run_evidence": false,
-          "resolution_px": [
-            898,
-            539
-          ],
-          "variable_or_unspecified_frame_rate": true,
-          "video_codec": "VP8",
-          "visualization_only": true
-        }
-      },
-      "source_artifacts": [
-        {
-          "local_source_id": "current_course_2_validation_report",
-          "sha256": "cad4d75f6cdfae97d977c3f5c44f9bfadb99d1fa4e6963e392a886f2a183fa8e"
-        },
-        {
-          "local_source_id": "current_course_2_run_environment",
-          "sha256": "25d554075d6d900ccd1ba1e290f51aadb42c6254a86881a9ee28171f4d081a91"
-        },
-        {
-          "local_source_id": "current_course_2_effective_configurations",
-          "sha256": "5f0805483db85fe4d11369ce1ddc0d85b3e0c750ef65e7818b5c5b71dcff6be1"
-        },
-        {
-          "local_source_id": "current_course_2_nmea_parameters",
-          "sha256": "2d04cde50870b45df6f2e913d8d6c75e331caee24e6c52fe3193129fd0f5c754"
-        },
-        {
-          "local_source_id": "current_course_2_map_projector_metadata",
-          "sha256": "39ebda9a5d35914256077cd1dc00aaed253849392fdce3f910eee27b3fe275cc"
-        },
-        {
-          "local_source_id": "current_course_2_nmea_override",
-          "sha256": "1808b1d66570c24e5cf551c0f160f309f94c70ba258aab2d1a1746d2ed93e5ea"
-        },
-        {
-          "local_source_id": "current_course_2_output_metadata",
-          "sha256": "a38c148cf87b5e93b562dbb0085391bc9a44aa76ea89fabc9123e0519c946805"
-        },
-        {
-          "local_source_id": "representative_rviz_poster",
-          "sha256": "2d944f70f3b352ef0014e94428fb96ac89b107cbfe3171ac581ab394be5aaea2"
-        },
-        {
-          "local_source_id": "representative_rviz_replay",
-          "sha256": "c8762b5a264f49b14240eea01760c955c98e45596000a00b6ae6bd21fe2739e3"
-        }
-      ]
+      "path": "autoware_lsim_hesai_course_2/rviz_poster.png",
+      "bytes": 186525,
+      "sha256": "2d944f70f3b352ef0014e94428fb96ac89b107cbfe3171ac581ab394be5aaea2"
     },
     {
-      "dataset": "hesai_32line_imu_rtk_gnss_course_2",
-      "files": [
-        {
-          "bytes": 162701,
-          "path": "hesai_32line_imu_rtk_gnss_course_2/global_xy_error.png",
-          "sha256": "1ccf9aba4603b88fa970bf250064dd419bc52f5398e87000b28dbdd9f4129e25"
-        },
-        {
-          "bytes": 231599,
-          "path": "hesai_32line_imu_rtk_gnss_course_2/global_yaw_error.png",
-          "sha256": "5869894504f4300bb2dff645b7bfa902d78fa018429a251cb53c73b817bb1ec6"
-        },
-        {
-          "bytes": 108063,
-          "path": "hesai_32line_imu_rtk_gnss_course_2/local_xy_error.png",
-          "sha256": "fcca9a82d523705f29a5e173adc23ea3392e97848f11607f5dbaa6c78dfab18e"
-        },
-        {
-          "bytes": 158909,
-          "path": "hesai_32line_imu_rtk_gnss_course_2/local_yaw_error.png",
-          "sha256": "56dbcbbab6199c3b9f337b424ad3840ec14087ef351490eeac28c1a1e4dfe3d2"
-        },
-        {
-          "bytes": 22411,
-          "path": "hesai_32line_imu_rtk_gnss_course_2/metrics.json",
-          "sha256": "906cf5b172b91ce519a986149df42d90ee3c2b93507843501bdbef62807e21e9"
-        }
-      ],
-      "provenance": {
-        "applicability": {
-          "artifact_class": "current_hesai_xt_evaluated_profile",
-          "evaluated_profile_date": "2026-08-25",
-          "gyro_bias.enable": true,
-          "gyro_bias.initial_bg_rad_s": -0.0021,
-          "lidar_odom.smoother.enable": true,
-          "lidar_odom.smoother.nhc.enable": false,
-          "lidar_odom.smoother.zupt.enable": false,
-          "typed_authority_startup_contract": true,
-          "valid_for_current_hesai_xt_profile": true
-        },
-        "evaluation_method": "exact initial pose; same-run exact estimator stamps",
-        "publication_status": "ACCEPTED",
-        "runtime_validation": {
-          "check_count": 31,
-          "corrections": 602,
-          "matcher_end_to_end_latency_p99_ms": 127.668,
-          "matcher_processing_p99_ms": 55.117,
-          "scans": 851,
-          "startup_publication_safety": "PASS",
-          "status": "PASS",
-          "typed_fusion_authority": true
-        },
-        "source_result_set": "hesai_authority_epoch_fix_20260825",
-        "source_runs": {
-          "precision": "final_verified_course_2_repeat3",
-          "speed_reference": "course_2_baseline_stop_gate",
-          "speed_reference_result_set": "hesai_stop_gate_reevaluation_20260824",
-          "speed_reference_role": "runtime/protocol comparison only; excluded from primary RMSE"
-        }
-      },
-      "source_artifacts": [
-        {
-          "local_source_id": "accuracy_result",
-          "sha256": "3bfdf5e29edb5413be1d972cfa60fac0c1fb3e0c5fab8dfa6d0c1d4a63053eda"
-        },
-        {
-          "local_source_id": "precision_runtime_validation",
-          "sha256": "eb3aa6240b25e83064f131c0591d4251de98bae35decc4f3a28d140b73d04613"
-        },
-        {
-          "local_source_id": "run_environment",
-          "sha256": "d869c403b58931ede1334494b888af1260001184cd99535f090377f0b300354a"
-        },
-        {
-          "local_source_id": "effective_configurations",
-          "sha256": "6df62915090f32192c67823e3251cc5db59d1bf30584a393591c4acb1e8d9dd2"
-        },
-        {
-          "local_source_id": "odometry_parameters",
-          "sha256": "41323f07af76c8e3aea857a5b1d368a4f313efa0702685d870f80772ecab525d"
-        },
-        {
-          "local_source_id": "odometry_override",
-          "sha256": "2f0a7b455996e5869c10837cbbc04e6223f4267b0a357507955b5f64f4f602da"
-        },
-        {
-          "local_source_id": "precision_global_parameters",
-          "sha256": "c6c9f00e56bf23f48248b6d8894b61bcf737ea9ff5f943d8bda6291f83afe7be"
-        },
-        {
-          "local_source_id": "gnss_fusion_parameters",
-          "sha256": "ffc39c6641c3acc03fdb4bf7e26de89d37d0a0874007828484ac2b4ee011abf3"
-        },
-        {
-          "local_source_id": "nmea_parameters",
-          "sha256": "2d04cde50870b45df6f2e913d8d6c75e331caee24e6c52fe3193129fd0f5c754"
-        },
-        {
-          "local_source_id": "nmea_override",
-          "sha256": "1808b1d66570c24e5cf551c0f160f309f94c70ba258aab2d1a1746d2ed93e5ea"
-        },
-        {
-          "local_source_id": "map_projector_metadata",
-          "sha256": "39ebda9a5d35914256077cd1dc00aaed253849392fdce3f910eee27b3fe275cc"
-        },
-        {
-          "local_source_id": "aligned_local_samples",
-          "sha256": "11a176b505390bf8ea34637a5b81dfdaba760b975fd084d4bdfc3bdd6621faad"
-        },
-        {
-          "local_source_id": "aligned_global_samples",
-          "sha256": "fe1a3b50928f287367e3ca297e0f118160f84e031281bd70465e3b1f260d7b5f"
-        }
-      ]
+      "path": "hesai_32line_imu_rtk_gnss_course_2/global_xy_error.png",
+      "bytes": 162701,
+      "sha256": "1ccf9aba4603b88fa970bf250064dd419bc52f5398e87000b28dbdd9f4129e25"
     },
     {
-      "dataset": "livox_mid360_internal_imu",
-      "files": [
-        {
-          "bytes": 12218,
-          "path": "livox_mid360_internal_imu/metrics.json",
-          "sha256": "f41aa08c2a29e41e35e0dfcdcb3a6dc162b249700e1de9f4f0b79d436d372212"
-        },
-        {
-          "bytes": 96714,
-          "path": "livox_mid360_internal_imu/trajectory.png",
-          "sha256": "414f8b7747db2344bdd03757a36c3ad3d4192e32cabc385e07dcb60b5d4116ce"
-        },
-        {
-          "bytes": 112227,
-          "path": "livox_mid360_internal_imu/xy_error.png",
-          "sha256": "fcadf606bde51152f0dd33ac4286d4775fffd6b87f58a71160f26e447f8dce03"
-        },
-        {
-          "bytes": 135010,
-          "path": "livox_mid360_internal_imu/yaw_error.png",
-          "sha256": "872d9680d48e206a149c5c7a96823a826e98793b7f8910bca67bb46dc8dca69b"
-        }
-      ],
-      "provenance": {
-        "accepted": true,
-        "canonical_modes": {
-          "candidate": "rolling_scan_to_submap_interval_5_frames",
-          "control": "scan_to_scan"
-        },
-        "evaluation_method": "shared exact initial pose; native accepted-scan estimates; GLIM-only reference interpolation",
-        "failed_hard_gates": [],
-        "publication_status": "ACCEPTED",
-        "sensor_contract": "MID-360 internal IMU; identity LiDAR/IMU frame; no GNSS",
-        "submap_snapshot_policy": "interval 5 accepted frames"
-      },
-      "source_artifacts": [
-        {
-          "local_source_id": "final_status",
-          "sha256": "8cc66bf6807f0889b416e8461483126db003104a9b0379fe31d695537d0895be"
-        },
-        {
-          "local_source_id": "status_revalidation",
-          "sha256": "3cc0d026b6c24cdad83ea05f6a936a099051ee189a143506435d9c052292d228"
-        },
-        {
-          "local_source_id": "evaluation",
-          "sha256": "875d431c4351541ea3243e281f1d5c79840ed2d00a979e847e5b670e3f2175a9"
-        },
-        {
-          "local_source_id": "aligned_samples",
-          "sha256": "010decd3d41be904f73ba64eb5cb78bd8f3a88858d82ef10fe56cdf9c457bbfe"
-        },
-        {
-          "local_source_id": "holdout_metrics",
-          "sha256": "1cc1e1814fa96932e7331e9516ad57c497e1babc11a9f422122d3b0fc155b05e"
-        },
-        {
-          "local_source_id": "normalized_plan",
-          "sha256": "b9892698bf38092002c422a197c5c8fd9862fc82c348ead928b1e2edc65c3942"
-        },
-        {
-          "local_source_id": "control_run_environment",
-          "sha256": "72f16f7fce5b9225099bc21da81a15ef081eb1d9de5331181a555f3e8ef39d00"
-        },
-        {
-          "local_source_id": "control_runtime_metrics",
-          "sha256": "ce60e426459cf7b8f8ab0ce7027027d61d7a8bf0541c817c201d2497110ca936"
-        },
-        {
-          "local_source_id": "control_lidar_transform_log",
-          "sha256": "7c794994d90eefd762895849dcd35bbfc69a8159e6cda1914bdf4dc7115ee181"
-        },
-        {
-          "local_source_id": "control_imu_parameters",
-          "sha256": "6ae5389fb60b192dcc7509343e37d2d9df83049ad898822e42f517cf6af83700"
-        },
-        {
-          "local_source_id": "control_odometry_override",
-          "sha256": "8c5e3e6c66502fe963ba72224655da1c91fd0ce1c607e33cf1058249717f8504"
-        },
-        {
-          "local_source_id": "control_odometry_tuning",
-          "sha256": "465101aeb98d0eefddd2f41d6baf56e821b5b939b5e49127535bb78320ddeefc"
-        },
-        {
-          "local_source_id": "precision_run_environment",
-          "sha256": "a8928a44e33308e59a17167fde2cfabed7014226869adcd02bd37b66979cc067"
-        },
-        {
-          "local_source_id": "precision_runtime_metrics",
-          "sha256": "8501ec8cafdaeab7dd4c59e47c88c7bcfa4ca1b5c04cace1d64e4a91db40e9a1"
-        },
-        {
-          "local_source_id": "precision_structural_validation",
-          "sha256": "e68f02299fea4a1251a32c579d52e7ba2aeb6a0722e5a37d246389059c2bcdef"
-        },
-        {
-          "local_source_id": "precision_lidar_transform_log",
-          "sha256": "aca3fb9405f7c624ce45ce26cb6b5f0c30ea7d722ccce6c5f4279a4e746960f4"
-        },
-        {
-          "local_source_id": "precision_imu_parameters",
-          "sha256": "6ae5389fb60b192dcc7509343e37d2d9df83049ad898822e42f517cf6af83700"
-        },
-        {
-          "local_source_id": "precision_odometry_override",
-          "sha256": "8c5e3e6c66502fe963ba72224655da1c91fd0ce1c607e33cf1058249717f8504"
-        },
-        {
-          "local_source_id": "precision_odometry_tuning",
-          "sha256": "465101aeb98d0eefddd2f41d6baf56e821b5b939b5e49127535bb78320ddeefc"
-        },
-        {
-          "local_source_id": "precision_snapshot_parameters",
-          "sha256": "537eb9636a7ff7312ee72af74ba8bbe5f8fd7b71a0b5a088d8f4efc5a7935c88"
-        },
-        {
-          "local_source_id": "precision_matcher_parameters",
-          "sha256": "e4618d3eb5070b1890a15a3822423cda7ad54fad58e7eedb1dae36433d8a0aa7"
-        },
-        {
-          "local_source_id": "precision_matcher_tuning",
-          "sha256": "7db51bec16ed2a4bad41857bf51dde33ae04c08efa94b0ef90f614341f39f821"
-        },
-        {
-          "local_source_id": "stage_summary_fixed_bias",
-          "sha256": "2fa215fdb37124ada3f1c4a66c1627a40cac3e0c7aeee9416c82c4511dea757b"
-        },
-        {
-          "local_source_id": "stage_summary_lidar_filter",
-          "sha256": "5af50da7ec378e5beaa37ba2b9fb2af1d32f2554bf8e3103b91a5f56df2edef5"
-        },
-        {
-          "local_source_id": "stage_summary_scan_acceptance",
-          "sha256": "652624898e9f207be4334e39dc67386579c9ceba5af9274e937678fae56dfa32"
-        },
-        {
-          "local_source_id": "stage_summary_scan_vgicp",
-          "sha256": "a1708766dd251721bce48542490e8b6a80a6904b1d75e59d630a338d32d7c28d"
-        },
-        {
-          "local_source_id": "stage_summary_smoother",
-          "sha256": "c459243b12fc7d81838a2fcb2f5feb1b95fc26027ad8094319e8bd9f6c288c63"
-        },
-        {
-          "local_source_id": "stage_summary_snapshot_cadence",
-          "sha256": "9fa22956b8e2a869e4f25826368b076dc3ba4b10f1484cd1b41bcb51efc4c500"
-        },
-        {
-          "local_source_id": "stage_summary_stop_detection",
-          "sha256": "6f4f84b814c5df9c0d7fa117e0fddbd98945f6d34d90fdc09e663856002b044f"
-        },
-        {
-          "local_source_id": "stage_summary_submap_correction",
-          "sha256": "c67483b1257919d13139269d04c9f83c674ad84a8712a0c957f44add90d0a5b3"
-        },
-        {
-          "local_source_id": "stage_summary_submap_geometry",
-          "sha256": "8a245ccdcf13404cd64628be6781fa799f05eb1a28ce828ba0496fba091847ef"
-        }
-      ]
+      "path": "hesai_32line_imu_rtk_gnss_course_2/global_yaw_error.png",
+      "bytes": 231599,
+      "sha256": "5869894504f4300bb2dff645b7bfa902d78fa018429a251cb53c73b817bb1ec6"
     },
     {
-      "dataset": "velodyne_32line_external_imu",
-      "files": [
-        {
-          "bytes": 11567,
-          "path": "velodyne_32line_external_imu/metrics.json",
-          "sha256": "7434ec45530b9d88c2ae5414496649224eab500c2515b9d4e86627bda14416aa"
-        },
-        {
-          "bytes": 78746,
-          "path": "velodyne_32line_external_imu/trajectory.png",
-          "sha256": "c42c53c26af13ff100ae5e8b727589daccd0b61c1d09eb8db22a9f9f7cf89749"
-        },
-        {
-          "bytes": 112357,
-          "path": "velodyne_32line_external_imu/xy_error.png",
-          "sha256": "55a9c72e97473867f62be52ad2fc02efc018f63b8195002ce8a0e5e294e7e5c1"
-        },
-        {
-          "bytes": 146822,
-          "path": "velodyne_32line_external_imu/yaw_error.png",
-          "sha256": "2708f980f46f3900f68c0d881f11db0b3160ccbc843f6a979e94baaaa41313ab"
-        }
-      ],
-      "provenance": {
-        "full_run_id": "velodyne_default_i2_full",
-        "source_run_id": "velodyne_pre_first_tracking_fatal_precision_i2"
-      },
-      "source_artifacts": [
-        {
-          "local_source_id": "clean_prefix_evaluation.json",
-          "sha256": "d02ffb5ad30a322566b52f2f6ab49a05498ad9a101bb04dc0f3315154ed689a5"
-        },
-        {
-          "local_source_id": "clean_prefix_aligned_samples.csv",
-          "sha256": "8ce9a023f8725d2d7173ec3b36a73967d32724e4b9160b143435427df7184023"
-        },
-        {
-          "local_source_id": "full_run_evaluation.json",
-          "sha256": "1d2e69d921b36d8550f3d2eb00197b1b8966de4cf3f821a95800dafce6649cce"
-        }
-      ]
+      "path": "hesai_32line_imu_rtk_gnss_course_2/local_xy_error.png",
+      "bytes": 108063,
+      "sha256": "fcca9a82d523705f29a5e173adc23ea3392e97848f11607f5dbaa6c78dfab18e"
+    },
+    {
+      "path": "hesai_32line_imu_rtk_gnss_course_2/local_yaw_error.png",
+      "bytes": 158909,
+      "sha256": "56dbcbbab6199c3b9f337b424ad3840ec14087ef351490eeac28c1a1e4dfe3d2"
+    },
+    {
+      "path": "hesai_32line_imu_rtk_gnss_course_2/metrics.json",
+      "bytes": 21851,
+      "sha256": "981772b3c956d27557cf8e523543336e3dad5f627d9cb992a33ac248f1175497"
+    },
+    {
+      "path": "livox_mid360_internal_imu/metrics.json",
+      "bytes": 12074,
+      "sha256": "8239633324813a67b6846d3ec941371994d158bf80d9bfc2f12319db3f74c0a6"
+    },
+    {
+      "path": "livox_mid360_internal_imu/trajectory.png",
+      "bytes": 96714,
+      "sha256": "414f8b7747db2344bdd03757a36c3ad3d4192e32cabc385e07dcb60b5d4116ce"
+    },
+    {
+      "path": "livox_mid360_internal_imu/xy_error.png",
+      "bytes": 112227,
+      "sha256": "fcadf606bde51152f0dd33ac4286d4775fffd6b87f58a71160f26e447f8dce03"
+    },
+    {
+      "path": "livox_mid360_internal_imu/yaw_error.png",
+      "bytes": 135010,
+      "sha256": "872d9680d48e206a149c5c7a96823a826e98793b7f8910bca67bb46dc8dca69b"
+    },
+    {
+      "path": "velodyne_32line_external_imu/metrics.json",
+      "bytes": 11567,
+      "sha256": "7434ec45530b9d88c2ae5414496649224eab500c2515b9d4e86627bda14416aa"
+    },
+    {
+      "path": "velodyne_32line_external_imu/trajectory.png",
+      "bytes": 78746,
+      "sha256": "c42c53c26af13ff100ae5e8b727589daccd0b61c1d09eb8db22a9f9f7cf89749"
+    },
+    {
+      "path": "velodyne_32line_external_imu/xy_error.png",
+      "bytes": 112357,
+      "sha256": "55a9c72e97473867f62be52ad2fc02efc018f63b8195002ce8a0e5e294e7e5c1"
+    },
+    {
+      "path": "velodyne_32line_external_imu/yaw_error.png",
+      "bytes": 146822,
+      "sha256": "2708f980f46f3900f68c0d881f11db0b3160ccbc843f6a979e94baaaa41313ab"
     }
-  ],
-  "generated_by": "tools/evaluation/curate_publication_assets.py",
-  "schema_version": 1
+  ]
 }

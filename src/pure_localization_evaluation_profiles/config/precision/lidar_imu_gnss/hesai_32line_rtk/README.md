@@ -4,12 +4,11 @@ The precision branch uses the same calibrated rig and default-projection
 contract documented in
 `pure_localization_evaluation_profiles/config/odometry/lidar_imu_gnss/hesai_32line_rtk`.
 Individual recordings intentionally do not have duplicate matcher or global
-localizer parameter files. Course 2 is the public evaluation example; other
-recordings remain anonymous internal validation inputs. The NMEA package owns
-the runtime projection, and the evaluation applies no origin override.
+localizer parameter files. The NMEA package owns the runtime projection, and
+the evaluation applies no origin override.
 
-The committed public accuracy artifact is the adopted 2026-08-25 Course 2 run.
-Its odometer used `gyro_bias.initial_bg_rad_s=-0.00210` (`rad/s`), adaptive gyro-bias
+The committed accuracy artifact used
+`gyro_bias.initial_bg_rad_s=-0.00210` (`rad/s`), adaptive gyro-bias
 estimation and the fixed-lag smoother enabled, and ZUPT/NHC disabled. Its global
 path consumed the typed fusion-authority stream. The adopted result has 8,477
 exact local and 7,805 exact global common samples and passes all 55/55 GLIM A/B
@@ -22,13 +21,8 @@ files:
 - `pure_lidar_submap_matcher/param/param.yaml`
 - `pure_precision_global_localizer/param/param.yaml`
 
-In the schema-version-1 manifest, the unqualified value
-`config/submap_snapshot_override.yaml` remains relative to the
+In `profile.yaml`, the unqualified value
+`config/submap_snapshot_override.yaml` is relative to the
 `pure_precision_bringup` package share. It is not relative to this data-only
-profile package. The runner records the fully resolved installed path shown
-above. This legacy spelling is retained byte-for-byte so previously published
-profile hashes remain verifiable.
-
-The runner records the resolved paths and SHA-256 digest of every effective
-file. Published result assets pin the hashes of the adopted run instead of
-silently relabelling older run directories.
+profile package. Revalidate all three effective files when adopting the
+profile for another recording or deployment.

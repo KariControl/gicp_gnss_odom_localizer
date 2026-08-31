@@ -49,7 +49,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             python3-numpy \
-            ros-jazzy-ros-base
+            ros-jazzy-ros-base \
+            ros-jazzy-rosbag2-storage-mcap
           rosdep update --rosdistro jazzy
           rosdep install \
             --from-paths src \
@@ -57,7 +58,7 @@ jobs:
             --rosdistro jazzy \
             --default-yes
 
-      - name: Run repository and ROS-independent checks
+      - name: Run repository and fixture checks
         shell: bash
         run: |
           set -euo pipefail
@@ -66,9 +67,12 @@ jobs:
           python3 tools/reference_checks.py
           python3 tools/check_launch_construction.py
           python3 tools/check_docker_configuration.py
-          python3 -B tools/evaluation/precision/test/test_precision_evaluation_helpers.py
-          python3 -B tools/evaluation/precision/test/test_hesai_gnss_publication_validator.py
-          python3 -B tools/evaluation/precision/scripts/validate_hesai_gnss_publication_run.py --self-test
+          python3 -B tools/evaluation/precision/test/test_validate_precision_bag.py
+          python3 tools/check_publication_assets.py
+          set +u
+          source /opt/ros/jazzy/setup.bash
+          set -u
+          python3 -B tools/check_synthetic_output_pointcloud2.py
 
       - name: Build all packages from a clean workspace
         shell: bash

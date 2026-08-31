@@ -3,7 +3,6 @@ dataset:
   id: course_2
   display_name: "Hesai 32-Line + IMU + RTK GNSS — Course 2"
   availability: private_not_distributed
-  local_bag_hint: rosbag/output_pointcloud3
   duration_sec: 213.635
   topics:
     pointcloud: /pandar_points_ex

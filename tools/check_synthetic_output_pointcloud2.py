@@ -28,11 +28,6 @@ EXPECTED_COUNTS = {
 }
 PRIVATE_TOKENS = (
     b"/home/",
-    b"motoya",
-    b"course_1",
-    b"course_2",
-    b"Yaris",
-    b"Lexus",
     b"$GPGGA",
     b"$GNGGA",
     b"$GNRMC",

@@ -1,0 +1,15 @@
+/**:
+  ros__parameters:
+    # Recording-specific published evaluation profile.
+    gyro_bias.enable: false
+    gyro_bias.initial_bg_rad_s: 0.006959692
+    lidar_odom.gicp.corr_randomness: 15
+    lidar_odom.gicp.max_corr_dist_m: 0.6
+    lidar_odom.gicp.max_fitness: 5.0
+    lidar_odom.gicp.voxel_resolution: 0.5
+    lidar_odom.max_range_m: 30.0
+    lidar_odom.smoother.enable: false
+    lidar_odom.smoother.zupt.enable: false
+    lidar_odom.voxel_leaf_m: 0.15
+    stop.hold_sec: 0.5
+    stop.speed_thr_mps: 0.15

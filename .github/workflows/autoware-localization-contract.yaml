@@ -7,6 +7,7 @@ on:
       - develop
     paths:
       - .github/workflows/autoware-localization-contract.yaml
+      - .dockerignore
       - .gitmodules
       - docker/autoware_lsim/**
       - data/synthetic_output_pointcloud2/**
@@ -22,6 +23,7 @@ on:
       - develop
     paths:
       - .github/workflows/autoware-localization-contract.yaml
+      - .dockerignore
       - .gitmodules
       - docker/autoware_lsim/**
       - data/synthetic_output_pointcloud2/**
@@ -86,13 +88,13 @@ jobs:
             --points /pandar_points_ex \
             --imu /sensor/imu/data_raw \
             --output "$artifact_dir/public-synthetic-replay" \
-            --run-name stage_a_public_synthetic \
+            --run-name public_synthetic_autoware \
             --no-build \
             2>&1 | tee "$artifact_dir/public-synthetic-replay.log"
 
       - name: Upload contract evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: autoware-localization-contract
           path: ${{ runner.temp }}/autoware-localization-contract

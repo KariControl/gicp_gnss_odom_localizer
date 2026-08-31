@@ -11,8 +11,7 @@ alignment, metric, runtime, and timing rules.
 |---|---|---|---|
 | Velodyne 32-Line + External IMU | [LiDAR/IMU-only evaluation](lidar_imu.md) | Scan-to-scan and isolated scan-to-submap odometry | Limited to the valid recording prefix |
 | Livox MID-360 + Internal IMU | [LiDAR/IMU-only evaluation](lidar_imu.md) | Tuned scan-to-scan and isolated rolling scan-to-submap odometry | Accepted for the documented recording-specific profile |
-| Hesai 32-Line + IMU + RTK GNSS — Course 2 | [LiDAR/IMU/GNSS evaluation](lidar_imu_gnss.md) | Local scan-to-scan/scan-to-submap and guarded global GNSS localization | Current 2026-08-25 profile adopted; 55/55 GLIM A/B hard gates passed |
-| Autoware localization-interface integration with Hesai + IMU + RTK GNSS | [Autoware localization-interface evaluation](autoware_lsim.md) | Historical pre-Stage-A headless interface, runtime-completion, and GNSS-recovery validation | 2026-08-12 result passed with the packaged default projection; current Stage A schema requires replay |
+| Hesai 32-Line + IMU + RTK GNSS — Course 2 | [LiDAR/IMU/GNSS evaluation](lidar_imu_gnss.md) | Local scan-to-scan/scan-to-submap and guarded global GNSS localization | Adopted profile; 55/55 GLIM A/B hard gates passed |
 
 The source recordings are private and are not distributed in this repository.
 Dataset labels describe only the sensor configuration and course; private bag
@@ -33,15 +32,13 @@ accuracy dataset or ground truth.
   WGS84, origin `35.681236, 139.767125`, and scale `0.9996`. Publication checks
   require the runtime parameters to match `map_projector_info.yaml` and require
   an empty evaluation-origin override.
-- The committed Hesai accuracy assets are pinned to the adopted 2026-08-25
-  profile: `gyro_bias.initial_bg_rad_s=-0.00210` (`rad/s`), adaptive gyro bias and
+- The committed Hesai accuracy assets are pinned to the documented profile:
+  `gyro_bias.initial_bg_rad_s=-0.00210` (`rad/s`), adaptive gyro bias and
   smoother enabled, ZUPT/NHC disabled, and typed fusion authority active. The
   result remains valid only for the documented recording and configuration.
 - Matcher processing time and end-to-end latency are timing metrics, not CPU
   utilization. CPU utilization and RSS are not reported without a controlled
   same-host measurement.
-- The published RViz poster and WebM are representative visualization only;
-  they are not evidence for a passing run, accuracy, CPU utilization, or RSS.
 
 ## Evaluation profiles
 
@@ -58,5 +55,5 @@ calibration, IMU-gap, gyro-bias, and other recording-specific values must not be
 silently reused for another sensor, recording, temperature, or startup state.
 
 Publication assets and their verification workflow are documented in the
-[maintainer asset guide](assets/README.md). Repository-level build and test
+[asset policy](assets/README.md). Repository-level build and test
 commands are documented in [validation](../validation.md).

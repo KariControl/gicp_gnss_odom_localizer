@@ -36,10 +36,8 @@ python3 tools/check_repository.py
 python3 tools/reference_checks.py
 python3 tools/check_launch_construction.py
 python3 tools/check_docker_configuration.py
-python3 -B tools/evaluation/precision/test/test_precision_evaluation_helpers.py
-python3 -B tools/evaluation/precision/test/test_hesai_gnss_publication_validator.py
-python3 -B tools/evaluation/precision/scripts/validate_hesai_gnss_publication_run.py --self-test
-python3 tools/evaluation/curate_publication_assets.py --check
+python3 -B tools/evaluation/precision/test/test_validate_precision_bag.py
+python3 tools/check_publication_assets.py
 git diff --check
 ```
 
@@ -84,7 +82,7 @@ against an independent reference. In particular, a default planar variance of
 `0.25 m^2` becomes a `1.5 m` three-sigma ellipse, which exceeds the pinned
 monitor's `0.30 m` lateral error threshold.
 
-The analyzer is fail-closed against the current Stage A output schema. A bag
+The analyzer is fail-closed against the current output schema. A bag
 recorded by an earlier revision lacks the separate twist stream, monitor
 diagnostics, and renamed adapter identity and therefore fails the current
 schema check. Replay the source bag with the current runner before comparing
@@ -184,11 +182,11 @@ maintained at the following canonical locations:
 |---|---|---|
 | Velodyne 32-Line and Livox MID-360 LiDAR/IMU-only localization | [LiDAR/IMU-only evaluation](evaluation/lidar_imu.md) | [Velodyne metrics](evaluation/assets/velodyne_32line_external_imu/metrics.json), [MID-360 metrics](evaluation/assets/livox_mid360_internal_imu/metrics.json) |
 | Hesai 32-Line LiDAR/IMU/GNSS localization | [LiDAR/IMU/GNSS evaluation](evaluation/lidar_imu_gnss.md) | [Hesai metrics](evaluation/assets/hesai_32line_imu_rtk_gnss_course_2/metrics.json) |
-| Autoware localization-interface integration | [Autoware localization-interface evaluation](evaluation/autoware_lsim.md) | [Autoware metrics](evaluation/assets/autoware_lsim_hesai_course_2/metrics.json) |
 
-The [evaluation index](evaluation/README.md) is the status overview. Asset
-provenance and hashes are defined by the [asset policy](evaluation/assets/README.md)
-and [`manifest.json`](evaluation/assets/manifest.json).
+The [evaluation index](evaluation/README.md) is the status overview. The asset
+inventory and hashes are defined by the
+[asset policy](evaluation/assets/README.md) and
+[`manifest.json`](evaluation/assets/manifest.json).
 
 ## Documentation and publication checklist
 

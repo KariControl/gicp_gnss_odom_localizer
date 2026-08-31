@@ -17,10 +17,6 @@ GNSS-outage yaw guard was enabled. All 55/55 GLIM A/B hard gates passed over
 8,477 exact local and 7,805 exact global common samples. Source rosbags remain
 private and are not distributed on GitHub.
 
-Additional private recordings may be used for internal regression and release
-validation. Their identities, measurements, and artifacts are intentionally
-excluded from the public documentation.
-
 ## Evaluation method
 
 The evaluation used a scan-to-scan reference run and a scan-to-submap run under
@@ -55,13 +51,14 @@ exact-initial-pose transform.
 
 | Dataset | Exact local/global samples | GLIM A/B hard gates | Accuracy result |
 |---|---:|---:|---|
-| Hesai 32-Line + IMU + RTK GNSS — Course 2 (2026-08-25 profile) | 8,477 / 7,805 | 55/55 | **Adopted** |
+| Hesai 32-Line + IMU + RTK GNSS — Course 2 | 8,477 / 7,805 | 55/55 | **Adopted** |
 
-The publication contract checks dataset and mode selection, full 1.0x playback,
-TF, effective-configuration equivalence and reviewed source hashes, projection
-metadata, the empty NMEA evaluation override, required topics, diagnostics, and
-causal raw-to-fused stamp coverage. Detailed gate outcomes are retained in the
-published [metrics](assets/hesai_32line_imu_rtk_gnss_course_2/metrics.json).
+The recorded-run validation checked dataset and mode selection, full 1.0x
+playback, TF, effective configuration, projection metadata, the empty NMEA
+evaluation override, required topics, diagnostics, and causal raw-to-fused
+stamp coverage. The public
+[metrics](assets/hesai_32line_imu_rtk_gnss_course_2/metrics.json) retain the
+configuration and gate summaries needed to interpret the result.
 
 ## Local odometry A/B
 
@@ -193,8 +190,7 @@ marks the 117.252446 s RTK-Q4 gap. The red marker shows Q4 returning, and the
 green marker shows finite global localization resuming 4.147737 s later. The
 121.500028 s fusion-outage RMSE window follows fusion state and therefore has
 different boundaries. No Hesai trajectory plot or RViz2 recording is published
-as native accuracy evidence. The separate Autoware evaluation page links a
-representative visualization-only replay.
+as native accuracy evidence.
 
 Additional retained assets:
 
@@ -202,7 +198,7 @@ Additional retained assets:
 - [Local yaw error](assets/hesai_32line_imu_rtk_gnss_course_2/local_yaw_error.png)
 - [Global XY error](assets/hesai_32line_imu_rtk_gnss_course_2/global_xy_error.png)
 - [Global yaw error](assets/hesai_32line_imu_rtk_gnss_course_2/global_yaw_error.png)
-- [Machine-readable metrics and provenance](assets/hesai_32line_imu_rtk_gnss_course_2/metrics.json)
+- [Machine-readable metrics and validation summary](assets/hesai_32line_imu_rtk_gnss_course_2/metrics.json)
 
 This result does not establish generalization to another LiDAR, calibration,
 environment, weather condition, or speed range. The source recording and full

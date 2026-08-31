@@ -1,8 +1,8 @@
 /**:
   ros__parameters:
     # Consume one causal odometry sample for every accepted LiDAR registration.
-    # The global authority inputs remain unsubscribed at the system level in
-    # the LiDAR/IMU-only runner, so only precision-local odometry is produced.
+    # The LiDAR/IMU-only evaluation leaves global authority inputs
+    # unsubscribed, so only precision-local odometry is produced.
     raw_odom_topic: /localization/gyro_lidar_odom_scan
     fallback.gnss_position_enabled: false
 

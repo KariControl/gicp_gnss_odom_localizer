@@ -1,7 +1,7 @@
 schema_version: 1
 profile:
   id: hesai_32line_rtk
-  datasets: [course_1, course_2]
+  datasets: [course_2]
   snapshot_override: config/submap_snapshot_override.yaml
   matcher_parameters: pure_lidar_submap_matcher/param/param.yaml
   global_localizer_parameters: pure_precision_global_localizer/param/param.yaml

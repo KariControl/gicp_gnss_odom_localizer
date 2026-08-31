@@ -669,7 +669,7 @@ def check_host_wrapper() -> None:
             "RViz sample vehicle: true",
             "RViz body Z offset:   -1.66 m",
             "build lsim",
-            "run --rm --no-tty lsim",
+            "run --rm -T lsim",
         ):
             if token not in result.stdout:
                 fail(f"Docker wrapper dry run missing: {token}")
@@ -971,8 +971,9 @@ def check_localization_contract() -> None:
             "Autoware Localization Contract",
             "run_autoware_localization_contract_docker.sh",
             "run_autoware_lsim_docker.sh",
+            ".dockerignore",
             "data/synthetic_output_pointcloud2",
-            "stage_a_public_synthetic",
+            "public_synthetic_autoware",
             "docker builder prune --all --force",
             'ROS_DOMAIN_ID: "94"',
             "src/**",

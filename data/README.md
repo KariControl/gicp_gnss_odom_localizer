@@ -4,11 +4,9 @@
 fully procedural ROS 2 bag for source-build and localization smoke tests. It is
 not a recording, a sensor benchmark, or evidence of real-world accuracy.
 
-The private `output_pointcloud2` recording was consulted only for its ROS
-interface shape: the PointCloud2 field names, offsets, datatypes,
-`point_step`, and rounded 20 Hz LiDAR / 200 Hz IMU rates. The generator cannot
-read an input bag. It does not copy or transform source points, trajectories,
-GNSS, timestamps, calibration, distributions, or scene geometry.
+The fixture uses a Pandar-style PointCloud2 field layout and nominal 20 Hz
+LiDAR / 200 Hz IMU rates. The generator cannot read an input bag and creates
+all points, motion, timestamps, and transforms procedurally.
 
 ## Contents
 

@@ -15,7 +15,8 @@ Required:
 Sensor topic options:
   --profile <name>              generic | hesai-rosbag23
                                 hesai-rosbag23 selects the ROSBAG2/3 topics,
-                                calibrated TFs, XT parameters, and GNSS origin
+                                example TFs, XT parameters, and packaged GNSS
+                                projection
   --points <topic>              PointCloud2 source topic
                                 default: /sensing/lidar/top/pointcloud_raw
   --imu <topic>                 IMU source topic
@@ -314,7 +315,7 @@ if [[ "$dry_run" == true ]]; then
     if [[ "$open_shell" == true ]]; then
       printf ' %q' "${compose[@]}" run --rm lsim bash
     else
-      printf ' %q' "${compose[@]}" run --rm --no-tty lsim
+      printf ' %q' "${compose[@]}" run --rm -T lsim
     fi
     printf '\n'
   fi
@@ -349,5 +350,5 @@ fi
 if [[ "$open_shell" == true ]]; then
   "${compose[@]}" run --rm lsim bash
 else
-  "${compose[@]}" run --rm --no-tty lsim
+  "${compose[@]}" run --rm -T lsim
 fi

@@ -555,23 +555,6 @@ def check_nmea_projection_contract() -> None:
     if evaluation_override.exists():
         fail("Hesai evaluation must not override the NMEA map origin")
 
-    required_runner_tokens = (
-        'NMEA_PROJECTOR_METADATA="$NMEA_GNSS_SHARE/config/map_projector_info.yaml"',
-        'NMEA_GNSS_OVERRIDE_PARAM="$EMPTY_PARAM"',
-        "copy_effective_config nmea_projector_metadata",
-        "copy_effective_config nmea_override",
-    )
-    runner = (ROOT / "script/run_hesai_localization_bag.sh").read_text(
-        encoding="utf-8"
-    )
-    for token in required_runner_tokens:
-        if token not in runner:
-            fail(f"Hesai runner projection contract missing: {token}")
-    for token in ("nmea_site_origin.yaml", "nmea_site_override"):
-        if token in runner:
-            fail(f"Hesai runner still applies a retired NMEA site override: {token}")
-
-
 def check_lidar_tracking_contract() -> None:
     parameter_directory = ROOT / "src/pure_lidar_gyro_odometer/param"
     public_profiles = {
@@ -733,6 +716,8 @@ def check_gnss_message_access() -> None:
 
 def check_hygiene() -> None:
     conflict = re.compile(r"^(<<<<<<<|=======|>>>>>>>)", re.MULTILINE)
+    personal_home = re.compile(r"(?<![A-Za-z0-9_])/(?:home|Users)/[^/\s]+/")
+    capture_epoch = re.compile(r"(?:rosbag2_)?20\d{2}[_-]\d{2}[_-]\d{2}")
     for path in sorted(ROOT.rglob("*")):
         if (
             not path.is_file()
@@ -740,19 +725,22 @@ def check_hygiene() -> None:
             or "small_gicp" in path.parts
         ):
             continue
+        if capture_epoch.search(path.relative_to(ROOT).as_posix()):
+            fail(f"capture epoch in tracked path: {path.relative_to(ROOT)}")
         try:
             text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
         if conflict.search(text):
             fail(f"merge conflict marker: {path.relative_to(ROOT)}")
+        if personal_home.search(text):
+            fail(f"personal absolute path: {path.relative_to(ROOT)}")
     if not (ROOT / "src/small_gicp/LICENSE").is_file():
         fail("vendored small_gicp license is missing")
 
 
 def check_shell() -> None:
     paths = [
-        ROOT / "build_setup.sh",
         *sorted((ROOT / "script").glob("*.sh")),
         *sorted((ROOT / "tools").glob("*.sh")),
         *sorted((ROOT / "docker").rglob("*.sh")),
@@ -804,37 +792,6 @@ def check_replay_helper() -> None:
             fail("bag replay helper uses unsupported --progress-bar-update-rate")
 
 
-def check_hesai_paused_start_handshake() -> None:
-    runner = (ROOT / "script/run_hesai_localization_bag.sh").read_text(
-        encoding="utf-8"
-    )
-    for token in (
-        "--start-paused",
-        "rosbag_paused_start_handshake.py",
-        "/rosbag2_player",
-        "/localization/gnss_map_odom_fusion_authority",
-    ):
-        if token not in runner:
-            fail(f"Hesai paused-start runner contract missing: {token}")
-    if "--delay 2" in runner:
-        fail("Hesai runner still relies on the retired fixed playback delay")
-
-    helper = ROOT / "script/rosbag_paused_start_handshake.py"
-    result = subprocess.run(
-        [sys.executable, "-B", str(helper), "--self-test"],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        fail(
-            "rosbag paused-start handshake self-test failed: "
-            + result.stdout
-            + result.stderr
-        )
-
-
 def check_diff_whitespace() -> None:
     # Archives intentionally do not contain .git, so always perform a source-tree
     # whitespace check and use git's stricter checker only when metadata exists.
@@ -879,7 +836,6 @@ def main() -> int:
     check_hygiene()
     check_shell()
     check_replay_helper()
-    check_hesai_paused_start_handshake()
     check_diff_whitespace()
     if ERRORS:
         print("Repository checks FAILED", file=sys.stderr)

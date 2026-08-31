@@ -354,11 +354,7 @@
     "identity_transform_contract": "PASS",
     "packaged_profile_contract": "PASS",
     "precision_runtime": "PASS",
-    "precision_structure": "PASS",
-    "source_hashes_pinned": true,
-    "status_revalidated_without_replay": true,
-    "tuning_candidate_count": 48,
-    "tuning_stage_count": 9
+    "precision_structure": "PASS"
   },
   "structural_validation": {
     "counts": {

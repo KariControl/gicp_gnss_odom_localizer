@@ -10,17 +10,15 @@
     "yaw": "the yaw of the same complete initial-pose SE(2); no separate yaw fit"
   },
   "applicability": {
-    "artifact_class": "current_hesai_xt_evaluated_profile",
-    "evaluated_profile_date": "2026-08-25",
     "gyro_bias.enable": true,
     "gyro_bias.initial_bg_rad_s": -0.0021,
     "lidar_odom.smoother.enable": true,
     "lidar_odom.smoother.nhc.enable": false,
     "lidar_odom.smoother.zupt.enable": false,
-    "typed_authority_startup_contract": true,
-    "valid_for_current_hesai_xt_profile": true
+    "profile": "hesai_32line_rtk",
+    "typed_authority_startup_contract": true
   },
-  "dataset_label": "Hesai 32-Line + IMU + RTK GNSS \u2014 Course 2",
+  "dataset_label": "Hesai 32-Line + IMU + RTK GNSS — Course 2",
   "error_plot_annotations": {
     "fusion_tracking_resume": {
       "definition": "first global-localization diagnostic after usable GNSS returns with a finite position-fused tracking state",
@@ -639,17 +637,9 @@
     "method": "GLIM trajectory (correlated LiDAR/IMU reference)"
   },
   "schema_version": 3,
-  "source_runs": {
-    "precision": "final_verified_course_2_repeat3",
-    "speed_reference": "course_2_baseline_stop_gate",
-    "speed_reference_result_set": "hesai_stop_gate_reevaluation_20260824",
-    "speed_reference_role": "runtime/protocol comparison only; excluded from primary RMSE"
-  },
   "source_validation": {
     "accuracy_result": "PASS",
     "configuration": {
-      "captured_configuration_hashes_match": true,
-      "current_effective_odometry_parameters_match": true,
       "effective_odometry_parameter_count": 111,
       "evaluation_origin_override_applied": false,
       "gyro_bias_enabled": true,
@@ -670,7 +660,6 @@
       "startup_publication_safety": "PASS",
       "status": "PASS",
       "typed_fusion_authority": true
-    },
-    "source_hashes_pinned": true
+    }
   }
 }

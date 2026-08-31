@@ -1,7 +1,7 @@
 # GICP–GNSS Odom Localizer
 
 <p align="center">
-  <a href="docs/evaluation/assets/autoware_lsim_hesai_course_2/rviz_replay.webm"><img src="docs/evaluation/assets/autoware_lsim_hesai_course_2/rviz_poster.png" alt="Hesai Course 2 Autoware localization-interface evaluation poster in RViz" width="900"></a>
+  <img src="docs/evaluation/assets/autoware_lsim_hesai_course_2/rviz_poster.png" alt="Hesai Course 2 Autoware localization-interface visualization in RViz" width="900">
 </p>
 
 `gicp_gnss_odom_localizer` is a ROS 2 planar LiDAR–IMU–GNSS localization stack
@@ -67,10 +67,8 @@ source install/setup.bash
 Every terminal must source ROS 2 and `install/setup.bash`. Publish the calibrated
 sensor static transforms before expecting accepted localization output.
 
-The managed Hesai, LiDAR/IMU GLIM, and Docker runners accept
-`--rqt-robot-monitor` to open the aggregated `/diagnostics_agg` view in a
-graphical session. The option is disabled by default so headless and timing
-evaluation runs are unchanged.
+The Docker runner accepts `--rqt-robot-monitor` to open the aggregated
+`/diagnostics_agg` view in a graphical session. It is disabled by default.
 
 ### Scan-to-scan mode: LiDAR + IMU local odometry
 
@@ -189,13 +187,9 @@ BAG_DIR=/path/to/recording
 See the [Docker guide](docker/autoware_lsim/README.md) for GNSS, sensor profiles,
 RViz, and scan-to-submap options.
 
-For the ROSBAG2/3 presentation view, add `--rviz --rviz-sample-vehicle`. It shows
-the illustrative Autoware Lexus body, a generated line trajectory, live
-pose/yaw/speed and interface/TF/rate/registration/GNSS status in a dedicated
-RViz Displays entry, and a bounded XY-only covariance ellipse in the 3D view.
-The current Hesai profile applies a visual-only `-1.66 m` mesh offset fitted to
-the observed ground. The sample mesh is not evidence of the recorded vehicle
-model or geometry, and the offset is not a sensor-height calibration.
+For an optional presentation view, add `--rviz --rviz-sample-vehicle`. The
+sample vehicle is visualization only; verify its frame convention and visual
+height offset for your deployment.
 
 ### Replay the public synthetic rosbag
 
@@ -248,8 +242,8 @@ and do not contribute to the primary RMSE values or plots.
 |---|---|---:|---:|---:|---:|
 | Velodyne 32-Line + External IMU (No GNSS) | local | 0.495 m | 0.216 m | 0.314° | 0.123° |
 | MID-360  + Internal IMU (No GNSS) | local | 0.630 m | 0.294 m | 2.906° | 0.602° |
-| Hesai + External IMU + RTK-GNSS | local (current 2026-08-25 profile) | 1.457 m | 0.389 m | 0.917° | 0.792° |
-| Hesai + External IMU + RTK-GNSS | global (current 2026-08-25 profile) | 1.406 m | 0.516 m | 2.099° | 1.568° |
+| Hesai + External IMU + RTK-GNSS | local | 1.457 m | 0.389 m | 0.917° | 0.792° |
+| Hesai + External IMU + RTK-GNSS | global | 1.406 m | 0.516 m | 2.099° | 1.568° |
 
 ### Representative plots
 
@@ -277,6 +271,9 @@ evaluation.
 #### Hesai 32-Line + IMU + RTK GNSS
 
 [Open the GitHub-hosted Hesai Course 2 RViz replay](https://github.com/user-attachments/assets/6ce8b916-13e5-4779-87e9-c0f477a6e14b)
+
+The replay is a visualization-only example, not accuracy, performance, or
+passing-run evidence.
 
 The global plots compare the GNSS-anchored **scan-to-scan** and
 **scan-to-submap** outputs.
@@ -346,10 +343,9 @@ for a new sensor, environment, or vehicle.
 
 The repository includes a 6.4 MiB
 [fully procedural LiDAR/IMU rosbag](data/synthetic_output_pointcloud2/) for
-trying the localization stack without a private sensor recording. It reproduces
-only the PointCloud2 field layout and rounded LiDAR/IMU rates observed in the
-private `output_pointcloud2` input. It contains no copied or transformed source
-points, trajectory, GNSS, recording timestamp, calibration, or scene geometry.
+trying the localization stack without a sensor recording. It uses a
+Pandar-style PointCloud2 layout and nominal LiDAR/IMU rates; all points, motion,
+timestamps, and transforms are generated procedurally.
 
 The current regression run deskewed 121/121 scans without fallback, corrected
 1,241/1,241 IMU samples, accepted 118/120 post-initialization registrations,
@@ -391,20 +387,16 @@ it is not a first-party package in this project.
 | Use case | Operating system | ROS 2 | Autoware | Status and scope |
 |---|---|---|---|---|
 | Standalone localization | Ubuntu 24.04 | Jazzy | Not required | Primary source-build and rosbag-replay target. |
-| Optional Autoware integration | Ubuntu 24.04 | Jazzy | 1.9.0 | Stage A localization-interface and diagnostic-monitor integration in the supplied CPU-only Docker workflow. |
+| Optional Autoware integration | Ubuntu 24.04 | Jazzy | 1.9.0 | Localization-interface and diagnostic-monitor integration in the supplied CPU-only Docker workflow. |
 | Other combinations | — | — | — | Not currently claimed; they may work but have not been validated by this project. |
 
-The standalone estimator path does not require Autoware. Stage A has separate
-pieces of evidence: the deterministic contract covers localization-facing
-topics, TF consistency, and the two real localization monitors; the current
-public synthetic replay covers the live localizer path and simulation time but
-does not use GNSS. The published private Course 2 result is a historical
-2026-08-12 pre-Stage-A run that covers simulation time and GNSS-outage recovery,
-but not the new twist stream or monitor contract. No single run currently
-combines all three scopes. None establishes full-stack integration, closed-loop
-driving, planning/control readiness, or safety certification. CPU-only
-execution was demonstrated, but CPU utilization and memory usage were not
-measured.
+The standalone estimator path does not require Autoware. The deterministic
+contract covers localization-facing topics, TF consistency, and the two
+Autoware monitors; the public synthetic replay covers the live localizer path
+and simulation time without GNSS. Neither establishes full-stack integration,
+closed-loop driving, planning/control readiness, or safety certification.
+CPU-only execution was demonstrated, but CPU utilization and memory usage were
+not measured.
 
 ## Sensor-to-output flow
 
@@ -473,7 +465,7 @@ gates.
 - [NMEA position, covariance, and heading](docs/nmea_heading_and_covariance.md)
 - [GNSS initialization and outage recovery](docs/gnss_recovery.md)
 - [Tuning](docs/tuning.md) and [known limitations](docs/known_limitations.md)
-- [Rosbag and Autoware localization-interface workflow](docs/rosbag_and_autoware_lsim_evaluation.md)
+- [Docker-based Autoware localization-interface workflow](docker/autoware_lsim/README.md)
 - [Changelog and migration notes](CHANGELOG.md#unreleased)
 
 ## Citation and related work
