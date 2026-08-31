@@ -110,12 +110,16 @@ This uses the same accepted-scan snapshot publisher and recorder load as the
 precision run, but starts neither precision node. It is an evaluation-only
 control; normal `baseline` remains free of snapshot conversion/publishing.
 
-The precision recorder is checked with:
+The precision recorder is checked by the repository-only evaluation tools:
 
 ```bash
-ros2 run pure_precision_bringup validate_precision_bag.py \
+python3 tools/evaluation/precision/scripts/validate_precision_bag.py \
   /path/to/run/localization_output --expected-rate 1.0
 ```
+
+These tools and their optional rosbag/NumPy/Matplotlib dependencies are not
+installed by this bringup package. See
+`tools/evaluation/precision/README.md` for setup and evaluator tests.
 
 Authority counters are compared at the causal boundary of the final recorded
 precision diagnostic, not against messages recorded afterward during the
@@ -130,8 +134,9 @@ acceptance requires an empty pending FIFO, zero overflow, an initialized receive
 clock, and no overflow latch. Malformed authority data, timestamp backsteps,
 or unconserved counters remain hard failures.
 
-`evaluate_precision_glim_ab.py` then compares one speed bag and one precision
-bag on physical ROS header stamps. It freezes the speed-run calibration for
+`tools/evaluation/precision/scripts/evaluate_precision_glim_ab.py` then compares
+one speed bag and one precision bag on physical ROS header stamps. It freezes
+the speed-run calibration for
 both trajectories, reports fixed-frame and independently aligned shape ATE,
 yaw, 10/50/100 m RPE, outage behavior, and treats 50 Hz timer-to-timer
 differences as reference warnings rather than raw non-intrusion gates.
@@ -159,14 +164,15 @@ as an explicit warning, so a transient replay-start backlog is visible even
 when it does not accumulate or alter the bounded physical trajectory:
 
 ```bash
-ros2 run pure_precision_bringup evaluate_accepted_scan_nonintrusion.py \
+python3 tools/evaluation/precision/scripts/evaluate_accepted_scan_nonintrusion.py \
   --control-bag /path/to/control_result/localization_output \
   --precision-bag /path/to/precision_result/localization_output \
   --label example --output-json /tmp/accepted_scan.json \
   --output-markdown /tmp/accepted_scan.md
 ```
 
-`evaluate_startup_acceptance.py` adds the global-yaw publication safety gates:
+`tools/evaluation/precision/scripts/evaluate_startup_acceptance.py` adds the
+global-yaw publication safety gates:
 no global odometry/pose before explicit readiness, atomic target/applied yaw at
 the first output on the next raw sample, strict existing-fusion authority and
 freshness, exact anchor freeze outside strict health, activation within 25

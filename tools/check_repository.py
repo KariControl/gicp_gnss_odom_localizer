@@ -140,6 +140,10 @@ def check_stable_package_identity() -> None:
             ("pure_odometry_bringup", "0.3.0"),
         Path("src/pure_localization_interface_adapter/package.xml"):
             ("pure_localization_interface_adapter", "0.3.0"),
+        Path("src/pure_localization_contract/package.xml"):
+            ("pure_localization_contract", "0.1.0"),
+        Path("src/pure_localization_evaluation_profiles/package.xml"):
+            ("pure_localization_evaluation_profiles", "0.1.0"),
         Path("src/pure_lidar_msgs/package.xml"): ("pure_lidar_msgs", "0.1.0"),
         Path("src/pure_lidar_submap_matcher/package.xml"):
             ("pure_lidar_submap_matcher", "0.1.0"),
@@ -545,7 +549,7 @@ def check_nmea_projection_contract() -> None:
 
     evaluation_override = (
         ROOT
-        / "src/pure_odometry_bringup/config/evaluation/lidar_imu_gnss/"
+        / "src/pure_localization_evaluation_profiles/config/odometry/lidar_imu_gnss/"
         "hesai_32line_rtk/accepted/nmea_site_origin.yaml"
     )
     if evaluation_override.exists():

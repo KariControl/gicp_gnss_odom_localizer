@@ -2,7 +2,7 @@
 
 The precision branch uses the same calibrated rig and default-projection
 contract documented in
-`pure_odometry_bringup/config/evaluation/lidar_imu_gnss/hesai_32line_rtk`.
+`pure_localization_evaluation_profiles/config/odometry/lidar_imu_gnss/hesai_32line_rtk`.
 Individual recordings intentionally do not have duplicate matcher or global
 localizer parameter files. Course 2 is the public evaluation example; other
 recordings remain anonymous internal validation inputs. The NMEA package owns
@@ -21,6 +21,13 @@ files:
 - `pure_precision_bringup/config/submap_snapshot_override.yaml`
 - `pure_lidar_submap_matcher/param/param.yaml`
 - `pure_precision_global_localizer/param/param.yaml`
+
+In the schema-version-1 manifest, the unqualified value
+`config/submap_snapshot_override.yaml` remains relative to the
+`pure_precision_bringup` package share. It is not relative to this data-only
+profile package. The runner records the fully resolved installed path shown
+above. This legacy spelling is retained byte-for-byte so previously published
+profile hashes remain verifiable.
 
 The runner records the resolved paths and SHA-256 digest of every effective
 file. Published result assets pin the hashes of the adopted run instead of

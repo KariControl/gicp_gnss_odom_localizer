@@ -47,13 +47,15 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ros-jazzy-ros-base
+          sudo apt-get install -y --no-install-recommends \
+            python3-numpy \
+            ros-jazzy-ros-base
           rosdep update --rosdistro jazzy
           rosdep install \
             --from-paths src \
             --ignore-src \
             --rosdistro jazzy \
-            --yes
+            --default-yes
 
       - name: Run repository and ROS-independent checks
         shell: bash
@@ -64,6 +66,9 @@ jobs:
           python3 tools/reference_checks.py
           python3 tools/check_launch_construction.py
           python3 tools/check_docker_configuration.py
+          python3 -B tools/evaluation/precision/test/test_precision_evaluation_helpers.py
+          python3 -B tools/evaluation/precision/test/test_hesai_gnss_publication_validator.py
+          python3 -B tools/evaluation/precision/scripts/validate_hesai_gnss_publication_run.py --self-test
 
       - name: Build all packages from a clean workspace
         shell: bash

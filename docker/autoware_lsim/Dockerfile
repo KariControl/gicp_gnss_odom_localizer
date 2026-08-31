@@ -17,6 +17,8 @@ COPY --chown=aw:aw src /tmp/gicp_gnss_odom_ws/src
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       python3-numpy \
+      "ros-${ROS_DISTRO}-rosbag2-py" \
+      "ros-${ROS_DISTRO}-rosidl-runtime-py" \
       "ros-${ROS_DISTRO}-rosbag2-storage-mcap" && \
     source "/opt/ros/${ROS_DISTRO}/setup.bash" && \
     source /opt/autoware/setup.bash && \
@@ -24,6 +26,7 @@ RUN apt-get update && \
       --from-paths /tmp/gicp_gnss_odom_ws/src \
       --ignore-src \
       --rosdistro "${ROS_DISTRO}" \
+      -t build -t build_export -t buildtool -t buildtool_export -t exec \
       -r -y && \
     rm -rf /var/lib/apt/lists/*
 
@@ -45,14 +48,20 @@ COPY --chown=aw:aw script/play_localization_bag.sh \
   /opt/gicp_gnss_odom_localizer/bin/play_localization_bag.sh
 COPY --chown=aw:aw tools/analyze_autoware_lsim_output.py \
   /opt/gicp_gnss_odom_localizer/bin/analyze_autoware_lsim_output.py
+COPY --chown=aw:aw tools/evaluation/precision/scripts/validate_precision_bag.py \
+  /opt/gicp_gnss_odom_localizer/bin/validate_precision_bag.py
 COPY --chown=aw:aw docker/autoware_lsim/container_entrypoint.sh \
   /opt/gicp_gnss_odom_localizer/bin/run_autoware_lsim.sh
+COPY --chown=aw:aw docker/autoware_lsim/autoware_localization_contract_test.py \
+  /opt/gicp_gnss_odom_localizer/bin/autoware_localization_contract_test.py
 COPY --chown=aw:aw docker/autoware_lsim/run_localization_contract_test.sh \
   /opt/gicp_gnss_odom_localizer/bin/run_localization_contract_test.sh
 
 RUN chmod 0755 \
       /opt/gicp_gnss_odom_localizer/bin/play_localization_bag.sh \
       /opt/gicp_gnss_odom_localizer/bin/analyze_autoware_lsim_output.py \
+      /opt/gicp_gnss_odom_localizer/bin/validate_precision_bag.py \
+      /opt/gicp_gnss_odom_localizer/bin/autoware_localization_contract_test.py \
       /opt/gicp_gnss_odom_localizer/bin/run_autoware_lsim.sh \
       /opt/gicp_gnss_odom_localizer/bin/run_localization_contract_test.sh && \
     mkdir -p /bags /output && \

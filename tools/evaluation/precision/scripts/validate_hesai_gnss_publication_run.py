@@ -588,12 +588,12 @@ def config_contracts(dataset: str, mode: str) -> list[ConfigContract]:
         ConfigContract(
             "gnss_fusion_override", "gnss_fusion_override_param",
             "gnss_fusion_single_antenna.yaml",
-            "src/pure_odometry_bringup/config/evaluation/lidar_imu_gnss/"
+            "src/pure_localization_evaluation_profiles/config/odometry/lidar_imu_gnss/"
             "hesai_32line_rtk/accepted/gnss_fusion_single_antenna.yaml",
         ),
         ConfigContract(
             "dataset_manifest", "dataset_manifest", "dataset_manifest.yaml",
-            "src/pure_odometry_bringup/config/evaluation/lidar_imu_gnss/"
+            "src/pure_localization_evaluation_profiles/config/odometry/lidar_imu_gnss/"
             f"hesai_32line_rtk/datasets/{dataset_id}.yaml",
         ),
         ConfigContract(
@@ -607,7 +607,7 @@ def config_contracts(dataset: str, mode: str) -> list[ConfigContract]:
             ConfigContract(
                 "precision_profile_manifest", "precision_profile_manifest",
                 "precision_profile.yaml",
-                "src/pure_precision_bringup/config/evaluation/lidar_imu_gnss/"
+                "src/pure_localization_evaluation_profiles/config/precision/lidar_imu_gnss/"
                 "hesai_32line_rtk/profile.yaml",
             )
         )

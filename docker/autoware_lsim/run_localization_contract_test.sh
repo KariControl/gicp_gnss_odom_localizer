@@ -207,7 +207,7 @@ for node in "${required_nodes[@]}"; do
 done
 
 set +e
-timeout 20 ros2 run pure_odometry_bringup tf_ownership_probe.py \
+timeout 20 ros2 run pure_localization_contract tf_ownership_probe.py \
   --owner \
   /localization_interface_adapter,map_frame,map,base_frame,base_link \
   --skip-edge-samples \
@@ -223,7 +223,7 @@ if ((tf_ownership_status != 0)); then
 fi
 
 set +e
-timeout 45 ros2 run pure_odometry_bringup autoware_localization_contract_test.py \
+timeout 45 "${GICP_GNSS_ODOM_INSTALL}/bin/autoware_localization_contract_test.py" \
   --output "$result_json" \
   > "$probe_log" 2>&1
 probe_status=$?

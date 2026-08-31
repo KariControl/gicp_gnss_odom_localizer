@@ -7,8 +7,8 @@ dataset:
   mid_yaw_policy: fixed-bias-direct
   gicp_epsilon: default
   label: MID-360 internal IMU tuned final
-  imu_profile: src/pure_odometry_bringup/config/evaluation/lidar_imu/mid360/rosbag2_2026_04_08-22_52_42/accepted/deskew.yaml
-  odom_profile: src/pure_odometry_bringup/config/evaluation/lidar_imu/mid360/rosbag2_2026_04_08-22_52_42/accepted/odom_fixed_bias_direct.yaml
+  imu_profile: src/pure_localization_evaluation_profiles/config/odometry/lidar_imu/mid360/rosbag2_2026_04_08-22_52_42/accepted/deskew.yaml
+  odom_profile: src/pure_localization_evaluation_profiles/config/odometry/lidar_imu/mid360/rosbag2_2026_04_08-22_52_42/accepted/odom_fixed_bias_direct.yaml
 execution:
   minimum_free_gib: 50
   serial: true

@@ -42,7 +42,7 @@ XY-only recovery handles that case without inventing a yaw observation. It is
 disabled in the generic parameter file and must be enabled explicitly with
 `xy_only_recovery.enabled` through an explicit GNSS-fusion override. The Hesai
 single-antenna evaluation profile uses
-[`gnss_fusion_single_antenna.yaml`](../src/pure_odometry_bringup/config/evaluation/lidar_imu_gnss/hesai_32line_rtk/accepted/gnss_fusion_single_antenna.yaml),
+[`gnss_fusion_single_antenna.yaml`](../src/pure_localization_evaluation_profiles/config/odometry/lidar_imu_gnss/hesai_32line_rtk/accepted/gnss_fusion_single_antenna.yaml),
 passed with the bringup argument `gnss_fusion_override_param`.
 
 The default-false `fusion_xy_only_recovery` launch argument remains only as a

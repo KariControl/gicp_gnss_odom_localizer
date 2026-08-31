@@ -68,31 +68,17 @@ install(DIRECTORY launch config urdf
   DESTINATION share/${PROJECT_NAME}
 )
 
-install(PROGRAMS
-  scripts/autoware_localization_contract_test.py
-  scripts/tf_ownership_probe.py
-  DESTINATION lib/${PROJECT_NAME}
-)
-
 pluginlib_export_plugin_description_file(
   rviz_common localization_status_plugin.xml
 )
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   ament_add_gtest(test_localization_visualization_logic
     test/test_localization_visualization_logic.cpp
   )
   target_include_directories(test_localization_visualization_logic PRIVATE include)
   ament_target_dependencies(test_localization_visualization_logic diagnostic_msgs)
-
-  add_test(
-    NAME test_tf_ownership_profiles
-    COMMAND "${Python3_EXECUTABLE}" -B
-      "${CMAKE_CURRENT_SOURCE_DIR}/test/test_tf_ownership_profiles.py"
-  )
-  set_tests_properties(test_tf_ownership_profiles PROPERTIES TIMEOUT 300)
 endif()
 
 ament_package()

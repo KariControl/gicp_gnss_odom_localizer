@@ -454,11 +454,11 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     canonical = load("startup_canonical", repo / "tools/evaluate_glim_trajectory.py")
     repo_eval = load(
         "startup_repo_eval",
-        repo / "src/pure_precision_bringup/scripts/evaluate_precision_glim_ab.py",
+        repo / "tools/evaluation/precision/scripts/evaluate_precision_glim_ab.py",
     )
     validator = load(
         "startup_precision_validator",
-        repo / "src/pure_precision_bringup/scripts/validate_precision_bag.py",
+        repo / "tools/evaluation/precision/scripts/validate_precision_bag.py",
     )
     speed = read_pose_stamps(repo_eval, args.speed_bag, canonical, False)
     precision = read_pose_stamps(repo_eval, args.precision_bag, canonical, True)

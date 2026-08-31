@@ -20,7 +20,7 @@ inputs are stored in the repository.
 | Launch construction | Construct the supported launch files and arguments | `tools/check_launch_construction.py` |
 | Docker configuration | Validate Compose files, wrapper contracts, and pinned Autoware integration | `tools/check_docker_configuration.py` |
 | ROS build and package tests | Compile the workspace and run package-level tests | `colcon build`, `colcon test`, and `colcon test-result` |
-| Runtime TF ownership matrix | Launch supported profiles in isolated ROS domains and check the endpoint multiset, owner parameters, and emitted edge set | `pure_odometry_bringup/test_tf_ownership_profiles` through `colcon test` |
+| Runtime TF ownership matrix | Launch supported profiles in isolated ROS domains and check the endpoint multiset, owner parameters, and emitted edge set | `pure_localization_contract/test_tf_ownership_profiles` through `colcon test` |
 | Public synthetic rosbag | Validate the committed PointCloud2/IMU/TF input and exercise the local-odometry path | `tools/check_synthetic_output_pointcloud2.py` and `script/run_synthetic_lidar_imu_smoke.sh` |
 | Autoware interface contract | Exercise adapter outputs, TF ownership, and real Autoware 1.9.0 monitor normal/fault/recovery behavior | `script/run_autoware_localization_contract_docker.sh` |
 | Recording-level evaluation | Validate accuracy, timestamps, non-intrusion, GNSS behavior, and runtime on controlled recordings | [Evaluation methodology](evaluation/methodology.md) |
@@ -36,6 +36,9 @@ python3 tools/check_repository.py
 python3 tools/reference_checks.py
 python3 tools/check_launch_construction.py
 python3 tools/check_docker_configuration.py
+python3 -B tools/evaluation/precision/test/test_precision_evaluation_helpers.py
+python3 -B tools/evaluation/precision/test/test_hesai_gnss_publication_validator.py
+python3 -B tools/evaluation/precision/scripts/validate_hesai_gnss_publication_run.py --self-test
 python3 tools/evaluation/curate_publication_assets.py --check
 git diff --check
 ```
@@ -109,7 +112,7 @@ colcon test --event-handlers console_direct+
 colcon test-result --verbose
 ```
 
-`pure_odometry_bringup` includes a runtime TF ownership matrix. It covers
+`pure_localization_contract` registers the runtime TF ownership matrix. It covers
 container and standalone local/fused profiles, the main container GNSS path and
 the NMEA-wrapper profile,
 `lidar_imu_only` with TF disabled and enabled, both composable deskew branches,

@@ -186,5 +186,5 @@ Run every representative outage bag once with scan-to-scan and once with the
 isolated scan-to-submap overlay. Acceptance must cover no unbounded pose jump,
 stable initial global yaw, exact anchor freeze outside strict fusion health,
 bounded recovery, scan-to-scan non-intrusion, local/global GLIM error, and
-runtime health. Use the evaluators in `pure_precision_bringup` rather than
-comparing only endpoint error.
+runtime health. Use the repository tools under
+`tools/evaluation/precision/scripts` rather than comparing only endpoint error.

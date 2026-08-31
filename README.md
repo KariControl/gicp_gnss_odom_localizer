@@ -364,12 +364,15 @@ limitations.
 
 The usual entry points are `pure_odometry_bringup` for scan-to-scan and
 `pure_precision_bringup` for the optional scan-to-submap overlay. The remaining
-packages are components and interfaces installed from the same repository.
+packages are components, interfaces, and narrowly scoped validation support
+installed from the same repository.
 
 | Package | Role |
 |---|---|
 | `pure_odometry_bringup` | Primary launch, configuration, and RViz entry point for the LiDAR–IMU–GNSS localization stack. |
 | `pure_precision_bringup` | Launch and configuration entry point for the optional isolated scan-to-submap overlay. |
+| `pure_localization_contract` | Reusable runtime TF ownership probe and supported-profile system test. |
+| `pure_localization_evaluation_profiles` | Data-only package for recording-specific evaluation profiles and provenance manifests. |
 | `pure_localization_interface_adapter` | Converts fused odometry into configurable kinematic-state, pose, twist-with-covariance, acceleration, and `map -> base_link` interfaces; the optional Autoware workflow consumes these outputs. |
 | `pure_imu_undistortion` | Validates point timing and deskews LiDAR scans from IMU motion, with optional translation compensation. |
 | `pure_lidar_gyro_odometer` | Produces scan-to-scan planar LiDAR–IMU odometry with fixed-lag SE(2) smoothing. |
@@ -405,29 +408,44 @@ measured.
 
 ## Sensor-to-output flow
 
-```text
-PointCloud2 ─┐
-IMU ─────────┴─> strict deskew ─┐
-IMU ────────────────────────────┴─> scan-to-scan GICP + SE(2) smoother
-                                         ├─> local odometry
-                                         │   /localization/gyro_lidar_odom
-                                         └─> [optional rolling submap]
-                                              └─> /localization/precision_local_odom
+These diagrams intentionally show functional roles and major signal flow, not
+the exact ROS node graph or message contract. Exact interfaces and package
+mapping are in [Architecture](docs/architecture.md#data-flow). Without GNSS,
+the LiDAR/IMU path still publishes local odometry. In the figures, GNSS
+"heading" is optional; a valid position-only observation may carry no heading.
+The exact sensor input types are `nmea_msgs/msg/Sentence`,
+`sensor_msgs/msg/Imu`, and `sensor_msgs/msg/PointCloud2`.
 
-NMEA GNSS ─> GNSS observation ─────────────┐
-local odometry ────────────────────────────┴─> map/odom fusion
-                                                 ├─> /localization/ekf_odom + map->odom TF
+### Scan-to-scan mode
 
-scan-to-submap local + healthy global anchor ─> /localization/precision_global_odom
+[![Scan-to-scan LiDAR, IMU, and optional GNSS localization data flow](docs/assets/architecture/normal.png)](docs/assets/architecture/normal.png)
 
-standard ROS 2 odometry/TF outputs
-  ├─> any ROS 2 robot or automated-driving application
-  └─> [optional Autoware adapter] ─> Autoware localization topics
-```
+The deskew function publishes only the deskewed point cloud. The LiDAR–gyro
+odometry function is the source of both the base-frame, yaw-bias-corrected IMU
+stream and the stop state used by the single-antenna heading logic. Stop
+detection requires a quiet IMU and, when a causal wheel or LiDAR speed estimate
+exists, a speed below its threshold; with neither speed source it deliberately
+falls back to IMU-only detection.
 
-The scan-to-submap branch publishes separate outputs and no TF. Full frame,
+### Scan-to-submap mode
+
+[![Isolated scan-to-submap precision localization data flow](docs/assets/architecture/precision.png)](docs/assets/architecture/precision.png)
+
+Each `SubmapScan` carries an accepted filtered cloud, its unmodified
+scan-to-scan pose, and the immutable exact key `(odom_session_id,
+odom_generation, sequence, header.stamp)`. Both precision nodes consume that
+snapshot: the matcher estimates a
+persistent full-SE(2) correction, while the local/global compositor validates
+the corresponding key before applying it to continuous raw odometry. The
+typed `FusionAuthority` permits global-anchor updates only while the existing
+fusion is fresh and fully healthy. Direct GNSS input is only an outage-yaw
+guard in the default profile, not an alternative global-position authority.
+
+The scan-to-submap branch publishes separate message outputs, no TF, and no
+feedback into the scan-to-scan odometer or existing GNSS fusion. Full frame,
 component, and failure-isolation details are in
-[Architecture](docs/architecture.md).
+[Architecture](docs/architecture.md); the complete stop rule is documented in
+[LiDAR/IMU odometry](docs/lidar_odometry.md#event-time-stop-decision).
 
 The container, standalone, and standalone-with-NMEA launches assign
 `odom -> base_link` to the gyro odometer. The evaluation-oriented

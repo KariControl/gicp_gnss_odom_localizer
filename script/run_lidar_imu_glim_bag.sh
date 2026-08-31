@@ -150,12 +150,13 @@ if [[ -n "$playback_duration" ]] && {
   exit 2
 fi
 
-odometry_evaluation_root="$ROOT/src/pure_odometry_bringup/config/evaluation/lidar_imu"
+evaluation_profiles_root="$ROOT/src/pure_localization_evaluation_profiles/config"
+odometry_evaluation_root="$evaluation_profiles_root/odometry/lidar_imu"
 velodyne_profile_root="$odometry_evaluation_root/velodyne/rosbag2_2025_02_20-16_06_35_vel"
 mid360_internal_profile_root="$odometry_evaluation_root/mid360/rosbag2_2026_04_08-22_52_42"
 empty_odom_override="$ROOT/src/pure_odometry_bringup/config/autoware_lsim/empty_params.yaml"
 precision_config_root="$ROOT/src/pure_precision_bringup/config"
-precision_evaluation_root="$precision_config_root/evaluation/lidar_imu"
+precision_evaluation_root="$evaluation_profiles_root/precision/lidar_imu"
 case "$sensor" in
   velodyne)
     [[ -z "$gicp_epsilon" ]] || {

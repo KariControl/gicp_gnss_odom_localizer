@@ -15,6 +15,7 @@ on:
       - script/run_autoware_lsim_docker.sh
       - src/**
       - tools/analyze_autoware_lsim_output.py
+      - tools/evaluation/precision/scripts/validate_precision_bag.py
   pull_request:
     branches:
       - main
@@ -29,6 +30,7 @@ on:
       - script/run_autoware_lsim_docker.sh
       - src/**
       - tools/analyze_autoware_lsim_output.py
+      - tools/evaluation/precision/scripts/validate_precision_bag.py
   workflow_dispatch:
 
 permissions:
@@ -63,7 +65,18 @@ jobs:
             --output-dir "$artifact_dir" \
             2>&1 | tee "$artifact_dir/ci.log"
 
+      - name: Reclaim Docker build cache before replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h
+          docker system df
+          docker builder prune --all --force
+          docker system df
+
       - name: Replay the public synthetic bag through the production launch
+        env:
+          ROS_DOMAIN_ID: "94"
         shell: bash
         run: |
           set -euo pipefail

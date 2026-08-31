@@ -114,6 +114,7 @@ esac
 
 BRINGUP_SHARE="${GICP_GNSS_ODOM_INSTALL}/share/pure_odometry_bringup"
 PRECISION_BRINGUP_SHARE="${GICP_GNSS_ODOM_INSTALL}/share/pure_precision_bringup"
+EVALUATION_PROFILES_SHARE="${GICP_GNSS_ODOM_INSTALL}/share/pure_localization_evaluation_profiles"
 RVIZ_CONFIG="$BRINGUP_SHARE/config/autoware_lsim/hesai_rosbag23.rviz"
 SAMPLE_VEHICLE_RVIZ_CONFIG="$BRINGUP_SHARE/config/autoware_lsim/hesai_rosbag23_sample_vehicle.rviz"
 SAMPLE_VEHICLE_BODY_XACRO="$BRINGUP_SHARE/urdf/autoware_sample_vehicle_body.urdf.xacro"
@@ -176,7 +177,7 @@ case "$DATASET_PROFILE" in
     ODOM_PARAM="${GICP_GNSS_ODOM_INSTALL}/share/pure_lidar_gyro_odometer/param/param_xt_lidar_imu_only.yaml"
     # Preserve the projection in the NMEA component's base parameter file.
     NMEA_GNSS_OVERRIDE_PARAM="$EMPTY_PARAM"
-    GNSS_FUSION_OVERRIDE_PARAM="$BRINGUP_SHARE/config/evaluation/lidar_imu_gnss/hesai_32line_rtk/accepted/gnss_fusion_single_antenna.yaml"
+    GNSS_FUSION_OVERRIDE_PARAM="$EVALUATION_PROFILES_SHARE/config/odometry/lidar_imu_gnss/hesai_32line_rtk/accepted/gnss_fusion_single_antenna.yaml"
     ;;
   *) fail "DATASET_PROFILE must be generic or hesai_rosbag23: $DATASET_PROFILE" ;;
 esac
@@ -762,7 +763,7 @@ check_tf_ownership() {
   local phase="$1"
   local ownership_json="$2"
   local ownership_log="$3"
-  if ! timeout 20 ros2 run pure_odometry_bringup tf_ownership_probe.py \
+  if ! timeout 20 ros2 run pure_localization_contract tf_ownership_probe.py \
     --owner \
     /localization_interface_adapter,map_frame,map,base_frame,base_link \
     --disabled-owner /gyro_odometer \
@@ -1116,7 +1117,7 @@ if [[ "$RECORD_OUTPUT" == true ]]; then
     fail "recorded output failed acceptance checks; see $run_directory/validation.log"
   fi
   if [[ "$TRACKING_MODE" == scan_to_submap ]]; then
-    if ! ros2 run pure_precision_bringup validate_precision_bag.py \
+    if ! "${GICP_GNSS_ODOM_INSTALL}/bin/validate_precision_bag.py" \
       "$record_directory" --expected-rate "$PLAYBACK_RATE" \
       > "$run_directory/precision_validation.log" 2>&1
     then

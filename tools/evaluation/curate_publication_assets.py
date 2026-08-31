@@ -2923,7 +2923,7 @@ def validate_mid360_evidence(sources: dict[str, Path]) -> dict[str, Any]:
     )
     accepted_root = (
         ROOT
-        / "src/pure_odometry_bringup/config/evaluation/lidar_imu/mid360"
+        / "src/pure_localization_evaluation_profiles/config/odometry/lidar_imu/mid360"
         / "rosbag2_2026_04_08-22_52_42/accepted"
     )
     packaged_profiles = {

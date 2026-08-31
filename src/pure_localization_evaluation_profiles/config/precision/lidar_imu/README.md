@@ -8,9 +8,10 @@ are evaluation-only and do not select a production localization output.
 - `external_snapshot_i2.yaml` publishes every second accepted scan for the
   canonical interval-2 experiment.
 
-The package-root `submap_snapshot_override.yaml` remains the production
-interval-5 profile. The package-root `empty_params.yaml` remains the neutral
-launch default. Neither file is replaced by the evaluation overrides here.
+The `pure_precision_bringup` package's `submap_snapshot_override.yaml` remains
+the production interval-5 profile, and its `empty_params.yaml` remains the
+neutral launch default. Neither file is replaced by the evaluation overrides
+here.
 The LiDAR/IMU runner uses interval 2 for its canonical precision A/B unless
 an interval is explicitly selected; this does not change the production
 interval-5 profile.

@@ -128,7 +128,10 @@ def check_dockerfile() -> None:
         "universe-devel-jazzy-1.9.0",
         "source /opt/autoware/setup.bash",
         "rosbag2-storage-mcap",
+        "rosbag2-py",
+        "rosidl-runtime-py",
         "rosdep install",
+        "-t build -t build_export -t buildtool -t buildtool_export -t exec",
         "colcon --log-base /tmp/gicp_gnss_odom_ws/log build",
         "--merge-install",
         "-DBUILD_TESTING=OFF",
@@ -137,6 +140,8 @@ def check_dockerfile() -> None:
         "container_entrypoint.sh",
         "play_localization_bag.sh",
         "analyze_autoware_lsim_output.py",
+        "validate_precision_bag.py",
+        "autoware_localization_contract_test.py",
     ):
         if token not in text:
             fail(f"Dockerfile required token missing: {token}")
@@ -491,7 +496,7 @@ def check_container_runner() -> None:
         "NMEA_PROJECTOR_METADATA",
         "nmea_projector_metadata",
         "map_projector_info.yaml",
-        "config/evaluation/lidar_imu_gnss/hesai_32line_rtk/accepted/gnss_fusion_single_antenna.yaml",
+        "config/odometry/lidar_imu_gnss/hesai_32line_rtk/accepted/gnss_fusion_single_antenna.yaml",
         "--clock-frequency",
         "autoware_lsim_output_recorder",
         "first_kinematic_state.yaml",
@@ -925,7 +930,7 @@ def check_host_wrapper() -> None:
 def check_localization_contract() -> None:
     files_and_tokens = {
         ROOT
-        / "src/pure_odometry_bringup/scripts/autoware_localization_contract_test.py": (
+        / "docker/autoware_lsim/autoware_localization_contract_test.py": (
             "localization: pose_instability_detector",
             "localization_error_monitor: ellipse_error_status",
             "diff_position_x:status",
@@ -934,7 +939,7 @@ def check_localization_contract() -> None:
             "observed_transitions",
             'parser.add_argument(\n        "--output"',
         ),
-        ROOT / "src/pure_odometry_bringup/scripts/tf_ownership_probe.py": (
+        ROOT / "src/pure_localization_contract/scripts/tf_ownership_probe.py": (
             'get_publishers_info_by_topic("/tf")',
             '"publish_tf"',
             '"--disabled-owner"',
@@ -951,7 +956,9 @@ def check_localization_contract() -> None:
             "LOCALIZATION_ERROR_MONITOR_VERSION",
             "launch_localization_monitors:=true",
             "tf_ownership.json",
+            "pure_localization_contract",
             "tf_ownership_probe.py",
+            "autoware_localization_contract_test.py",
             "/localization_interface_adapter,map_frame,map,base_frame,base_link",
         ),
         ROOT / "script/run_autoware_localization_contract_docker.sh": (
@@ -966,6 +973,8 @@ def check_localization_contract() -> None:
             "run_autoware_lsim_docker.sh",
             "data/synthetic_output_pointcloud2",
             "stage_a_public_synthetic",
+            "docker builder prune --all --force",
+            'ROS_DOMAIN_ID: "94"',
             "src/**",
             "if: always()",
             "actions/upload-artifact@",
@@ -989,8 +998,8 @@ def check_localization_contract() -> None:
                 )
 
     for path in (
-        ROOT / "src/pure_odometry_bringup/scripts/autoware_localization_contract_test.py",
-        ROOT / "src/pure_odometry_bringup/scripts/tf_ownership_probe.py",
+        ROOT / "docker/autoware_lsim/autoware_localization_contract_test.py",
+        ROOT / "src/pure_localization_contract/scripts/tf_ownership_probe.py",
         ROOT / "docker/autoware_lsim/run_localization_contract_test.sh",
         ROOT / "script/run_autoware_localization_contract_docker.sh",
     ):
@@ -1055,6 +1064,7 @@ def check_localization_contract() -> None:
     if "/reference/localization/twist_with_covariance" not in container:
         fail("Docker output recorder omits the isolated reference twist topic")
     for token in (
+        "pure_localization_contract",
         "tf_ownership_probe.py",
         "tf_ownership_completion.json",
         "--disabled-owner /gyro_odometer",

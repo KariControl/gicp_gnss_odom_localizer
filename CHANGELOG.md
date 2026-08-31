@@ -4,6 +4,11 @@
 
 ### Added
 
+- Added the generic `pure_localization_contract` package for the runtime TF
+  ownership probe and supported-profile system matrix.
+- Added the data-only `pure_localization_evaluation_profiles` package so
+  recording-specific accepted/experimental profiles retain installed
+  provenance without being presented as bringup defaults.
 - Added a GitHub Actions clean-build job for Ubuntu 24.04 and ROS 2 Jazzy. It
   recursively checks out `small_gicp`, installs dependencies with rosdep,
   performs a Release build from an empty workspace, and runs every registered
@@ -34,8 +39,8 @@
   into canonical `accepted` inputs and retained `experimental` inputs.
 - Added shared Hesai 32-Line + IMU + RTK GNSS evaluation overrides and
   descriptive private recording manifests under
-  `config/evaluation/lidar_imu_gnss`; component parameter defaults remain in
-  their owning packages.
+  `pure_localization_evaluation_profiles/config/odometry/lidar_imu_gnss`;
+  component parameter defaults remain in their owning packages.
 - Added the `hesai-rosbag23` Autoware localization-interface profile for the
   private Hesai 32-Line + IMU + RTK GNSS recordings, including calibrated
   static transforms, XT parameters, packaged NMEA projection provenance, a
@@ -88,6 +93,14 @@
   and a real-node integration test covers deferred acceptance and overflow.
 
 ### Changed
+
+- Moved precision rosbag evaluators and their dependency-light tests from
+  `pure_precision_bringup` to `tools/evaluation/precision`; normal bringup no
+  longer installs those scripts or declares NumPy, Matplotlib, rclpy, or
+  rosbag2 as runtime dependencies.
+- Moved the Docker-only Autoware monitor contract probe beside its Docker
+  harness and classified the previously unregistered submap matcher publisher
+  harness under `tools/manual`.
 
 - Made non-GNSS Docker replay wait for a positive simulation clock and a
   nonzero-stamped local-odometry sample before publishing the automatic initial
@@ -165,8 +178,9 @@
   raw-to-fused stamp coverage.
 - The ROS-bag single-antenna runner explicitly enables XY-only recovery while
   the generic fusion and launch defaults remain disabled.
-- LiDAR/IMU evaluation configuration now uses `config/evaluation/lidar_imu`
-  rather than encoding the reference provider in the directory name.
+- LiDAR/IMU evaluation configuration now uses
+  `pure_localization_evaluation_profiles/config/odometry/lidar_imu` rather than
+  encoding the reference provider in the directory name.
 - Native Hesai and Autoware localization-interface runners now use the packaged
   NMEA runtime parameters with an empty evaluation override. Provenance checks
   require their projector, datum, origin, and scale to match
@@ -201,6 +215,10 @@
 
 ### Fixed
 
+- Fixed the Jazzy workflow's invalid rosdep `--yes` option by using
+  `--default-yes`.
+- Isolated the Autoware public replay in a dedicated DDS domain and reclaimed
+  BuildKit cache before creating its second container on the hosted runner.
 - Removed the evaluation-only site-centred NMEA-origin substitution from the
   Hesai runners and restored the packaged default projection. The adopted
   2026-08-25 Course 2 result verifies the runtime-parameter-to-map-metadata

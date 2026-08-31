@@ -293,7 +293,8 @@ NMEA_GNSS_SHARE="$(ros2 pkg prefix pure_nmea_gnss_conversion)/share/pure_nmea_gn
 NMEA_GNSS_PARAM="$NMEA_GNSS_SHARE/param/param.yaml"
 NMEA_PROJECTOR_METADATA="$NMEA_GNSS_SHARE/config/map_projector_info.yaml"
 BRINGUP_SHARE="$(ros2 pkg prefix pure_odometry_bringup)/share/pure_odometry_bringup"
-EVALUATION_PROFILE_ROOT="$BRINGUP_SHARE/config/evaluation/lidar_imu_gnss/hesai_32line_rtk"
+EVALUATION_PROFILES_SHARE="$(ros2 pkg prefix pure_localization_evaluation_profiles)/share/pure_localization_evaluation_profiles"
+EVALUATION_PROFILE_ROOT="$EVALUATION_PROFILES_SHARE/config/odometry/lidar_imu_gnss/hesai_32line_rtk"
 DATASET_MANIFEST="$EVALUATION_PROFILE_ROOT/datasets/${dataset_id}.yaml"
 DIAGNOSTIC_AGGREGATOR_PARAM="$BRINGUP_SHARE/config/diagnostic_aggregator.yaml"
 EMPTY_PARAM="$BRINGUP_SHARE/config/autoware_lsim/empty_params.yaml"
@@ -327,7 +328,7 @@ NMEA_GNSS_OVERRIDE_PARAM="$EMPTY_PARAM"
 GNSS_FUSION_OVERRIDE_PARAM="$EVALUATION_PROFILE_ROOT/accepted/gnss_fusion_single_antenna.yaml"
 PRECISION_PROFILE_MANIFEST=""
 if [[ -n "$PRECISION_BRINGUP_SHARE" ]]; then
-  PRECISION_PROFILE_MANIFEST="$PRECISION_BRINGUP_SHARE/config/evaluation/lidar_imu_gnss/hesai_32line_rtk/profile.yaml"
+  PRECISION_PROFILE_MANIFEST="$EVALUATION_PROFILES_SHARE/config/precision/lidar_imu_gnss/hesai_32line_rtk/profile.yaml"
 fi
 for parameter_file in \
   "$IMU_PARAM" \
@@ -1022,7 +1023,7 @@ if [[ "$precision_runtime_healthy" != true ]]; then
   fail "precision runtime health check failed:$precision_runtime_detail"
 fi
 if [[ "$localization_mode" == "precision" && "$record_output" == true ]]; then
-  if ! ros2 run pure_precision_bringup validate_precision_bag.py \
+  if ! python3 "$ROOT/tools/evaluation/precision/scripts/validate_precision_bag.py" \
     "$record_directory" --expected-rate "$rate" \
     > "$output/precision_validation.log" 2>&1
   then

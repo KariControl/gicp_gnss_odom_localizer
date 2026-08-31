@@ -46,12 +46,12 @@ accuracy dataset or ground truth.
 ## Evaluation profiles
 
 Package defaults remain with each node package. Recording-specific overrides
-are kept under the bringup packages' `config/evaluation/` trees:
+are installed by the data-only `pure_localization_evaluation_profiles` package:
 
-- [LiDAR/IMU odometry profiles](../../src/pure_odometry_bringup/config/evaluation/lidar_imu/README.md)
-- [LiDAR/IMU scan-to-submap profiles](../../src/pure_precision_bringup/config/evaluation/lidar_imu/README.md)
-- [Hesai LiDAR/IMU/GNSS odometry and dataset profiles](../../src/pure_odometry_bringup/config/evaluation/lidar_imu_gnss/hesai_32line_rtk/README.md)
-- [Hesai LiDAR/IMU/GNSS scan-to-submap profile](../../src/pure_precision_bringup/config/evaluation/lidar_imu_gnss/hesai_32line_rtk/README.md)
+- [LiDAR/IMU odometry profiles](../../src/pure_localization_evaluation_profiles/config/odometry/lidar_imu/README.md)
+- [LiDAR/IMU scan-to-submap profiles](../../src/pure_localization_evaluation_profiles/config/precision/lidar_imu/README.md)
+- [Hesai LiDAR/IMU/GNSS odometry and dataset profiles](../../src/pure_localization_evaluation_profiles/config/odometry/lidar_imu_gnss/hesai_32line_rtk/README.md)
+- [Hesai LiDAR/IMU/GNSS scan-to-submap profile](../../src/pure_localization_evaluation_profiles/config/precision/lidar_imu_gnss/hesai_32line_rtk/README.md)
 
 An `accepted/` profile is accepted only for its documented recording. Sensor
 calibration, IMU-gap, gyro-bias, and other recording-specific values must not be

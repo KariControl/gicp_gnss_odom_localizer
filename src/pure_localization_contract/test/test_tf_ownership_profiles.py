@@ -233,7 +233,7 @@ class TfOwnershipProfilesTest(unittest.TestCase):
         probe_command = [
             "ros2",
             "run",
-            "pure_odometry_bringup",
+            "pure_localization_contract",
             "tf_ownership_probe.py",
             "--timeout",
             "12",
@@ -341,7 +341,7 @@ class TfOwnershipProfilesTest(unittest.TestCase):
                 (
                     "ros2",
                     "run",
-                    "pure_odometry_bringup",
+                    "pure_localization_contract",
                     "tf_ownership_probe.py",
                     "--owner",
                     "/tf_owner_primary,map_frame,map,base_frame,base_link",

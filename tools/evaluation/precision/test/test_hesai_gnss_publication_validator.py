@@ -83,7 +83,7 @@ dataset:
 
 
 def test_default_projection_contract(validator) -> None:
-    repository = ROOT.parents[1]
+    repository = ROOT.parents[2]
     parameter_text = (
         repository / "src/pure_nmea_gnss_conversion/param/param.yaml"
     ).read_text(encoding="utf-8")
@@ -128,7 +128,7 @@ def test_default_projection_contract(validator) -> None:
 
 
 def test_precision_global_parameter_contract(validator) -> None:
-    repository = ROOT.parents[1]
+    repository = ROOT.parents[2]
     parameter_text = (
         repository / "src/pure_precision_global_localizer/param/param.yaml"
     ).read_text(encoding="utf-8")

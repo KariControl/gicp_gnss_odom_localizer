@@ -35,7 +35,7 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_PLAN = REPO / (
-    "src/pure_odometry_bringup/config/evaluation/lidar_imu/mid360/"
+    "src/pure_localization_evaluation_profiles/config/odometry/lidar_imu/mid360/"
     "rosbag2_2026_04_08-22_52_42/experimental/tuning/plan.yaml"
 )
 WORKSPACE_MARKER = ".mid360_tuning_workspace.json"
