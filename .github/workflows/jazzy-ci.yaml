@@ -98,7 +98,9 @@ jobs:
           test_rc=0
           colcon test \
             --event-handlers console_direct+ \
-            --return-code-on-test-failure || test_rc=$?
+            --return-code-on-test-failure \
+            --ctest-args \
+              --timeout 120 || test_rc=$?
           result_rc=0
           colcon test-result --verbose || result_rc=$?
           if ((test_rc != 0 || result_rc != 0)); then

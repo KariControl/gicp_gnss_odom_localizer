@@ -500,6 +500,9 @@ def check_container_runner() -> None:
         "--clock-frequency",
         "autoware_lsim_output_recorder",
         "first_kinematic_state.yaml",
+        "first_state_wait_pid",
+        'stop_process "$first_state_wait_pid"',
+        'wait "$first_state_wait_pid"',
         "first_clock.yaml",
         "first_nonzero_local_odom.yaml",
         "has_nonzero_ros_stamp",
@@ -570,6 +573,20 @@ def check_container_runner() -> None:
     ):
         if token not in text:
             fail(f"container runner required behavior missing: {token}")
+
+    first_state_arm = text.find(
+        'timeout "$FIRST_STATE_WAIT_SEC" ros2 topic echo --once'
+    )
+    replay_start = text.find('stdbuf -oL -eL "${play_command[@]}"')
+    initial_pose_call = text.find("    publish_initial_pose", replay_start)
+    first_state_wait = text.find('wait "$first_state_wait_pid"', replay_start)
+    if not (
+        0 <= first_state_arm < replay_start < initial_pose_call < first_state_wait
+    ):
+        fail(
+            "first kinematic-state subscriber must be armed before replay and "
+            "waited after the automatic initial-pose handshake"
+        )
 
     # Docker retains the historical scan_to_submap UI token as the precision
     # selector. It must start the external overlay while the odometer itself

@@ -19,6 +19,9 @@ struct CallbackGroupInfo
   std::vector<std::string> subscription_topics;
 };
 
+using RetainedNodes =
+  std::vector<std::shared_ptr<pure_gyro_odometer::GyroOdometerNode>>;
+
 void require(const bool condition, const std::string & message)
 {
   if (!condition) {
@@ -64,7 +67,7 @@ std::vector<CallbackGroupInfo> collectCallbackGroups(
   return result;
 }
 
-void testSensorCallbacksAreIsolated()
+void testSensorCallbacksAreIsolated(RetainedNodes & retained_nodes)
 {
   rclcpp::NodeOptions options;
   options.parameter_overrides({
@@ -76,6 +79,7 @@ void testSensorCallbacksAreIsolated()
     rclcpp::Parameter("reference_pose_topic", "/callback_group_test/reference")});
 
   auto node = std::make_shared<pure_gyro_odometer::GyroOdometerNode>(options);
+  retained_nodes.push_back(node);
   const auto groups = collectCallbackGroups(node);
   const auto * imu_group = findSubscriptionGroup(groups, "/callback_group_test/imu");
   const auto * lidar_group = findSubscriptionGroup(groups, "/callback_group_test/points");
@@ -106,22 +110,21 @@ void testSensorCallbacksAreIsolated()
     "wheel and reference subscriptions should share the auxiliary callback group");
 }
 
-void testAcceptedScanOdomPublisherIsOptIn()
+void testAcceptedScanOdomPublisherIsOptIn(RetainedNodes & retained_nodes)
 {
-  {
-    auto node = std::make_shared<pure_gyro_odometer::GyroOdometerNode>(
-      rclcpp::NodeOptions{});
-    require(
-      !node->get_parameter("lidar_odom.accepted_scan_odom.enable").as_bool(),
-      "accepted-scan odometry must be disabled by default");
-    require(
-      node->get_parameter("lidar_odom.accepted_scan_odom.topic").as_string() ==
-      "/localization/gyro_lidar_odom_scan",
-      "accepted-scan odometry default topic changed unexpectedly");
-    require(
-      node->count_publishers("/localization/gyro_lidar_odom_scan") == 0U,
-      "default-disabled accepted-scan odometry must not create a publisher");
-  }
+  auto default_node = std::make_shared<pure_gyro_odometer::GyroOdometerNode>(
+    rclcpp::NodeOptions{});
+  retained_nodes.push_back(default_node);
+  require(
+    !default_node->get_parameter("lidar_odom.accepted_scan_odom.enable").as_bool(),
+    "accepted-scan odometry must be disabled by default");
+  require(
+    default_node->get_parameter("lidar_odom.accepted_scan_odom.topic").as_string() ==
+    "/localization/gyro_lidar_odom_scan",
+    "accepted-scan odometry default topic changed unexpectedly");
+  require(
+    default_node->count_publishers("/localization/gyro_lidar_odom_scan") == 0U,
+    "default-disabled accepted-scan odometry must not create a publisher");
 
   rclcpp::NodeOptions options;
   options.parameter_overrides({
@@ -129,6 +132,7 @@ void testAcceptedScanOdomPublisherIsOptIn()
     rclcpp::Parameter(
       "lidar_odom.accepted_scan_odom.topic", "/callback_group_test/accepted_scan_odom")});
   auto node = std::make_shared<pure_gyro_odometer::GyroOdometerNode>(options);
+  retained_nodes.push_back(node);
   require(
     node->count_publishers("/callback_group_test/accepted_scan_odom") == 1U,
     "enabled accepted-scan odometry must create exactly one publisher");
@@ -141,9 +145,11 @@ int main(int argc, char ** argv)
   // Keep the constructor test runnable in read-only-home CI sandboxes.
   (void)::setenv("ROS_LOG_DIR", "/tmp", 1);
   rclcpp::init(argc, argv);
-  testSensorCallbacksAreIsolated();
-  testAcceptedScanOdomPublisherIsOptIn();
+  RetainedNodes retained_nodes;
+  testSensorCallbacksAreIsolated(retained_nodes);
+  testAcceptedScanOdomPublisherIsOptIn(retained_nodes);
   rclcpp::shutdown();
+  retained_nodes.clear();
   std::cout << "PASS test_callback_groups\n";
   return 0;
 }

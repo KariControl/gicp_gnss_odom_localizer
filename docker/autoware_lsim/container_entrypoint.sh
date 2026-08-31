@@ -269,6 +269,7 @@ rqt_robot_monitor_pid=""
 rqt_robot_monitor_node=""
 bag_pid=""
 record_pid=""
+first_state_wait_pid=""
 
 stop_process() {
   local pid="$1"
@@ -294,6 +295,7 @@ stop_process() {
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
+  stop_process "$first_state_wait_pid" INT
   stop_process "$bag_pid" INT
   stop_process "$record_pid" INT
   stop_process "$rqt_robot_monitor_pid" INT
@@ -868,6 +870,15 @@ fi
 printf '[autoware-interface] replay:'
 printf ' %q' "${play_command[@]}"
 printf '\n'
+
+# Arm the one-shot state subscriber before starting this short replay. Starting
+# it after the automatic initial-pose handshake can miss every state while DDS
+# discovery catches up, even though the recorder receives valid output.
+first_state_snapshot="$run_directory/first_kinematic_state.yaml"
+timeout "$FIRST_STATE_WAIT_SEC" ros2 topic echo --once \
+  /localization/kinematic_state > "$first_state_snapshot" 2>&1 &
+first_state_wait_pid=$!
+
 stdbuf -oL -eL "${play_command[@]}" \
   > >(tee "$run_directory/replay.log") \
   2>&1 &
@@ -928,9 +939,12 @@ if [[ "$USE_GNSS" != true && "$AUTO_INITIAL_POSE" == true ]]; then
   fi
 fi
 
-if timeout "$FIRST_STATE_WAIT_SEC" ros2 topic echo --once \
-  /localization/kinematic_state > "$run_directory/first_kinematic_state.yaml" 2>&1
-then
+set +e
+wait "$first_state_wait_pid"
+first_state_status=$?
+set -e
+first_state_wait_pid=""
+if ((first_state_status == 0)); then
   log "received the first valid Autoware kinematic state."
 else
   fail "no valid Autoware kinematic state arrived; see launch/replay logs"

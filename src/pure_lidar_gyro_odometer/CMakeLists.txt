@@ -117,6 +117,10 @@ if(BUILD_TESTING)
   target_link_libraries(test_tf_publication ${PROJECT_NAME})
   ament_target_dependencies(test_tf_publication rclcpp nav_msgs tf2_ros)
   add_test(NAME test_tf_publication COMMAND test_tf_publication)
+  set_tests_properties(
+    test_callback_groups
+    test_tf_publication
+    PROPERTIES TIMEOUT 30)
 
   add_executable(test_tracking_mode test/test_tracking_mode.cpp)
   target_include_directories(test_tracking_mode PRIVATE include)
