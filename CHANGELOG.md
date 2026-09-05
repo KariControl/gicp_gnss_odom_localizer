@@ -7,6 +7,8 @@ are intentionally excluded.
 
 ## Unreleased
 
+## v2.0.0 - 2026-09-05
+
 These changes are not backward-compatible with the historical `v1.0.0`
 repository release and should use a new major repository tag when released.
 

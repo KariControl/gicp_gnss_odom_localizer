@@ -5,6 +5,8 @@ message: >-
   reference, and related systems are included below.
 title: "GICP-GNSS Odom Localizer"
 type: software
+version: "2.0.0"
+date-released: "2026-09-05"
 authors:
   - name: "GICP-GNSS Odom Localizer project"
     alias: "KariControl"

@@ -466,7 +466,7 @@ gates.
 - [GNSS initialization and outage recovery](docs/gnss_recovery.md)
 - [Tuning](docs/tuning.md) and [known limitations](docs/known_limitations.md)
 - [Docker-based Autoware localization-interface workflow](docker/autoware_lsim/README.md)
-- [Changelog and migration notes](CHANGELOG.md#unreleased)
+- [Changelog and migration notes](CHANGELOG.md#v200---2026-09-05)
 
 ## Citation and related work
 
