@@ -1,0 +1,75 @@
+{
+  "schema_version": 2,
+  "files": [
+    {
+      "path": "autoware_lsim_hesai_course_2/rviz_poster.png",
+      "bytes": 186525,
+      "sha256": "2d944f70f3b352ef0014e94428fb96ac89b107cbfe3171ac581ab394be5aaea2"
+    },
+    {
+      "path": "hesai_32line_imu_rtk_gnss_course_2/global_xy_error.png",
+      "bytes": 162701,
+      "sha256": "1ccf9aba4603b88fa970bf250064dd419bc52f5398e87000b28dbdd9f4129e25"
+    },
+    {
+      "path": "hesai_32line_imu_rtk_gnss_course_2/global_yaw_error.png",
+      "bytes": 231599,
+      "sha256": "5869894504f4300bb2dff645b7bfa902d78fa018429a251cb53c73b817bb1ec6"
+    },
+    {
+      "path": "hesai_32line_imu_rtk_gnss_course_2/local_xy_error.png",
+      "bytes": 108063,
+      "sha256": "fcca9a82d523705f29a5e173adc23ea3392e97848f11607f5dbaa6c78dfab18e"
+    },
+    {
+      "path": "hesai_32line_imu_rtk_gnss_course_2/local_yaw_error.png",
+      "bytes": 158909,
+      "sha256": "56dbcbbab6199c3b9f337b424ad3840ec14087ef351490eeac28c1a1e4dfe3d2"
+    },
+    {
+      "path": "hesai_32line_imu_rtk_gnss_course_2/metrics.json",
+      "bytes": 21851,
+      "sha256": "981772b3c956d27557cf8e523543336e3dad5f627d9cb992a33ac248f1175497"
+    },
+    {
+      "path": "livox_mid360_internal_imu/metrics.json",
+      "bytes": 12074,
+      "sha256": "8239633324813a67b6846d3ec941371994d158bf80d9bfc2f12319db3f74c0a6"
+    },
+    {
+      "path": "livox_mid360_internal_imu/trajectory.png",
+      "bytes": 96714,
+      "sha256": "414f8b7747db2344bdd03757a36c3ad3d4192e32cabc385e07dcb60b5d4116ce"
+    },
+    {
+      "path": "livox_mid360_internal_imu/xy_error.png",
+      "bytes": 112227,
+      "sha256": "fcadf606bde51152f0dd33ac4286d4775fffd6b87f58a71160f26e447f8dce03"
+    },
+    {
+      "path": "livox_mid360_internal_imu/yaw_error.png",
+      "bytes": 135010,
+      "sha256": "872d9680d48e206a149c5c7a96823a826e98793b7f8910bca67bb46dc8dca69b"
+    },
+    {
+      "path": "velodyne_32line_external_imu/metrics.json",
+      "bytes": 11567,
+      "sha256": "7434ec45530b9d88c2ae5414496649224eab500c2515b9d4e86627bda14416aa"
+    },
+    {
+      "path": "velodyne_32line_external_imu/trajectory.png",
+      "bytes": 78746,
+      "sha256": "c42c53c26af13ff100ae5e8b727589daccd0b61c1d09eb8db22a9f9f7cf89749"
+    },
+    {
+      "path": "velodyne_32line_external_imu/xy_error.png",
+      "bytes": 112357,
+      "sha256": "55a9c72e97473867f62be52ad2fc02efc018f63b8195002ce8a0e5e294e7e5c1"
+    },
+    {
+      "path": "velodyne_32line_external_imu/yaw_error.png",
+      "bytes": 146822,
+      "sha256": "2708f980f46f3900f68c0d881f11db0b3160ccbc843f6a979e94baaaa41313ab"
+    }
+  ]
+}

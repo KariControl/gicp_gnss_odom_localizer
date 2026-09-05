@@ -1,61 +1,131 @@
 /**:
   ros__parameters:
+    # Frames and interfaces
     map_frame: map
     odom_frame: odom
     base_frame: base_link
-
-    # Relative odometry input from pure_lidar_gyro_odometer
     odom_topic: /localization/gyro_lidar_odom
-
-    # Dedicated GNSS fusion input from pure_gnss_conversion
-    # has_odom=true では map -> base_link の gnss_odometry を内包し、
-    # has_odom=false では GNSS 品質情報のみを受け取ります。
     gnss_input_topic: /localization/gnss_fusion_input
-
-    use_gnss_status: true
-    gnss_status_timeout_sec: 3.0
-    gnss_fix_min_status: 0
-    gnss_init_require_fix: true
-
-    # Optional legacy absolute pose input (PoseWithCovarianceStamped).
-    # Leave empty to disable. Manual /initialpose is still supported.
     legacy_anchor_topic: ""
     initialpose_topic: /initialpose
-
     out_pose_topic: /localization/ekf_pose
     out_odom_topic: /localization/ekf_odom
-
+    authority_topic: /localization/gnss_map_odom_fusion_authority
     publish_tf: true
     publish_rate_hz: 50.0
     heartbeat_hz: 2.0
 
-    odom_buffer_sec: 10.0
-    odom_timeout_sec: 0.05
-    odom_max_extrapolate_sec: 0.5
+    # Timestamp handling. GNSS is evaluated against odometry at the GNSS stamp.
+    odom_buffer_sec: 15.0
+    odom_timeout_sec: 1.0
+    odom_max_extrapolate_sec: 0.2
+    measurement_max_age_sec: 5.0
+    measurement_future_tolerance_sec: 0.5
+    measurement_reorder_tolerance_sec: 0.05
 
-    # Base covariance and time drift of the absolute anchor estimate.
-    anchor_cov_xy_default: 0.25
-    anchor_cov_yaw_default: 0.04
-    cov_xy_drift_per_sec: 0.20
-    cov_yaw_drift_per_sec: 0.02
+    # map->odom covariance model
+    anchor_cov_xy_default: 0.25       # [m^2]
+    anchor_cov_yaw_default: 0.04      # [rad^2]
+    cov_xy_drift_per_sec: 0.005       # [m^2/s]
+    cov_yaw_drift_per_sec: 0.002      # [rad^2/s]
     no_fix_cov_drift_scale: 3.0
 
-    # Complementary fusion gains for GNSS updates.
-    gnss_base_alpha_xy: 0.35
-    gnss_base_alpha_yaw: 0.20
-    gnss_min_alpha_xy: 0.02
-    gnss_min_alpha_yaw: 0.01
+    # GNSS quality and observation semantics
+    use_gnss_status: true
+    gnss_status_timeout_sec: 3.0
+    gnss_fix_min_status: 0             # sensor_msgs/NavSatStatus STATUS_FIX
+    gnss_init_require_fix: true
+    # Keep false for public deployments. Position-only antenna observations
+    # must carry observation_point_in_base so the lever arm is modeled safely.
+    gnss_allow_unknown_observation_point: false
 
-    # When GNSS status is not FIX, reduce the blend ratio.
-    gnss_no_fix_ratio_xy: 0.15
-    gnss_no_fix_ratio_yaw: 0.00
+    # Initial map->odom is never created from one GNSS message. A contiguous
+    # GNSS/odom window must provide either consistent headings or enough motion
+    # to make planar yaw observable.
+    initialization_min_samples: 3
+    initialization_min_heading_samples: 2
 
-    # Covariance-to-gain scaling references.
-    gnss_cov_ref_xy: 0.50
-    gnss_cov_ref_yaw: 0.10
-    gnss_max_cov_xy: 100.0
-    gnss_max_cov_yaw: 10.0
-
-    # Large innovation rejection / down-weighting.
-    gnss_position_jump_reject_m: 20.0
+    # Normal tracking gates
+    gnss_max_cov_xy: 100.0             # [m^2]
+    gnss_max_cov_yaw: 10.0             # [rad^2]
+    gnss_position_nis_threshold: 11.83 # chi-square, 2 DoF, about 99.73%
+    gnss_yaw_nis_threshold: 9.0        # chi-square, 1 DoF, about 99.73%
+    gnss_position_jump_reject_m: 9.0
     gnss_yaw_jump_reject_rad: 1.57
+    gnss_jump_reject_sigma_scale: 3.0
+    # Do not abandon normal tracking because of one isolated GNSS outlier.
+    tracking_rejection_min_samples: 3
+
+    # GNSS outage/reacquisition state machine:
+    # TRACKING -> OUTAGE -> REACQUIRING -> RECOVERING -> TRACKING.
+    # The reacquired target is estimated by weighted SE(2) alignment over a
+    # contiguous window; no single RTK fix is force-accepted.
+    gnss_outage_timeout_sec: 2.0
+    recovery_min_samples: 5
+    recovery_min_heading_samples: 2
+    recovery_max_sample_gap_sec: 1.0
+    recovery_min_odom_baseline_m: 3.0
+    recovery_max_position_rms_m: 1.5
+    recovery_max_position_residual_m: 3.0
+    recovery_max_heading_std_rad: 0.35
+    recovery_max_heading_source_disagreement_rad: 0.52
+    # One isolated sample may be removed only when the remaining window still
+    # passes all temporal, observability, residual and heading gates.
+    recovery_allow_single_outlier_rejection: true
+    recovery_candidate_window_sec: 15.0
+    recovery_candidate_max_samples: 50
+
+    # Full-SE(2) gates evaluated at the synchronized map->base_link position.
+    # This includes the position effect of changing map->odom yaw far from the
+    # odom origin; the yaw gates still apply to map->odom yaw itself.
+    recovery_max_target_translation_m: 100.0
+    recovery_max_target_yaw_rad: 3.141592653589793
+    # Additional map->base_link gate between successive sliding-window targets.
+    # This avoids a late outlier moving the goal during recovery.
+    recovery_max_target_refresh_translation_m: 2.0
+    recovery_max_target_refresh_yaw_rad: 0.35
+
+    # Full-SE(2) translation limits apply to the published base_link position,
+    # not raw map->odom translation. map->odom translation may move farther to
+    # compensate a simultaneous yaw correction about the odom origin.
+    recovery_max_correction_per_update_m: 0.50
+    recovery_max_correction_per_sec_m: 1.00
+    recovery_max_yaw_correction_per_update_rad: 0.05
+    recovery_max_yaw_correction_per_sec_rad: 0.20
+    recovery_exit_position_m: 0.10
+    recovery_exit_yaw_rad: 0.02
+    recovery_exit_min_samples: 3
+
+    # Optional degraded recovery for a single-antenna vehicle that is stopped
+    # when RTK Fixed position returns without an observable absolute yaw. Full
+    # SE(2) recovery always has priority. The public default is fail-closed;
+    # enable this only in a calibrated deployment profile.
+    xy_only_recovery.enabled: false
+    xy_only_recovery.required_fix_quality: 4
+    xy_only_recovery.min_samples: 10
+    xy_only_recovery.min_candidate_span_sec: 1.0
+    xy_only_recovery.max_sample_gap_sec: 0.5
+    xy_only_recovery.max_position_rms_m: 0.25
+    xy_only_recovery.max_position_residual_m: 0.75
+    xy_only_recovery.allow_single_outlier_rejection: true
+    xy_only_recovery.stationary_dwell_sec: 1.0
+    xy_only_recovery.max_speed_mps: 0.5
+    xy_only_recovery.max_yaw_rate_radps: 0.05
+    xy_only_recovery.max_stationary_displacement_m: 0.5
+    xy_only_recovery.max_odom_yaw_change_rad: 0.05
+    xy_only_recovery.max_odom_gap_sec: 0.1
+    xy_only_recovery.max_anchor_yaw_variance_rad2: 1.44
+    xy_only_recovery.max_outage_sec: 120.0
+    xy_only_recovery.max_lever_arm_error_m: 0.5
+    xy_only_recovery.max_cov_xy: 0.25
+    xy_only_recovery.soft_bad_grace_sec: 0.5
+    xy_only_recovery.max_target_translation_m: 10.0
+    xy_only_recovery.max_target_refresh_translation_m: 1.0
+    xy_only_recovery.exit_position_m: 0.1
+    xy_only_recovery.exit_min_samples: 3
+
+    # Deprecated compatibility parameters. They are accepted but ignored; the
+    # old timeout-based, single-fix force-accept path has been removed.
+    time_out_dead_reckoning: 0.0
+    gnss_force_accept_allow_float: false
+    gnss_force_accept_max_cov_xy: 0.0

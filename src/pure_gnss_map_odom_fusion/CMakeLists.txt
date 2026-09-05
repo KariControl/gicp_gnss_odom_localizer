@@ -57,7 +57,7 @@ install(TARGETS
 install(DIRECTORY include/
   DESTINATION include
 )
-install(DIRECTORY launch param/
+install(DIRECTORY launch param
   DESTINATION share/${PROJECT_NAME}
 )
 
@@ -74,5 +74,13 @@ ament_export_dependencies(
   eigen3_cmake_module
   Eigen3
 )
+
+if(BUILD_TESTING)
+  enable_testing()
+  add_executable(test_gnss_recovery_controller test/test_gnss_recovery_controller.cpp)
+  target_include_directories(test_gnss_recovery_controller PRIVATE include)
+  target_compile_features(test_gnss_recovery_controller PRIVATE cxx_std_17)
+  add_test(NAME test_gnss_recovery_controller COMMAND test_gnss_recovery_controller)
+endif()
 
 ament_package()

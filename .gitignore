@@ -8,4 +8,11 @@ log/
 *.bag
 *.db3
 *.mcap
+!data/synthetic_output_pointcloud2/synthetic_output_pointcloud2_0.mcap
 .DS_Store
+
+# Local datasets and full evaluation outputs. Curated plots and manifests belong
+# under docs/evaluation/assets instead of committing complete run directories.
+/rosbag/
+/test_results/
+/docker_output/

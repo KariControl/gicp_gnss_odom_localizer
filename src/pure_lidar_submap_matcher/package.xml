@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>pure_lidar_submap_matcher</name>
+  <version>0.1.0</version>
+  <description>Persistent robust fixed-lag full-SE2 LiDAR submap matcher.</description>
+  <maintainer email="118587431+KariControl@users.noreply.github.com">KariControl</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>eigen3_cmake_module</buildtool_depend>
+  <depend>diagnostic_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>libpcl-all-dev</depend>
+  <depend>pcl_conversions</depend>
+  <depend>pure_lidar_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>small_gicp</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <build_depend>eigen</build_depend>
+  <build_export_depend>eigen</build_export_depend>
+  <buildtool_export_depend>eigen3_cmake_module</buildtool_export_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

@@ -1,24 +1,40 @@
-<?xml version="1.0"?>
+<?xml version='1.0' encoding='utf-8'?>
 <package format="3">
   <name>pure_odometry_bringup</name>
-  <version>0.1.0</version>
-  <description>Minimal bringup package for the IMU undistorter + lidar gyro odometer subset.</description>
-
-  <maintainer email="noreply@example.com">pure_localization</maintainer>
+  <version>0.3.0</version>
+  <description>Bringup and RViz visualization for the GICP LiDAR-IMU odometry, NMEA GNSS, and map-to-odom fusion stack.</description>
+  <maintainer email="118587431+KariControl@users.noreply.github.com">KariControl</maintainer>
   <license>Apache-2.0</license>
-
   <buildtool_depend>ament_cmake</buildtool_depend>
-
+  <build_depend>qtbase5-dev</build_depend>
+  <build_export_depend>qtbase5-dev</build_export_depend>
+  <depend>diagnostic_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>rviz_common</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>visualization_msgs</depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>rclcpp_components</exec_depend>
   <exec_depend>diagnostic_aggregator</exec_depend>
+  <exec_depend>libqt5-core</exec_depend>
+  <exec_depend>libqt5-gui</exec_depend>
+  <exec_depend>libqt5-widgets</exec_depend>
+  <exec_depend>rqt_robot_monitor</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>xacro</exec_depend>
   <exec_depend>pure_imu_undistortion</exec_depend>
   <exec_depend>pure_lidar_gyro_odometer</exec_depend>
-  <exec_depend>pure_gnss_conversion</exec_depend>
+  <exec_depend>pure_nmea_gnss_conversion</exec_depend>
   <exec_depend>pure_gnss_map_odom_fusion</exec_depend>
-
+  <exec_depend>pure_localization_interface_adapter</exec_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
   <export>
     <build_type>ament_cmake</build_type>
   </export>

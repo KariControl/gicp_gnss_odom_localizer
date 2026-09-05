@@ -1,0 +1,6 @@
+/**:
+  ros__parameters:
+    # Evaluation profile for the calibrated single-antenna vehicle. Full SE(2)
+    # recovery retains priority; this only permits guarded translation-only
+    # recovery when RTK Fixed returns while the vehicle is stationary.
+    xy_only_recovery.enabled: true

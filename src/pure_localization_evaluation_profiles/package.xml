@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>pure_localization_evaluation_profiles</name>
+  <version>0.1.0</version>
+  <description>Recording-specific profiles and manifests for reproducible localization evaluation.</description>
+  <maintainer email="118587431+KariControl@users.noreply.github.com">KariControl</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

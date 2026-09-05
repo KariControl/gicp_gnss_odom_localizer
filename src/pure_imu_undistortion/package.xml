@@ -1,14 +1,12 @@
-<?xml version="1.0"?>
+<?xml version='1.0' encoding='utf-8'?>
 <package format="3">
   <name>pure_imu_undistortion</name>
-  <version>0.1.0</version>
-  <description>IMU-based LiDAR deskew for ROS 2 (mixed per-point time field support, optional speed for translation).</description>
-
-  <maintainer email="you@example.com">you</maintainer>
+  <version>0.3.0</version>
+  <description>Strict IMU-based LiDAR deskew with validated point timing and optional translation compensation.</description>
+  <maintainer email="118587431+KariControl@users.noreply.github.com">KariControl</maintainer>
   <license>Apache-2.0</license>
-
   <buildtool_depend>ament_cmake</buildtool_depend>
-
+  <buildtool_depend>eigen3_cmake_module</buildtool_depend>
   <depend>rclcpp</depend>
   <depend>rclcpp_components</depend>
   <depend>sensor_msgs</depend>
@@ -17,8 +15,9 @@
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
-  <depend>Eigen3</depend>
-
+  <build_depend>eigen</build_depend>
+  <build_export_depend>eigen</build_export_depend>
+  <buildtool_export_depend>eigen3_cmake_module</buildtool_export_depend>
   <export>
     <build_type>ament_cmake</build_type>
   </export>

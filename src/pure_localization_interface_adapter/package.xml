@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>pure_localization_interface_adapter</name>
+  <version>0.3.0</version>
+  <description>Standard-message adapter from fused odometry to configurable localization topics and map-to-base TF.</description>
+  <maintainer email="118587431+KariControl@users.noreply.github.com">KariControl</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>diagnostic_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -11,11 +11,33 @@ diagnostic_aggregator:
         type: diagnostic_aggregator/GenericAnalyzer
         path: gyro_odometer
         startswith: ["localization/gyro_odometer"]
-      gnss_conversion:
+      submap_matcher:
         type: diagnostic_aggregator/GenericAnalyzer
-        path: gnss_conversion
-        startswith: ["localization/gnss_conversion"]
+        path: submap_matcher
+        startswith: ["localization/submap_matcher"]
+        num_items: 0
+      precision_global_localizer:
+        type: diagnostic_aggregator/GenericAnalyzer
+        path: precision_global_localizer
+        startswith: ["localization/precision_global_localizer"]
+        num_items: 0
+      nmea_gga_conversion:
+        type: diagnostic_aggregator/GenericAnalyzer
+        path: nmea_gga_conversion
+        startswith: ["localization/nmea_gga_conversion"]
       gnss_map_odom_fusion:
         type: diagnostic_aggregator/GenericAnalyzer
         path: gnss_map_odom_fusion
         startswith: ["localization/gnss_map_odom_fusion", "localization/map_odom_fusion"]
+      localization_interface_adapter:
+        type: diagnostic_aggregator/GenericAnalyzer
+        path: localization_interface_adapter
+        startswith: ["localization/localization_interface_adapter"]
+      pose_instability_detector:
+        type: diagnostic_aggregator/GenericAnalyzer
+        path: pose_instability_detector
+        startswith: ["localization: pose_instability_detector"]
+      localization_error_monitor:
+        type: diagnostic_aggregator/GenericAnalyzer
+        path: localization_error_monitor
+        startswith: ["localization_error_monitor: ellipse_error_status"]

@@ -1,0 +1,239 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+        - /Autoware sample body (illustrative, not calibrated)1
+        - /Autoware Localization Status1
+        - /Autoware Localization Status1/Live Status1
+        - /Autoware Localization Status1/Status1
+      Splitter Ratio: 0.5
+    Tree Height: 860
+Preferences:
+  PromptSaveOnExit: false
+Toolbars:
+  toolButtonStyle: 2
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.4000000059604645
+      Cell Size: 5
+      Class: rviz_default_plugins/Grid
+      Color: 105; 110; 120
+      Enabled: true
+      Line Style:
+        Line Width: 0.029999999329447746
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 40
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Alpha: 0.699999988079071
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 240; 240; 240
+      Color Transformer: AxisColor
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Min Color: 0; 0; 0
+      Name: Deskewed PointCloud
+      Position Transformer: XYZ
+      Queue Size: 3
+      Selectable: false
+      Size (Pixels): 2
+      Size (m): 0.029999999329447746
+      Style: Points
+      Topic:
+        Depth: 3
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /localization/points_undistorted
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Alpha: 0.8500000238418579
+      Class: rviz_default_plugins/RobotModel
+      Collision Enabled: false
+      Description File: ""
+      Description Source: Topic
+      Description Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /localization/visualization/robot_description
+      Enabled: true
+      Links:
+        All Links Enabled: true
+        Expand Joint Details: false
+        Expand Link Details: false
+        Expand Tree: false
+        Link Tree Style: Links in Alphabetic Order
+      Name: Autoware sample body (illustrative, not calibrated)
+      TF Prefix: ""
+      Update Interval: 0
+      Value: true
+      Visual Enabled: true
+    - Angle Tolerance: 0.10000000149011612
+      Class: rviz_default_plugins/Odometry
+      Covariance:
+        Orientation:
+          Alpha: 0.30000001192092896
+          Color: 255; 255; 127
+          Color Style: Unique
+          Frame: Local
+          Offset: 1
+          Scale: 1
+          Value: false
+        Position:
+          Alpha: 0.20000000298023224
+          Color: 0; 170; 255
+          Scale: 1
+          Value: false
+        Value: false
+      Enabled: true
+      Keep: 1
+      Name: Current Localization Pose
+      Position Tolerance: 0.5
+      Shape:
+        Alpha: 1
+        Axes Length: 0.75
+        Axes Radius: 0.060000000000000005
+        Color: 255; 105; 40
+        Head Length: 0.30000001192092896
+        Head Radius: 0.15000000596046448
+        Shaft Length: 1
+        Shaft Radius: 0.060000000000000005
+        Value: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /localization/kinematic_state
+      Value: true
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 255; 110; 30
+      Enabled: true
+      Head Diameter: 0.30000001192092896
+      Head Length: 0.20000000298023224
+      Length: 0.30000001192092896
+      Line Style: Lines
+      Line Width: 0.07999999821186066
+      Name: Continuous Localization Trajectory
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0.029999999329447746
+      Pose Color: 255; 255; 255
+      Pose Style: None
+      Radius: 0.029999999329447746
+      Shaft Diameter: 0.10000000149011612
+      Shaft Length: 0.10000000149011612
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /localization/visualization/trajectory
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: XY Position Covariance (2 sigma)
+      Namespaces:
+        xy_position_covariance_2sigma: true
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /localization/visualization/status_markers
+      Value: true
+    - Base Frame: base_link
+      Class: pure_odometry_bringup/LocalizationStatus
+      Diagnostic Stale Time (s): 2.5
+      Diagnostics Topic: /diagnostics
+      Enabled: true
+      Kinematic State Topic: /localization/kinematic_state
+      Map Frame: map
+      Name: Autoware Localization Status
+      Output Stale Time (s): 1
+      Value: true
+    - Class: rviz_default_plugins/Axes
+      Enabled: true
+      Length: 2
+      Name: Estimated base_link
+      Radius: 0.10000000149011612
+      Reference Frame: base_link
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 28; 31; 36
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/XYOrbit
+      Distance: 25
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.05999999865889549
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05000000074505806
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.01
+      Pitch: 0.65
+      Target Frame: base_link
+      Value: XYOrbit (rviz_default_plugins)
+      Yaw: 0.7853981852531433
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 1080
+  Hide Left Dock: false
+  Hide Right Dock: true
+  Width: 1920
+  X: 20
+  Y: 20

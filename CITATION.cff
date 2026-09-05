@@ -1,0 +1,141 @@
+cff-version: "1.2.0"
+message: >-
+  If you use this software, cite this repository and the methods relevant to
+  your use. Bibliographic entries for the principal dependency, evaluation
+  reference, and related systems are included below.
+title: "GICP-GNSS Odom Localizer"
+type: software
+version: "2.0.0"
+date-released: "2026-09-05"
+authors:
+  - name: "GICP-GNSS Odom Localizer project"
+    alias: "KariControl"
+    website: "https://github.com/KariControl"
+abstract: >-
+  A prior-map-free ROS 2 planar LiDAR-IMU-GNSS localization stack with strict
+  deskew, scan-to-scan odometry, optional isolated rolling-submap outputs, GNSS
+  anchoring and bounded outage recovery, and an optional Autoware
+  localization-interface adapter.
+repository-code: "https://github.com/KariControl/gicp_gnss_odom_localizer"
+url: "https://github.com/KariControl/gicp_gnss_odom_localizer"
+license: "Apache-2.0"
+keywords:
+  - "ROS 2"
+  - "LiDAR-inertial odometry"
+  - "GNSS localization"
+  - "Generalized-ICP"
+  - "Autoware"
+references:
+  - type: conference-paper
+    authors:
+      - family-names: "Segal"
+        given-names: "Aleksandr V."
+      - family-names: "Haehnel"
+        given-names: "Dirk"
+      - family-names: "Thrun"
+        given-names: "Sebastian"
+    title: "Generalized-ICP"
+    year: 2009
+    doi: "10.15607/RSS.2009.V.021"
+    url: "https://www.roboticsproceedings.org/rss05/p21.html"
+    repository-code: "https://github.com/avsegal/gicp"
+    conference:
+      name: "Robotics: Science and Systems V"
+    scope: "Registration method foundation."
+  - type: article
+    authors:
+      - family-names: "Koide"
+        given-names: "Kenji"
+        orcid: "https://orcid.org/0000-0001-5361-1428"
+    title: "small_gicp: Efficient and parallel algorithms for point cloud registration"
+    journal: "Journal of Open Source Software"
+    volume: 9
+    issue: 100
+    start: 6948
+    year: 2024
+    doi: "10.21105/joss.06948"
+    url: "https://joss.theoj.org/papers/10.21105/joss.06948"
+    repository-code: "https://github.com/koide3/small_gicp"
+    scope: "Vendored point-cloud registration library."
+  - type: article
+    authors:
+      - family-names: "Koide"
+        given-names: "Kenji"
+      - family-names: "Yokozuka"
+        given-names: "Masashi"
+      - family-names: "Oishi"
+        given-names: "Shuji"
+      - family-names: "Banno"
+        given-names: "Atsuhiko"
+    title: "GLIM: 3D Range-Inertial Localization and Mapping with GPU-Accelerated Scan Matching Factors"
+    journal: "Robotics and Autonomous Systems"
+    volume: 179
+    start: 104750
+    year: 2024
+    doi: "10.1016/j.robot.2024.104750"
+    url: "https://doi.org/10.1016/j.robot.2024.104750"
+    repository-code: "https://github.com/koide3/glim"
+    identifiers:
+      - type: other
+        value: "arXiv:2407.10344"
+        description: "The arXiv preprint of the paper."
+    scope: "Correlated pseudo-reference used in the published evaluations."
+  - type: conference-paper
+    authors:
+      - family-names: "Shan"
+        given-names: "Tixiao"
+      - family-names: "Englot"
+        given-names: "Brendan"
+      - family-names: "Meyers"
+        given-names: "Drew"
+      - family-names: "Wang"
+        given-names: "Wei"
+      - family-names: "Ratti"
+        given-names: "Carlo"
+      - family-names: "Rus"
+        given-names: "Daniela"
+    title: "LIO-SAM: Tightly-coupled Lidar Inertial Odometry via Smoothing and Mapping"
+    year: 2020
+    start: 5135
+    end: 5142
+    doi: "10.1109/IROS45743.2020.9341176"
+    url: "https://doi.org/10.1109/IROS45743.2020.9341176"
+    repository-code: "https://github.com/TixiaoShan/LIO-SAM"
+    identifiers:
+      - type: other
+        value: "arXiv:2007.00258"
+        description: "The arXiv preprint of the paper."
+    conference:
+      name: "2020 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)"
+    scope: >-
+      Related factor-graph LiDAR-inertial odometry and mapping system; not a
+      measured baseline.
+  - type: article
+    authors:
+      - family-names: "Xu"
+        given-names: "Wei"
+      - family-names: "Cai"
+        given-names: "Yixi"
+      - family-names: "He"
+        given-names: "Dongjiao"
+      - family-names: "Lin"
+        given-names: "Jiarong"
+      - family-names: "Zhang"
+        given-names: "Fu"
+    title: "FAST-LIO2: Fast Direct LiDAR-Inertial Odometry"
+    journal: "IEEE Transactions on Robotics"
+    volume: 38
+    issue: 4
+    start: 2053
+    end: 2073
+    year: 2022
+    doi: "10.1109/TRO.2022.3141876"
+    url: "https://doi.org/10.1109/TRO.2022.3141876"
+    repository-code: "https://github.com/hku-mars/FAST_LIO"
+    identifiers:
+      - type: other
+        value: "arXiv:2107.06829"
+        description: "The arXiv preprint of the paper."
+    scope: >-
+      Related direct scan-to-map LiDAR-inertial odometry system; not a measured
+      baseline.

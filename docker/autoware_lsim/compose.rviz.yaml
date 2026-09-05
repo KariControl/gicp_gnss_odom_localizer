@@ -1,0 +1,12 @@
+# Compatibility filename: this X11 overlay is shared by RViz and Robot Monitor.
+services:
+  lsim:
+    environment:
+      DISPLAY: ${DISPLAY:?DISPLAY is required when a GUI is enabled}
+      QT_X11_NO_MITSHM: "1"
+      LIBGL_ALWAYS_SOFTWARE: "1"
+    volumes:
+      - type: bind
+        source: /tmp/.X11-unix
+        target: /tmp/.X11-unix
+        read_only: false

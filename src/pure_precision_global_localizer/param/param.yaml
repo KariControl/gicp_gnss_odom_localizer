@@ -1,0 +1,103 @@
+precision_global_localizer:
+  ros__parameters:
+    raw_odom_topic: /localization/gyro_lidar_odom
+    submap_scan_topic: /localization/submap_scan
+    submap_correction_topic: /localization/submap_correction
+    gnss_input_topic: /localization/gnss_fusion_input
+    existing_global_odom_topic: /localization/ekf_odom
+    fusion_authority_topic: /localization/gnss_map_odom_fusion_authority
+    # Compatibility-only diagnostic inputs. Global authority is decided from
+    # the typed, event-driven fusion_authority_topic above.
+    fusion_diagnostics_topic: /diagnostics
+    precision_local_odom_topic: /localization/precision_local_odom
+    precision_global_odom_topic: /localization/precision_global_odom
+    precision_global_pose_topic: /localization/precision_global_pose
+    precision_frame: odom_precision
+    map_frame: map
+    base_frame: base_link
+
+    sync.history_sec: 30.0
+    sync.max_extrapolation_sec: 0.12
+    sync.max_pending_sec: 2.0
+
+    # Deprecated compatibility identifier; it is no longer used as a machine
+    # authority signal.
+    fusion_health.status_name: localization/gnss_map_odom_fusion
+    fusion_health.max_age_sec: 1.5
+    fusion_health.max_future_skew_sec: 0.25
+    fusion_sync.max_interpolation_gap_sec: 0.15
+    fusion_sync.max_candidate_age_sec: 0.50
+    fusion_sync.existing_global_max_age_sec: 0.25
+    fusion_sync.existing_global_max_future_skew_sec: 0.05
+
+    fusion_anchor.stable_candidate_count: 3
+    fusion_anchor.candidate_min_interval_sec: 0.25
+    fusion_anchor.candidate_max_gap_sec: 1.25
+    fusion_anchor.stable_max_base_translation_m: 0.50
+    fusion_anchor.stable_max_yaw_rad: 0.08
+    fusion_anchor.tracking_max_base_translation_m: 2.0
+    fusion_anchor.tracking_max_yaw_rad: 0.25
+    fusion_anchor.max_translation_rate_mps: 1.0
+    fusion_anchor.max_yaw_rate_radps: 0.20
+    fusion_anchor.max_translation_step_m: 0.20
+    fusion_anchor.max_yaw_step_rad: 0.04
+    fusion_anchor.max_step_dt_sec: 0.25
+
+    # This switch controls only the legacy position-output diagnostic path. It
+    # remains disabled: existing fusion is still the sole global XY authority.
+    fallback.gnss_position_enabled: false
+
+    # When strict existing-fusion health is lost, retain global XY from the
+    # frozen existing-fusion anchor while guarding only published yaw with the
+    # last robust, position-derived SE(2) yaw reference. The reference must
+    # already have passed the alignment baseline/inlier/RMS/uncertainty gates.
+    # Entry and recovery are bounded, and no unhealthy GNSS sample is consumed.
+    outage_yaw_guard.enabled: true
+    outage_yaw_guard.required_fix_quality: 4
+    outage_yaw_guard.max_trusted_age_sec: 2.0
+    outage_yaw_guard.max_trusted_variance_rad2: 0.0225
+    outage_yaw_guard.max_trusted_delta_rad: 0.35
+    outage_yaw_guard.max_offset_rate_radps: 0.20
+    outage_yaw_guard.max_offset_step_rad: 0.04
+    outage_yaw_guard.max_step_dt_sec: 0.25
+
+    gnss.min_confidence: 0.35
+    gnss.max_position_variance_m2: 25.0
+    gnss.min_position_variance_m2: 0.0025
+    gnss.hard_outage_sec: 2.0
+
+    alignment.window_sec: 20.0
+    alignment.max_sample_gap_sec: 1.0
+    alignment.yaw_sample_min_interval_sec: 0.25
+    alignment.max_yaw_samples: 100
+    alignment.min_yaw_samples: 6
+    alignment.min_local_baseline_m: 3.0
+    alignment.min_map_baseline_m: 3.0
+    alignment.inlier_gate_m: 1.5
+    alignment.max_rms_m: 0.75
+    alignment.max_yaw_stddev_rad: 0.15
+    alignment.max_committed_yaw_innovation_rad: 0.70
+    # The first authoritative global yaw is exposed only after independent
+    # downsampled SE(2) evaluations agree. Each candidate has already passed
+    # the baseline, inlier, residual and yaw-uncertainty gates above.
+    alignment.activation_min_stable_yaw_candidates: 3
+    alignment.activation_max_yaw_candidate_delta_rad: 0.08
+    alignment.bootstrap_yaw_rad: 0.0
+
+    anchor.max_translation_rate_mps: 1.0
+    anchor.max_yaw_rate_radps: 0.20
+    anchor.max_translation_step_m: 0.20
+    anchor.max_yaw_step_rad: 0.04
+    anchor.max_correction_dt_sec: 0.25
+    anchor.unobservable_yaw_variance_rad2: 2.4674011002723395
+    anchor.min_yaw_variance_rad2: 0.0004
+    anchor.outage_xy_variance_rate_m2ps: 0.02
+    anchor.outage_yaw_variance_rate_rad2ps: 0.0004
+
+    local_correction.max_translation_rate_mps: 2.0
+    local_correction.max_yaw_rate_radps: 0.50
+    local_correction.max_translation_step_m: 0.05
+    local_correction.max_yaw_step_rad: 0.015
+    local_correction.max_dt_sec: 0.05
+
+    diagnostics_period_sec: 1.0

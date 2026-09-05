@@ -1,0 +1,387 @@
+{
+  "accepted": true,
+  "alignment": {
+    "estimate_interpolation": false,
+    "position_and_yaw_share_transform": true,
+    "reference_interpolation": "GLIM only",
+    "scale_applied": false,
+    "type": "single shared exact first-common-pose SE(2)"
+  },
+  "dataset_label": "Livox MID-360 + Internal IMU \u2014 LiDAR/IMU-Only (No GNSS)",
+  "evaluation": {
+    "duration_sec": 295.09919232000004,
+    "failed_hard_gates": [],
+    "hard_gate_count": 20,
+    "overall_ab_passed": true,
+    "scan_to_submap_gain": {
+      "endpoint_position_error_m": {
+        "improvement_percent": 25.71671894526302,
+        "new": 0.6757622789717348,
+        "old": 0.909709788497074
+      },
+      "position_rmse_m": {
+        "improvement_percent": 53.34715807766752,
+        "new": 0.2940738154352217,
+        "old": 0.6303449121594672
+      },
+      "rpe": {
+        "10": {
+          "translation_rmse_m": {
+            "improvement_percent": 32.39158064317817,
+            "new": 0.16867968267641864,
+            "old": 0.2494950840163349
+          },
+          "yaw_rmse_deg": {
+            "improvement_percent": 79.34694621153038,
+            "new": 0.2332782978974155,
+            "old": 1.1295099518292655
+          }
+        },
+        "50": {
+          "translation_rmse_m": {
+            "improvement_percent": 43.00998888011183,
+            "new": 0.3606506064508409,
+            "old": 0.6328312617664718
+          },
+          "yaw_rmse_deg": {
+            "improvement_percent": 72.58645614127795,
+            "new": 0.452356152912557,
+            "old": 1.6501192083876919
+          }
+        }
+      },
+      "yaw_rmse_deg": {
+        "improvement_percent": 79.27360767252588,
+        "new": 0.6023916185230034,
+        "old": 2.9063988030589183
+      }
+    },
+    "streams": {
+      "scan_to_scan": {
+        "duration_sec": 294.09915724800004,
+        "endpoint_position_error_m": 0.909709788497074,
+        "endpoint_yaw_error_deg": 3.790421954397571,
+        "estimate_path_m": 90.94238912267818,
+        "path_ratio_estimate_over_reference": 0.9974036010880445,
+        "position_error_m": {
+          "count": 2917,
+          "maximum": 1.5072185198370922,
+          "mean": 0.4899343005649805,
+          "median": 0.3703472336979935,
+          "p95": 1.3429695945401379,
+          "p99": 1.4835791221337977,
+          "rmse": 0.6303449121594672
+        },
+        "reference_path_m": 91.1791265075354,
+        "rpe": {
+          "10": {
+            "count": 2618,
+            "translation_error_m": {
+              "count": 2618,
+              "maximum": 0.825401730636463,
+              "mean": 0.19608359385408242,
+              "median": 0.15239883886493874,
+              "p95": 0.572381487420227,
+              "p99": 0.7968267105078949,
+              "rmse": 0.2494950840163349
+            },
+            "yaw_error_deg": {
+              "count": 2618,
+              "maximum": 3.1588052076637476,
+              "mean": 0.6715836784007067,
+              "median": 0.2954324187190801,
+              "p95": 2.7717650325772336,
+              "p99": 2.9161571859126383,
+              "rmse": 1.1295099518292655
+            }
+          },
+          "100": {
+            "count": 0
+          },
+          "50": {
+            "count": 1576,
+            "translation_error_m": {
+              "count": 1576,
+              "maximum": 1.1790347533699534,
+              "mean": 0.49877861630062875,
+              "median": 0.32885559525830554,
+              "p95": 1.148265921464404,
+              "p99": 1.1717511899802977,
+              "rmse": 0.6328312617664718
+            },
+            "yaw_error_deg": {
+              "count": 1576,
+              "maximum": 3.3933173717817326,
+              "mean": 1.2970832445106293,
+              "median": 0.7564709718361817,
+              "p95": 3.0799882484050256,
+              "p99": 3.140287379807977,
+              "rmse": 1.6501192083876919
+            }
+          }
+        },
+        "samples": 2917,
+        "yaw_error_deg": {
+          "count": 2917,
+          "maximum": 4.120740189552686,
+          "mean": 2.692175550756259,
+          "median": 3.0154730630946767,
+          "p95": 3.738105746999204,
+          "p99": 3.807906283681438,
+          "rmse": 2.9063988030589183
+        }
+      },
+      "scan_to_submap": {
+        "duration_sec": 294.09915724800004,
+        "endpoint_position_error_m": 0.6757622789717348,
+        "endpoint_yaw_error_deg": 0.8172696964805257,
+        "estimate_path_m": 91.70111712425539,
+        "path_ratio_estimate_over_reference": 1.0057248435050143,
+        "position_error_m": {
+          "count": 2916,
+          "maximum": 0.7043883446901459,
+          "mean": 0.19398939578912858,
+          "median": 0.08793829600460654,
+          "p95": 0.6256686512968848,
+          "p99": 0.6816060452237532,
+          "rmse": 0.2940738154352217
+        },
+        "reference_path_m": 91.17913086910653,
+        "rpe": {
+          "10": {
+            "count": 2618,
+            "translation_error_m": {
+              "count": 2618,
+              "maximum": 0.5685565533089904,
+              "mean": 0.1320883444327325,
+              "median": 0.11440277211958069,
+              "p95": 0.39077424445477393,
+              "p99": 0.5232741078217107,
+              "rmse": 0.16867968267641864
+            },
+            "yaw_error_deg": {
+              "count": 2618,
+              "maximum": 0.7285237917768671,
+              "mean": 0.18766492208421126,
+              "median": 0.15716465712488403,
+              "p95": 0.4749360806418876,
+              "p99": 0.6105653867504947,
+              "rmse": 0.2332782978974155
+            }
+          },
+          "100": {
+            "count": 0
+          },
+          "50": {
+            "count": 1575,
+            "translation_error_m": {
+              "count": 1575,
+              "maximum": 0.7385248145313542,
+              "mean": 0.2737988611419545,
+              "median": 0.11482696446965958,
+              "p95": 0.6276676644727985,
+              "p99": 0.6726997084387305,
+              "rmse": 0.3606506064508409
+            },
+            "yaw_error_deg": {
+              "count": 1575,
+              "maximum": 1.0442783049143893,
+              "mean": 0.4198832035135831,
+              "median": 0.44372535129854374,
+              "p95": 0.6695985374162531,
+              "p99": 0.7704311395835828,
+              "rmse": 0.452356152912557
+            }
+          }
+        },
+        "samples": 2916,
+        "yaw_error_deg": {
+          "count": 2916,
+          "maximum": 1.5015257596539677,
+          "mean": 0.5432655352701198,
+          "median": 0.5417781345849291,
+          "p95": 0.9085930518846781,
+          "p99": 1.002430330572184,
+          "rmse": 0.6023916185230034
+        }
+      }
+    }
+  },
+  "holdout_validation": {
+    "opened_after_all_stages_completed": true,
+    "scan_to_scan": {
+      "estimate_path_m": 43.62173996634405,
+      "path_ratio_estimate_over_reference": 0.9883410302450851,
+      "position_error_m": {
+        "count": 1426,
+        "maximum": 1.2964157034324413,
+        "mean": 0.4869924200410896,
+        "median": 0.3844986796657555,
+        "p95": 1.2391456148462543,
+        "p99": 1.2899149408168833,
+        "rmse": 0.5940821978291224
+      },
+      "reference_path_m": 44.13632403334191,
+      "samples": 1426,
+      "yaw_error_deg": {
+        "count": 1426,
+        "maximum": 3.8513150818050352,
+        "mean": 2.9465514561245727,
+        "median": 3.136086628192935,
+        "p95": 3.7626153942985336,
+        "p99": 3.820156135709597,
+        "rmse": 3.07764842104325
+      }
+    },
+    "scan_to_submap": {
+      "estimate_path_m": 44.02268868999577,
+      "path_ratio_estimate_over_reference": 0.9974251614727059,
+      "position_error_m": {
+        "count": 1427,
+        "maximum": 0.6979110893030676,
+        "mean": 0.21091460019960825,
+        "median": 0.09415710251759066,
+        "p95": 0.6338255785899017,
+        "p99": 0.6781498611622586,
+        "rmse": 0.3066361711828477
+      },
+      "reference_path_m": 44.136332619678385,
+      "samples": 1427,
+      "yaw_error_deg": {
+        "count": 1427,
+        "maximum": 1.043289055847781,
+        "mean": 0.6338623817471226,
+        "median": 0.6478742930292364,
+        "p95": 0.9214014085118928,
+        "p99": 0.9929705550429014,
+        "rmse": 0.6737415550073956
+      }
+    },
+    "selection_score_used_holdout": false
+  },
+  "micro_motion_path_audit": {
+    "definition": "Consecutive samples whose GLIM reference XY step is below the threshold; reference and estimate paths are summed independently within each published stream.",
+    "reference_step_threshold_m_exclusive": 0.002,
+    "streams": {
+      "scan_to_scan": {
+        "estimate_path_m": 0.5608420287798032,
+        "interval_count": 263,
+        "reference_path_m": 0.16677875544589313
+      },
+      "scan_to_submap": {
+        "estimate_path_m": 0.6077103925815106,
+        "interval_count": 263,
+        "reference_path_m": 0.16677875544589313
+      }
+    }
+  },
+  "publication_status": "ACCEPTED",
+  "reference": {
+    "independent_ground_truth": false,
+    "method": "GLIM trajectory",
+    "shares_lidar_and_imu_observations": true
+  },
+  "runtime_validation": {
+    "control_scan_to_scan": {
+      "accepted_scan_odometry": {
+        "messages": 2928,
+        "registration_density": 0.9952413324269205
+      },
+      "deskew": {
+        "rejected": 10,
+        "success_rate": 0.9966136132746359,
+        "successful": 2943
+      },
+      "imu": {
+        "corrected_acceleration_norm_median_mps2": 9.754307250256623,
+        "exact_stamp_coverage": 1.0
+      },
+      "playback_rate_observed": 0.9999994185321437,
+      "status": "PASS"
+    },
+    "precision_scan_to_submap": {
+      "accepted_scan_odometry": {
+        "messages": 2927,
+        "registration_density": 0.995239714382863
+      },
+      "deskew": {
+        "rejected": 11,
+        "success_rate": 0.9962749746020996,
+        "successful": 2942
+      },
+      "imu": {
+        "corrected_acceleration_norm_median_mps2": 9.754307250256623,
+        "exact_stamp_coverage": 1.0
+      },
+      "playback_rate_observed": 0.9999997291938598,
+      "status": "PASS"
+    }
+  },
+  "schema_version": 2,
+  "sensor_configuration": {
+    "gnss_used": false,
+    "gyro_bias_adaptation_enabled": false,
+    "gyro_z_bias_rad_s": 0.006959692,
+    "imu": "MID-360 internal IMU",
+    "imu_acceleration_scale": 9.80665,
+    "imu_topic": "/livox/imu",
+    "lidar": "Livox MID-360",
+    "playback_rate": 1.0,
+    "points_topic": "/livox/lidar",
+    "recorded_tf_used": false,
+    "static_transforms": {
+      "base_link_to_livox_frame": {
+        "quaternion_xyzw": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "translation_m": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "submap_snapshot_interval_frames": 5
+  },
+  "source_validation": {
+    "a_b_hard_gate_status": "PASS",
+    "configuration_contract": "PASS",
+    "control_runtime": "PASS",
+    "holdout_selection_isolation": "PASS",
+    "identity_transform_contract": "PASS",
+    "packaged_profile_contract": "PASS",
+    "precision_runtime": "PASS",
+    "precision_structure": "PASS"
+  },
+  "structural_validation": {
+    "counts": {
+      "global_topics": {
+        "/localization/precision_global_odom": 0,
+        "/localization/precision_global_pose": 0
+      },
+      "precision_local": 2926,
+      "precision_local_coverage": 0.9996583532627263,
+      "precision_local_eligible_raw": 2927,
+      "precision_local_matched": 2926,
+      "raw_accepted": 2927,
+      "submap_corrections": 444,
+      "submap_scans": 586,
+      "submap_streams": 1
+    },
+    "failed_hard_checks": [],
+    "matcher": {
+      "matcher_accepted": 463,
+      "matcher_accepted_ratio": 0.847985347985348,
+      "matcher_attempted": 546,
+      "matcher_latency_p99_ms": 140.265841,
+      "matcher_processing_p99_ms": 26.278551,
+      "matcher_queue_drop_count": 0,
+      "matcher_rejected": 83,
+      "post_warmup_correction_ratio": 0.7668393782383419
+    },
+    "status": "PASS"
+  }
+}

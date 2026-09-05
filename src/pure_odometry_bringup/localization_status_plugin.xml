@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<library path="pure_odometry_localization_status_rviz_plugin">
+  <class
+    name="pure_odometry_bringup/LocalizationStatus"
+    type="pure_odometry_bringup::LocalizationStatusDisplay"
+    base_class_type="rviz_common::Display">
+    <description>
+      Shows live Autoware localization, TF, registration, and GNSS state in the
+      RViz Displays property tree without drawing status text in the 3D view.
+    </description>
+  </class>
+</library>

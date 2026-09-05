@@ -1,0 +1,9 @@
+/**:
+  ros__parameters:
+    # Smoke-test variant B.  Keep the production odometer scan-to-scan while
+    # increasing only the isolated snapshot cadence from every 5 accepted
+    # scans (variant A) to every 2 accepted scans.
+    lidar_odom.tracking_mode: scan_to_scan
+    lidar_odom.external_submap_snapshot.enable: true
+    lidar_odom.external_submap_snapshot.topic: /localization/submap_scan
+    lidar_odom.external_submap_snapshot.publish_interval_frames: 2

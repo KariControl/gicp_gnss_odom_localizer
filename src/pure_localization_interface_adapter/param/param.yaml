@@ -1,0 +1,26 @@
+/**:
+  ros__parameters:
+    input_odom_topic: /localization/ekf_odom
+    kinematic_state_topic: /localization/kinematic_state
+    twist_topic: /localization/twist_with_covariance
+    acceleration_topic: /localization/acceleration
+    pose_topic: /localization/pose_estimator/pose_with_covariance
+    map_frame: map
+    base_frame: base_link
+    require_expected_frames: true
+    publish_tf: true
+    publish_pose: true
+    publish_twist: true
+    publish_acceleration: true
+    publish_reset_acceleration: true
+    publish_diagnostics: true
+    diagnostic_period_sec: 1.0
+    acceleration.min_dt_sec: 0.002
+    acceleration.max_dt_sec: 0.5
+    acceleration.lowpass_alpha: 0.25
+    acceleration.max_abs_linear_mps2: 30.0
+    acceleration.max_abs_angular_radps2: 20.0
+    acceleration.valid_linear_variance: 1.0
+    acceleration.valid_angular_variance: 1.0
+    acceleration.reset_linear_variance: 100.0
+    acceleration.reset_angular_variance: 100.0

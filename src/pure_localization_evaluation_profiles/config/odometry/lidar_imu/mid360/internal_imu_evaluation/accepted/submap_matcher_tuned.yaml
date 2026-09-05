@@ -1,0 +1,23 @@
+submap_matcher:
+  ros__parameters:
+    # Recording-specific published evaluation profile.
+    gate.max_correction_roll_pitch_rad: 0.05
+    gate.max_correction_translation_m: 0.1
+    gate.max_correction_yaw_rad: 0.03
+    gate.max_correction_z_m: 0.1
+    gate.max_fitness: 0.08
+    gate.min_inlier_ratio: 0.8
+    keyframe.max_interval_sec: 0.6
+    keyframe.min_translation_m: 0.3
+    keyframe.min_yaw_rad: 0.06
+    map.voxel_leaf_m: 0.2
+    registration.max_corr_dist_m: 0.4
+    registration.voxel_resolution: 0.4
+    robust.consistency_translation_m: 0.3
+    robust.consistency_yaw_rad: 0.06
+    robust.huber_translation_m: 0.15
+    robust.huber_yaw_rad: 0.03
+    robust.max_commit_pivot_step_m: 0.15
+    robust.max_commit_yaw_step_rad: 0.08
+    robust.min_consistent: 3
+    robust.window_size: 5
